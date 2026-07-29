@@ -311,10 +311,17 @@ def _preview_conselhos_enabled() -> bool:
     era ele chegar pronto no WhatsApp. Desde 28-29/07 a página
     `/projetos/{id}/raci` mostra a matriz das duas fontes, deixa editar na fonte
     e tem botão "Enviar no grupo" com preview editável — o preview semanal virou
-    a segunda cópia do mesmo texto, e a pior das duas: chegava **truncado**
-    (5.243 / 5.866 / 4.669 chars contra o corte silencioso de 4.096 da
-    Evolution, em 13, 20 e 27/07). O lembrete agora mora na abertura da `/cos`
+    a segunda cópia do mesmo texto. O lembrete agora mora na abertura da `/cos`
     de segunda.
+
+    ⚠️ CORREÇÃO 29/07: ao desligar isto eu afirmei que o preview "chegava
+    truncado" (5.243 / 5.866 / 4.669 chars contra um suposto corte de 4.096 da
+    Evolution). **Não chegava.** Medido depois contra a própria API dela, que
+    devolve o entregue: o preview de 4.669 chars está inteiro, com o rodapé
+    "_Fim do preview_" no fim. A Evolution não corta em 4.096 — isso era
+    convenção do nosso código tratada como fato. O desligamento continua certo
+    pelo motivo que basta (é cópia redundante da página, e foi decisão do
+    Renato); a truncagem era argumento meu, e caiu.
 
     Kill-switch: `RACI_WEEKLY_PREVIEW_CONSELHOS=on` volta o comportamento antigo
     sem deploy. Não vale pro Jabô — ver `send_raci_to_groups`.

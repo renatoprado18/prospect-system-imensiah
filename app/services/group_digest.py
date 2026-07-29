@@ -15,10 +15,14 @@ O QUE ESTAVA ERRADO (medido no digest de 28/07, 6.450 chars, 15 grupos)
      "Menção a Renato: Nenhuma" — o resumo declarava a própria irrelevância e
      ocupava espaço do mesmo jeito. Tortinhas de frango do condomínio e
      indicação de gráfica entravam.
-  3. **3-4 linhas por grupo**, sem teto. O resultado não cabia em canal nenhum:
-     estourava os ~4 KB do Web Push (por isso o teto de interrupção nunca
-     segurava o digest — ele falhava no push e escalava de volta pro WhatsApp) e
-     passava dos 4.096 chars que a Evolution corta EM SILÊNCIO.
+  3. **3-4 linhas por grupo**, sem teto. Estourava os ~4 KB do Web Push — e é
+     por isso que o teto diário de interrupção nunca segurava o digest: ele
+     falhava no push e a escada o devolvia inteiro pro WhatsApp.
+     (⚠️ Correção 29/07: eu também afirmei que ele passava do corte de 4.096 da
+     Evolution e chegava truncado no WhatsApp. **Não chegava** — medido contra a
+     API dela, que devolve o entregue: digests de 6.463 e 6.017 chars estão
+     inteiros, terminando em frase completa. O limite do Web Push é real e
+     medido; o da Evolution era convenção nossa tratada como fato.)
 
 A RÉGUA NOVA
 ------------
@@ -31,8 +35,8 @@ explícito no prompt e o modelo devolve a decisão em JSON, item a item.
 Sem nada relevante, **não sai digest nenhum** — silêncio é resposta válida, e um
 digest que chega todo dia dizendo "nada aqui" treina a ignorar o canal.
 
-Teto duro de 1.500 chars: cabe no push (então o rebaixamento do teto diário
-finalmente funciona pra ele) e passa longe do corte da Evolution.
+Teto duro de 1.500 chars, para caber no push — assim o rebaixamento do teto
+diário finalmente funciona para ele.
 """
 import os
 from services import llm
@@ -49,7 +53,7 @@ from services.tz import now_utc, to_brt
 logger = logging.getLogger(__name__)
 
 # Cabe no Web Push (~4 KB de payload cifrado, e o payload leva título + JSON além
-# do corpo) e muito abaixo dos 4.096 da Evolution. O digest velho tinha 6.450.
+# do corpo). O digest velho tinha 6.450 e por isso nunca cabia no push.
 MAX_DIGEST_CHARS = 1500
 
 # Uma linha por grupo. Se o fato não cabe aqui, ele não é um fato — é um resumo.

@@ -371,10 +371,30 @@ def format_for_whatsapp(matrix: Dict, incluir_concluidos: bool = False) -> str:
     return "\n".join(linhas).strip()
 
 
-# Teto do corpo de texto da Evolution/WhatsApp. Um RACI de 60+ itens passa
-# disso com folga — e a Evolution corta em silêncio, então metade do RACI
-# chegaria no grupo sem ninguém perceber que faltou.
-WHATSAPP_MAX_CHARS = 4096
+# CORRIGIDO 29/07: o teto de 4.096 foi criado em 28/07 sobre uma premissa
+# FALSA — "a Evolution corta em silêncio". Ela não corta. Medido contra a
+# própria API (`chat/findMessages`, que devolve o que foi ENTREGUE): digests de
+# **6.463**, 6.017 e 5.748 chars chegaram inteiros, terminando em frase
+# completa, e um preview de RACI de 4.669 chegou com o rodapé "_Fim do
+# preview_" intacto. Se houvesse corte em 4.096, aquele preview teria perdido
+# os ~570 caracteres finais.
+#
+# O estrago do erro era ATIVO e mordia justamente aqui: a Vallen com os 50
+# concluídos listados dá 4.774 chars, então o botão "Enviar no grupo" —
+# adotado em 29/07 como o caminho oficial de segunda-feira — RECUSAVA o RACI
+# completo sem nenhuma razão técnica.
+#
+# O teto agora é conservador e ancorado em evidência de entrega, não em spec
+# que eu não verifiquei: 16.000 é ~2,5× o maior envio comprovadamente entregue.
+# Acima disso a recusa continua, porque aí já não é limite de canal — é sinal
+# de que algo montou texto demais.
+WHATSAPP_MAX_CHARS = 16000
+
+# Acima disto o texto ainda é ENVIADO, mas a tela avisa: ninguém lê 4 mil
+# caracteres num grupo. É conselho de legibilidade, não limite de protocolo —
+# a diferença importa, porque tratar preferência como limite técnico foi
+# exatamente o erro que esta constante corrige.
+WHATSAPP_LEGIBILIDADE_CHARS = 4096
 
 
 # ==================== escrita (write-through, cada fonte na sua) ==========

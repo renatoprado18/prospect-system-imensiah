@@ -508,6 +508,28 @@ def test_acao_longa_e_cortada_com_reticencia():
     assert "A" * 300 not in txt
 
 
-def test_limite_do_whatsapp_e_o_real():
-    """4096 é o teto do corpo; acima disso a Evolution corta EM SILÊNCIO."""
-    assert WHATSAPP_MAX_CHARS == 4096
+def test_teto_nao_barra_o_raci_completo_da_vallen():
+    """CORRIGIDO 29/07 — este teste travava uma premissa FALSA.
+
+    A versão anterior cravava `WHATSAPP_MAX_CHARS == 4096` porque "a Evolution
+    corta em silêncio". Ela não corta: medido contra `chat/findMessages`, que
+    devolve o ENTREGUE, digests de 6.463 chars chegaram inteiros e um preview de
+    RACI de 4.669 chegou com o rodapé final intacto.
+
+    O erro não era acadêmico. A Vallen com os 50 concluídos listados dá **4.774
+    chars**, então o botão "Enviar no grupo" — o caminho oficial de segunda —
+    recusava o RACI completo sem razão técnica. O que o teste protege agora é
+    isso: o caso real tem que caber.
+    """
+    assert WHATSAPP_MAX_CHARS > 4774, (
+        "o RACI completo da Vallen (4.774 chars) precisa caber — foi o caso que "
+        "o teto de 4.096 barrava")
+
+
+def test_aviso_de_legibilidade_nao_bloqueia():
+    """Os dois números têm naturezas diferentes e não podem se confundir:
+    `MAX` é recusa (limite de canal), `LEGIBILIDADE` é conselho (ninguém lê 5
+    mil caracteres num grupo). Tratar preferência como limite de protocolo foi
+    exatamente o erro de 28/07."""
+    from services.raci_matrix import WHATSAPP_LEGIBILIDADE_CHARS
+    assert WHATSAPP_LEGIBILIDADE_CHARS < WHATSAPP_MAX_CHARS

@@ -196,6 +196,8 @@ textarea.inline-edit{
 #contador{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;
           color:var(--muted)}
 #contador.estourou{color:var(--atrasado);font-weight:700}
+/* Aviso de legibilidade — o envio acontece, então não usa a cor de erro. */
+#contador.longo{color:var(--dourado);font-weight:600}
 
 /* ---------- toast de gravação ---------- */
 #toast{
@@ -693,7 +695,13 @@ async function remover(uid){
 // Preview editável + confirmação nomeando o grupo. O texto vai pro grupo do
 // cliente: o disparo é sempre um clique consciente, nunca efeito colateral.
 
-let maxChars = 4096;
+// maxChars = recusa do backend (limite real, medido). avisoChars = só
+// legibilidade: ninguém lê 4 mil caracteres num grupo, mas o envio acontece.
+// Até 28/07 os dois eram 4.096 e o envio era RECUSADO — sobre a premissa falsa
+// de que a Evolution cortava aí. Ela não corta (medido: 6.463 chars entregues
+// inteiros), e a recusa barrava o RACI completo da Vallen, que dá 4.774.
+let maxChars = 16000;
+let avisoChars = 4096;
 
 async function abrirEnvio(){
   const painel = document.getElementById('painel-envio');
@@ -710,7 +718,8 @@ async function carregarPreview(){
     `/api/projects/${PROJECT_ID}/raci/whatsapp-preview?incluir_concluidos=${inc}`);
   if(!r.ok){ toast('Não consegui montar o texto.', true); return; }
   const d = await r.json();
-  maxChars = d.max_chars || 4096;
+  maxChars = d.max_chars || 16000;
+  avisoChars = d.aviso_chars || 4096;
   document.getElementById('txt-envio').value = d.text;
 
   const sel = document.getElementById('sel-grupo');
@@ -726,8 +735,18 @@ async function carregarPreview(){
 function atualizarContador(){
   const n = document.getElementById('txt-envio').value.length;
   const c = document.getElementById('contador');
-  c.textContent = `${n} / ${maxChars}`;
-  c.className = n > maxChars ? 'estourou' : '';
+  if(n > maxChars){
+    c.textContent = `${n} / ${maxChars} — não vai sair`;
+    c.className = 'estourou';
+  } else if(n > avisoChars){
+    // Passa, mas avisa. O texto vai pro grupo do cliente e ninguém rola
+    // 5 mil caracteres — o desmarcar "concluídos" costuma resolver.
+    c.textContent = `${n} — longo pra ler no grupo`;
+    c.className = 'longo';
+  } else {
+    c.textContent = `${n}`;
+    c.className = '';
+  }
 }
 
 async function enviarNoGrupo(){

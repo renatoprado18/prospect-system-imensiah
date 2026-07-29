@@ -23012,7 +23012,8 @@ async def api_raci_whatsapp_preview(project_id: int, incluir_concluidos: bool = 
     So PREPARA. Quem dispara e o Renato, depois de ler e editar — o texto sai
     da pagina pro grupo do cliente, entao revisar antes nao e formalidade."""
     from services.raci_matrix import (
-        format_for_whatsapp, get_matrix, WHATSAPP_MAX_CHARS)
+        format_for_whatsapp, get_matrix, WHATSAPP_MAX_CHARS,
+        WHATSAPP_LEGIBILIDADE_CHARS)
     matrix = get_matrix(project_id)
     if matrix.get("error") == "projeto não encontrado":
         raise HTTPException(status_code=404, detail="Projeto nao encontrado")
@@ -23027,6 +23028,7 @@ async def api_raci_whatsapp_preview(project_id: int, incluir_concluidos: bool = 
         grupos = [dict(r) for r in cursor.fetchall()]
 
     return {"text": texto, "chars": len(texto), "max_chars": WHATSAPP_MAX_CHARS,
+            "aviso_chars": WHATSAPP_LEGIBILIDADE_CHARS,
             "grupos": grupos, "project": matrix.get("project")}
 
 
