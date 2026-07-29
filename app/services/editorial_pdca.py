@@ -518,7 +518,14 @@ Responda APENAS com o JSON."""
     # Tônia consome via fetch_open_signals) em vez de WA direto — digest editorial
     # chega no briefing matinal. Ver [[project_plano_tonia_copiloto_12_07]] F-A.
     try:
-        from database import get_db
+        # 30/07: NAO reimportar get_db aqui. O modulo ja o importa no topo, e um
+        # `from database import get_db` DENTRO da funcao torna o nome local em todo
+        # o corpo dela — o `with get_db() as conn` mais acima passava a levantar
+        # UnboundLocalError. Foi o que matou o gerador de tasks semanais do
+        # editorial: 19/07 status=error, 26/07 status=ok com
+        # briefing_error="cannot access local variable 'get_db'". As duas tasks de
+        # cadencia ("Medir metricas: posts da semana", "Responder todos os
+        # comentarios") pararam de nascer em 13/07 e as ultimas ficaram vencendo.
         from services.detectors._base import emit_signal, make_signal_hash
 
         posts_summary = []
@@ -769,7 +776,10 @@ async def generate_monthly_review() -> Dict:
 
     # A7 (porta-voz único, F-A, 12/07): emite SIGNAL urgencia=6 (briefing da Tônia).
     try:
-        from database import get_db
+        # 30/07: mesma armadilha da generate_weekly_briefing — get_db ja vem do topo
+        # do modulo. Aqui a generate_monthly_review usava get_db() na linha ~740 e
+        # este import a tornava local: a revisao MENSAL estava quebrada pelo mesmo
+        # UnboundLocalError, sem ninguem ter notado.
         from services.detectors._base import emit_signal, make_signal_hash
         delta_txt = f" (delta {delta_eng:+.2f}pp)" if delta_eng is not None else ""
         with get_db() as _c:

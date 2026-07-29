@@ -345,20 +345,37 @@ async def health_check():
 
 
 # Cache do status da API Claude (evita checar a cada request)
-_claude_api_status = {"status": "unknown", "checked_at": None, "detail": ""}
+_claude_api_status = {"status": "unknown", "checked_at": None, "detail": "",
+                      "consecutive_failures": 0}
 
 
 @app.get("/api/ai/status")
 async def ai_api_status():
-    """Verifica se a API Claude esta funcional (com cache de 1h)"""
+    """Verifica se a API Claude esta funcional.
+
+    30/07: o banner "API Claude indisponivel" ficava na home com o campo de
+    DETALHE VAZIO. Medido em prod: {"status":"error","detail":""} — e detail vazio
+    e a assinatura de timeout do httpx, porque `str(ReadTimeout())` e string vazia.
+    Somado ao cache unico de 1h, UM timeout de 10s pintava erro na home por uma
+    hora sem dizer o motivo, com o chat funcionando (2 conversas naquele mesmo dia).
+
+    Tres mudancas:
+      - detail NUNCA vazio: cai pro nome da excecao quando str(e) nao diz nada.
+      - cache ASSIMETRICO: sucesso vale 1h (barato), falha vale 5min (precisa ser
+        reavaliada logo — o mundo pode ter voltado).
+      - uma falha isolada NAO acusa: a 1a vira 'unknown', que o front ja ignora
+        (`data.status !== 'ok' && data.status !== 'unknown'`); so a 2a consecutiva
+        virou 'error' e aparece. Erro real persiste e continua sendo mostrado.
+    """
     import httpx as hx
 
     global _claude_api_status
 
-    # Usar cache se checado ha menos de 1h
+    # Cache assimetrico: sucesso 1h, falha 5min.
     if _claude_api_status["checked_at"]:
         age = (datetime.now() - _claude_api_status["checked_at"]).total_seconds()
-        if age < 3600:  # 1 hora
+        ttl = 3600 if _claude_api_status.get("status") == "ok" else 300
+        if age < ttl:
             return _claude_api_status
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -383,19 +400,44 @@ async def ai_api_status():
             )
 
         if resp.status_code == 200:
-            _claude_api_status = {"status": "ok", "checked_at": datetime.now(), "detail": "API funcionando"}
+            _claude_api_status = {"status": "ok", "checked_at": datetime.now(),
+                                  "detail": "API funcionando", "consecutive_failures": 0}
         elif "credit balance" in resp.text.lower():
+            # Saldo zerado nao e transitorio — acusa na primeira, sem carencia.
             _claude_api_status = {"status": "no_credits", "checked_at": datetime.now(),
-                                   "detail": "Saldo insuficiente. Recarregue em console.anthropic.com"}
+                                  "detail": "Saldo insuficiente. Recarregue em console.anthropic.com",
+                                  "consecutive_failures": 0}
         elif resp.status_code == 401:
-            _claude_api_status = {"status": "invalid_key", "checked_at": datetime.now(), "detail": "API key invalida"}
+            _claude_api_status = {"status": "invalid_key", "checked_at": datetime.now(),
+                                  "detail": "API key invalida", "consecutive_failures": 0}
         else:
-            _claude_api_status = {"status": "error", "checked_at": datetime.now(), "detail": f"Erro {resp.status_code}"}
+            _claude_api_status = _degraded(f"HTTP {resp.status_code}")
 
     except Exception as e:
-        _claude_api_status = {"status": "error", "checked_at": datetime.now(), "detail": str(e)}
+        # str(e) de um httpx.ReadTimeout e VAZIO — era exatamente o que deixava o
+        # banner sem motivo. Nome da classe sempre diz algo.
+        motivo = str(e).strip() or f"{type(e).__name__} (sem mensagem)"
+        _claude_api_status = _degraded(motivo)
 
     return _claude_api_status
+
+
+def _degraded(motivo: str) -> dict:
+    """Monta o status de falha aplicando a carencia de 1 tentativa.
+
+    A 1a falha vira 'unknown' — o front ignora esse valor de proposito, entao nao
+    aparece banner por soluco transitorio. A 2a consecutiva vira 'error' e e
+    mostrada. Falha real nao escapa: ela persiste e na proxima checagem (5min de
+    TTL) passa do limite.
+    """
+    anteriores = (_claude_api_status or {}).get("consecutive_failures") or 0
+    falhas = anteriores + 1
+    return {
+        "status": "error" if falhas >= 2 else "unknown",
+        "checked_at": datetime.now(),
+        "detail": motivo if falhas >= 2 else f"{motivo} (1a falha — reavaliando)",
+        "consecutive_failures": falhas,
+    }
 
 # reset-db REMOVIDO por segurança (era acessível sem auth)
 
@@ -24822,7 +24864,16 @@ async def cron_editorial_weekly_briefing(request: Request):
         except Exception as e:
             out["notify_error"] = str(e)
 
-    out["status"] = "ok" if out.get("briefing_status") == "ok" or selection_count > 0 else "error"
+    # 30/07: era `briefing_status == "ok" OR selection_count > 0`, e o OR mentia.
+    # Em 26/07 a selecao achou 1 post (selection_count=1) e o briefing morreu com
+    # UnboundLocalError — o job gravou status="ok" em cron_runs com o erro escondido
+    # dentro de result_json.briefing_error. Efeito pratico: o gerador de tasks
+    # semanais do editorial estava morto desde ~19/07 e NENHUM alerta disparou,
+    # porque quem monitora cron le o `status`. Duas metades independentes exigem
+    # AND: se qualquer uma falhar, o job falhou.
+    briefing_ok = out.get("briefing_status") == "ok"
+    selection_ok = selection_count > 0 or out.get("selection_skipped") is True
+    out["status"] = "ok" if (briefing_ok and selection_ok) else "error"
     return out
 
 

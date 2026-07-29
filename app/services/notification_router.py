@@ -96,9 +96,15 @@ def _rule_meeting_soon_unconfirmed(payload: Dict) -> bool:
         if not meeting_at:
             return False
         try:
-            from datetime import datetime, timezone
+            # 30/07: nao reimportar `datetime` aqui — o modulo ja o traz no topo, e
+            # um import local torna o nome LOCAL em toda a funcao. Hoje era inofensivo
+            # (o uso vem depois), mas um uso adicionado ACIMA desta linha viraria
+            # UnboundLocalError silencioso — e esta e a regra que fura o teto e o
+            # silencio por produtor: se ela quebra, reuniao em <30min para de
+            # interromper. Mesma classe que matou o gerador editorial (2 casos em
+            # editorial_pdca). UTC vem de services.tz, convencao do CLAUDE.md.
             ts = datetime.fromisoformat(str(meeting_at).replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             mins = int((ts - now).total_seconds() / 60)
         except (ValueError, TypeError):
             return False
