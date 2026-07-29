@@ -2004,6 +2004,56 @@ REGRAS:
     return None
 
 
+async def _reconcile_raci(reuniao_id: str) -> dict | None:
+    """Pede ao INTEL a reconciliação do RACI contra a ata desta reunião.
+
+    A lógica mora no INTEL (é lá que vivem a fila de propostas, os guardrails e o
+    acesso aos dois bancos). O worker só dispara — duplicar a regra aqui criaria
+    a segunda cópia que diverge.
+    """
+    url = f"{INTEL_API_URL.rstrip('/')}/api/raci/reconcile-ata"
+    headers = {"Content-Type": "application/json"}
+    if CRON_SECRET:
+        headers["Authorization"] = f"Bearer {CRON_SECRET}"
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        resp = await client.post(url, headers=headers, json={"reuniao_id": reuniao_id})
+    if resp.status_code != 200:
+        logger.warning(f"[ATA-BG] reconcile-ata http {resp.status_code}: {resp.text[:200]}")
+        return None
+    data = resp.json()
+    logger.info(f"[ATA-BG] reconciliacao: {data.get('atualizacoes')} atualizacao(oes), "
+                f"{data.get('novos')} novo(s), {len(data.get('nao_tratados') or [])} nao tratado(s)")
+    return data
+
+
+def _format_reconcile_wa(recon: dict) -> str:
+    """Linha de RACI da mensagem da ata. Curta de propósito: o detalhe está na
+    tela de revisão; aqui só o que decide se vale abrir."""
+    if recon.get("skipped"):
+        return "🔎 RACI: já reconciliado para esta reunião."
+    partes = []
+    total_prop = (recon.get("atualizacoes") or 0) + (recon.get("novos") or 0)
+    if total_prop:
+        partes.append(
+            f"🔎 RACI: {total_prop} proposta(s) pra revisar "
+            f"({recon.get('atualizacoes', 0)} atualização(ões), {recon.get('novos', 0)} item(ns) novo(s))."
+        )
+    else:
+        partes.append("🔎 RACI: nada a propor a partir desta ata.")
+    nao_tratados = recon.get("nao_tratados") or []
+    if nao_tratados:
+        # Regra do Renato: não fecha por silêncio. Mas o silêncio precisa ser
+        # visível — é exatamente assim que nasceram os fósseis de junho.
+        partes.append(f"⏳ {len(nao_tratados)} item(ns) aberto(s) de reuniões anteriores "
+                      f"não foram tratados nesta reunião (seguem abertos):")
+        for it in nao_tratados[:5]:
+            desde = f" (de {it['reuniao_data']})" if it.get("reuniao_data") else ""
+            partes.append(f"   • {(it.get('acao') or '')[:70]}{desde}")
+        if len(nao_tratados) > 5:
+            partes.append(f"   • …e mais {len(nao_tratados) - 5}.")
+    return "\n".join(partes)
+
+
 @app.post("/generate-ata")
 async def generate_ata_endpoint(request: Request):
     """
@@ -2182,11 +2232,25 @@ REGRAS CRÍTICAS:
                     "ata_md": ata_md
                 }, status_code=200)
 
-        # Notify via WhatsApp
+        # Reconciliação do RACI contra a ata (3ª peça, 29/07). Roda DEPOIS de a
+        # ata estar salva — ela lê `ata_md` do banco. Falha graciosa: ata gerada
+        # é o produto principal, e uma reconciliação que quebre não pode fazer
+        # parecer que a ata falhou.
+        recon_linha = ""
+        try:
+            recon = await _reconcile_raci(reuniao_id)
+            if recon:
+                recon_linha = "\n" + _format_reconcile_wa(recon)
+        except Exception as e:
+            logger.warning(f"[ATA-BG] reconciliacao RACI falhou (nao bloqueia): {e}")
+
+        # Notify via WhatsApp — uma mensagem só, com ata + RACI. Duas
+        # notificações para o mesmo evento gastariam duas vagas do teto diário.
         try:
             await _send_response(
                 os.getenv("RENATO_PHONE", "5511984153337"),
-                f"✅ Ata gerada para {empresa_nome} ({data_reuniao}). {len(ata_md)} chars. Recarregue a página."
+                f"✅ Ata gerada para {empresa_nome} ({data_reuniao}). {len(ata_md)} chars. "
+                f"Recarregue a página.{recon_linha}"
             )
         except Exception:
             pass
