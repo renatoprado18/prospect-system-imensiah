@@ -27,7 +27,11 @@ body{
   font-family:'Montserrat',system-ui,sans-serif; font-size:14px; line-height:1.5;
   padding:28px 20px 60px;
 }
-.sheet{max-width:1080px;margin:0 auto}
+/* Na TELA a folha usa a largura disponível: as notas de ata do ConselhoOS têm
+   parágrafos inteiros, e em 1080px a coluna de ação virava uma torre de texto
+   de ~340px. No papel isso não vale — o @page manda, e a regra de print
+   mantém as proporções de A4 paisagem. */
+.sheet{max-width:min(1600px, 96vw);margin:0 auto}
 
 /* ---------- cabeçalho ---------- */
 .head{
@@ -84,14 +88,39 @@ thead th{
   padding:11px 12px;text-align:left;white-space:nowrap;
 }
 tbody td{padding:12px;border-top:1px solid var(--border);vertical-align:top}
-tbody tr{page-break-inside:avoid;break-inside:avoid}
-tbody tr:hover{background:#fff}
-.acao{font-weight:600;max-width:340px}
+/* O item é o <tbody> (ação + nota). A separação visual e a quebra de página
+   valem pro PAR, não pra cada <tr>: borda entre a ação e a própria nota
+   partiria o item em dois no olho, e no PDF as duas linhas iriam pra páginas
+   diferentes. */
+tbody.item{page-break-inside:avoid;break-inside:avoid}
+tbody.item:hover td{background:#fff}
+tbody.item .nota-row td{border-top:none;padding:0 12px 14px}
+.nota-row .notas{margin-top:0}
+/* Larguras explícitas TAMBÉM na tela (o print já tinha as dele). Sem isso o
+   navegador distribui por conteúdo e as notas longas do ConselhoOS empurram
+   R/A/C/I/prazo, ou o contrário: uma ação curta deixa a coluna estreita
+   enquanto a nota de 600 caracteres se espreme nela. */
+table{table-layout:fixed}
+th:nth-child(1),td:nth-child(1){width:34%}
+th:nth-child(2),td:nth-child(2),
+th:nth-child(3),td:nth-child(3),
+th:nth-child(4),td:nth-child(4),
+th:nth-child(5),td:nth-child(5){width:9.5%}
+th:nth-child(6),td:nth-child(6){width:8.5%}
+th:nth-child(7),td:nth-child(7){width:7.5%}
+th:nth-child(8),td:nth-child(8){width:56px}
+.acao{font-weight:600}
+.papel{white-space:normal;word-break:break-word}
 .acao .area{
   display:block;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--gold-deep);font-weight:600;margin-bottom:3px;
 }
-.acao .notas{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:4px}
+/* `pre-wrap` porque as notas de ata guardam as entradas separadas por \n
+   ("[22/06] ...\n[03/07] ..."). Sem isso o HTML colapsa as quebras e as
+   entradas grudam ("com o grupo.[09/06 reuniao] Estrutura"), que é justamente
+   onde se lê a cronologia do item. */
+.notas{display:block;font-weight:400;font-size:12.5px;line-height:1.55;
+       color:var(--muted);margin-top:5px;white-space:pre-wrap}
 .papel{font-size:12.5px;white-space:nowrap}
 .papel.vazio{color:#c9bfb2}
 .prazo{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap}
@@ -119,13 +148,25 @@ tbody tr:hover{background:#fff}
 .edit{cursor:text;border-radius:4px;transition:.12s;display:inline-block;min-width:14px}
 .edit:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--frame)}
 td.edit{display:table-cell}
+/* Ação e notas ocupam a célula inteira: como `span` inline-block, o editor
+   herdava a largura do TEXTO (uma ação curta dava um campo de 3 dedos pra
+   escrever uma frase inteira). */
+.edit-bloco{display:block;width:100%}
 .add{color:#c9bfb2;font-weight:400;font-style:italic;font-size:11px}
 .inline-edit{
-  width:100%;min-width:110px;padding:5px 7px;border:1px solid var(--gold);
+  width:100%;padding:6px 8px;border:1px solid var(--gold);
   border-radius:4px;background:#fff;color:var(--ink);
   font-family:'Montserrat',sans-serif;font-size:12.5px;
 }
+textarea.inline-edit{
+  min-height:76px;line-height:1.55;resize:vertical;display:block;
+  font-size:13px;
+}
 .inline-edit:focus{outline:none;box-shadow:0 0 0 2px rgba(195,149,83,.22)}
+.dica-edicao{
+  display:block;margin-top:3px;font-size:10px;color:var(--muted);
+  font-family:'JetBrains Mono',monospace;
+}
 .legenda-edicao{font-size:11px;color:var(--muted);margin:-6px 0 14px}
 .legenda-edicao b{color:var(--gold-deep);font-weight:600}
 
@@ -225,7 +266,10 @@ td.edit{display:table-cell}
      branco. No papel não há canto arredondado a proteger. */
   table{border-radius:0;table-layout:fixed;overflow:visible}
   .acao{max-width:none}
-  .acao .notas{font-size:7.5pt}
+  /* A nota deixou de viver dentro de `.acao` (virou linha própria com
+     colspan) — o seletor antigo `.acao .notas` não a alcançava mais e ela
+     saía no papel em tamanho de tela. */
+  .notas{font-size:7.5pt;line-height:1.4}
   .prazo{font-size:8pt}
   .pill{font-size:6.5pt;padding:2px 7px}
   /* ação · R · A · C · I · prazo · status */
@@ -243,6 +287,13 @@ td.edit{display:table-cell}
   .add{display:none}
   .edit:hover{background:none;box-shadow:none}
   #toast{display:none}
+  /* Linha de nota sem nota é só o convite "+ nota", que já some no papel —
+     sobraria uma faixa em branco por item. */
+  .nota-row.vazia{display:none}
+  .nota-row td{padding:0 8px 8px}
+  /* `td:nth-child(1)` do print vale 30%, mas a nota é colspan=8: a regra de
+     largura não pode alcançá-la, senão a nota volta a ser espremida. */
+  .nota-row td[colspan]{width:auto}
 }
 @media(max-width:760px){
   #form-novo{grid-template-columns:1fr}
@@ -344,6 +395,17 @@ const esc = s => (s ?? '').toString()
 const LABELS = {atrasado:'Atrasado', pendente:'Pendente',
                 em_andamento:'Em andamento', concluido:'Concluído'};
 
+// As notas do ConselhoOS empilham as entradas de ata SEM quebra de linha —
+// "…com o grupo.[09/06 reuniao] Estrutura…" — porque quem as gera concatena
+// direto. Com `pre-wrap` isso continuaria um paredão, então a quebra entra
+// aqui, antes de cada marcador [dd/mm]. É formatação de LEITURA: o editor
+// mostra o texto cru, que é o que de fato está gravado, e nada é reescrito na
+// fonte. (Notas que já vêm com \n — as do `apply_proposal` — quebram sozinhas
+// pelo pre-wrap.)
+const notaLegivel = s => esc(s).replace(
+  /\s*(\[\d{1,2}\/\d{1,2}[^\]]*\])/g,
+  (achado, marcador, pos) => (pos === 0 ? marcador : '\n' + marcador));
+
 async function carregar(){
   const url = `/api/projects/${PROJECT_ID}/raci` + (filtro ? `?status=${filtro}` : '');
   const r = await fetch(url);
@@ -391,7 +453,7 @@ function render(){
     ? `Clique em qualquer célula pra editar. Itens marcados <b>ConselhoOS</b>
        gravam <b>no ConselhoOS</b> (não aqui) e lá o prazo é obrigatório —
        remover item de conselho só de lá.`
-    : 'Clique em qualquer célula pra editar. <b>Enter</b> salva, <b>Esc</b> cancela.';
+    : 'Clique em qualquer célula pra editar. <b>Enter</b> salva (<b>Cmd/Ctrl+Enter</b> em ação e notas), <b>Esc</b> cancela.';
 
   if(!dados.itens.length){
     document.getElementById('tabela').innerHTML =
@@ -407,7 +469,7 @@ function render(){
         <th>Ação</th><th>R — executa</th><th>A — dono</th><th>C — consultado</th>
         <th>I — informado</th><th>Prazo</th><th>Status</th><th class="no-print"></th>
       </tr></thead>
-      <tbody>${dados.itens.map(linha).join('')}</tbody>
+      ${dados.itens.map(linha).join('')}
     </table>`;
 }
 
@@ -425,22 +487,36 @@ function linha(it){
     rel = d < 0 ? `${-d}d em atraso` : d === 0 ? 'hoje' : `em ${d}d`;
   }
 
-  return `<tr>
-    <td class="acao">
-      <span class="area edit" onclick="editar('${u}','area',this)">${
-        it.area ? esc(it.area) : '<span class="add">+ área</span>'}</span>
-      <span class="edit" onclick="editar('${u}','acao',this)">${esc(it.acao)}</span>
-      ${mostrarNotas ? `<span class="notas edit" onclick="editar('${u}','notas',this)">${
-        it.notas ? esc(it.notas) : '<span class="add">+ nota</span>'}</span>` : ''}
-      ${it.fonte === 'conselhoos' ? '<span class="fonte">ConselhoOS</span>' : ''}
-    </td>
-    ${papel('r', it.r)}${papel('a', it.a)}${papel('c', it.c)}${papel('i', it.i)}
-    ${cel('prazo', `${it.prazo_br || '<span class="add">+ prazo</span>'}${
-      rel ? `<span class="rel">${rel}</span>` : ''}`, 'prazo')}
-    ${cel('status', `<span class="pill ${it.status_efetivo}">${esc(it.status_label)}</span>`, '')}
-    <td class="no-print acoes-linha">${it.removivel
-      ? `<button onclick="remover('${u}')">×</button>` : ''}</td>
-  </tr>`;
+  // Cada item é um <tbody> com 2 linhas: a matriz em si e a nota em largura
+  // TOTAL. A nota é contexto do item inteiro, não da coluna "Ação" — espremê-la
+  // em 1/3 da tabela fazia uma nota de ata virar uma torre de 20 linhas ao lado
+  // de 6 colunas vazias. O <tbody> por item existe pra que `break-inside:avoid`
+  // mantenha ação e nota na MESMA página do PDF (duas <tr> soltas se separam).
+  const temNota = mostrarNotas && (it.notas || it.editavel);
+  const linhaNota = temNota ? `
+    <tr class="nota-row${it.notas ? '' : ' vazia'}">
+      <td colspan="8">
+        <span class="notas edit edit-bloco" onclick="editar('${u}','notas',this)">${
+          it.notas ? notaLegivel(it.notas) : '<span class="add">+ nota</span>'}</span>
+      </td>
+    </tr>` : '';
+
+  return `<tbody class="item">
+    <tr>
+      <td class="acao">
+        <span class="area edit" onclick="editar('${u}','area',this)">${
+          it.area ? esc(it.area) : '<span class="add">+ área</span>'}</span>
+        <span class="edit edit-bloco" onclick="editar('${u}','acao',this)">${esc(it.acao)}</span>
+        ${it.fonte === 'conselhoos' ? '<span class="fonte">ConselhoOS</span>' : ''}
+      </td>
+      ${papel('r', it.r)}${papel('a', it.a)}${papel('c', it.c)}${papel('i', it.i)}
+      ${cel('prazo', `${it.prazo_br || '<span class="add">+ prazo</span>'}${
+        rel ? `<span class="rel">${rel}</span>` : ''}`, 'prazo')}
+      ${cel('status', `<span class="pill ${it.status_efetivo}">${esc(it.status_label)}</span>`, '')}
+      <td class="no-print acoes-linha">${it.removivel
+        ? `<button onclick="remover('${u}')">×</button>` : ''}</td>
+    </tr>${linhaNota}
+  </tbody>`;
 }
 
 function filtrar(s){ filtro = (filtro === s) ? null : s; carregar(); }
@@ -477,6 +553,8 @@ async function criar(e){
 
 const API_CAMPO = {r:'responsavel_r', a:'responsavel_a',
                    c:'responsavel_c', i:'responsavel_i'};
+// Texto corrido -> textarea. O resto cabe numa linha.
+const CAMPOS_LONGOS = ['acao', 'notas'];
 const VALOR_ATUAL = (it, campo) => ({
   r:it.r, a:it.a, c:it.c, i:it.i,
   area:it.area, acao:it.acao, notas:it.notas, prazo:it.prazo, status:it.status
@@ -503,6 +581,13 @@ function editar(uid, campo, el){
     if(it.status === 'atrasado') opcoes.unshift('atrasado');
     campoEl.innerHTML = opcoes.map(s =>
       `<option value="${s}"${s === it.status ? ' selected' : ''}>${LABELS[s]}</option>`).join('');
+  } else if(CAMPOS_LONGOS.includes(campo)){
+    // Ação e nota são texto corrido — as notas de ata do ConselhoOS têm
+    // parágrafos. Num <input> de uma linha só dá pra ver ~40 caracteres de
+    // 600, e editar vira adivinhação.
+    campoEl = document.createElement('textarea');
+    campoEl.value = atual;
+    campoEl.rows = Math.min(16, Math.max(3, Math.ceil(atual.length / 55) + 1));
   } else {
     campoEl = document.createElement('input');
     campoEl.type = campo === 'prazo' ? 'date' : 'text';
@@ -513,8 +598,23 @@ function editar(uid, campo, el){
 
   el.innerHTML = '';
   el.appendChild(campoEl);
+  if(CAMPOS_LONGOS.includes(campo)){
+    const dica = document.createElement('span');
+    dica.className = 'dica-edicao';
+    dica.textContent = 'Cmd/Ctrl+Enter salva · Esc cancela · Enter quebra linha';
+    el.appendChild(dica);
+  }
   campoEl.focus();
-  if(campoEl.select) campoEl.select();
+  if(CAMPOS_LONGOS.includes(campo)){
+    // Cursor no fim, SEM selecionar: numa nota de ata inteira, texto
+    // pré-selecionado significa que a primeira tecla apaga tudo. Quem abre uma
+    // nota de 600 caracteres vai acrescentar, não substituir.
+    const fim = campoEl.value.length;
+    campoEl.setSelectionRange(fim, fim);
+    campoEl.scrollTop = campoEl.scrollHeight;
+  } else if(campoEl.select){
+    campoEl.select();
+  }
 
   let fechou = false;
   const restaurar = () => { el.innerHTML = original; editando = false; };
@@ -530,7 +630,12 @@ function editar(uid, campo, el){
 
   campoEl.addEventListener('blur', confirmar);
   campoEl.addEventListener('keydown', e => {
-    if(e.key === 'Enter'){ e.preventDefault(); campoEl.blur(); }
+    if(e.key === 'Enter'){
+      // No textarea, Enter é quebra de linha — salvar ali tornaria impossível
+      // escrever a segunda linha de uma nota.
+      if(CAMPOS_LONGOS.includes(campo) && !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault(); campoEl.blur();
+    }
     if(e.key === 'Escape'){ e.preventDefault(); cancelar(); }
   });
   // No select o `change` já decide; o blur que vem logo depois cai no guarda
