@@ -562,6 +562,15 @@ const VALOR_ATUAL = (it, campo) => ({
 
 let editando = false;
 
+// Altura pelo CONTEÚDO RENDERIZADO, não por contagem de caracteres. A conta
+// antiga (~55 chars/linha) valia quando a nota morava na coluna estreita;
+// agora que ela ocupa a largura toda cabem ~150, e a caixa abria com o triplo
+// da altura do texto — dez linhas em branco empurrando a página.
+function ajustarAltura(el){
+  el.style.height = 'auto';
+  el.style.height = Math.min(420, el.scrollHeight + 4) + 'px';
+}
+
 function editar(uid, campo, el){
   if(editando) return;               // um editor por vez: dois abertos, o
   editando = true;                   // segundo blur restauraria HTML velho
@@ -587,7 +596,7 @@ function editar(uid, campo, el){
     // 600, e editar vira adivinhação.
     campoEl = document.createElement('textarea');
     campoEl.value = atual;
-    campoEl.rows = Math.min(16, Math.max(3, Math.ceil(atual.length / 55) + 1));
+    campoEl.rows = 2;   // ponto de partida; a altura real vem do conteúdo abaixo
   } else {
     campoEl = document.createElement('input');
     campoEl.type = campo === 'prazo' ? 'date' : 'text';
@@ -604,6 +613,7 @@ function editar(uid, campo, el){
     dica.textContent = 'Cmd/Ctrl+Enter salva · Esc cancela · Enter quebra linha';
     el.appendChild(dica);
   }
+  if(CAMPOS_LONGOS.includes(campo)) ajustarAltura(campoEl);
   campoEl.focus();
   if(CAMPOS_LONGOS.includes(campo)){
     // Cursor no fim, SEM selecionar: numa nota de ata inteira, texto
@@ -638,6 +648,10 @@ function editar(uid, campo, el){
     }
     if(e.key === 'Escape'){ e.preventDefault(); cancelar(); }
   });
+  // Cresce enquanto escreve — senão uma nota que ganha 3 parágrafos passa a
+  // ser editada por uma janelinha com scroll.
+  if(CAMPOS_LONGOS.includes(campo))
+    campoEl.addEventListener('input', () => ajustarAltura(campoEl));
   // No select o `change` já decide; o blur que vem logo depois cai no guarda
   // `fechou` e não dispara um segundo PATCH.
   if(campo === 'status') campoEl.addEventListener('change', confirmar);
