@@ -805,7 +805,10 @@ async def generate_cos_briefing_narrative(
             text = result.get("content", [{}])[0].get("text", "").strip()
             if not text:
                 return None
-            # WhatsApp seguro: limite duro 1600 chars (margem do limite de 4096)
+            # Limite duro de 1600 chars por BREVIDADE, não por limite de canal:
+            # briefing que não cabe numa tela deixa de ser briefing. (O comentário
+            # antigo dizia "margem do limite de 4096" — esse corte da Evolution
+            # não existe; medido em 29/07, ela entrega 6.463 chars inteiros.)
             if len(text) > 1600:
                 text = text[:1597] + "..."
             return text
