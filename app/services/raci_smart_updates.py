@@ -69,6 +69,43 @@ class RaciItemNotFound(RaciApplyError):
 class RaciNoChange(RaciApplyError):
     """Item existe mas a proposta nao muda nada (item ja esta no estado alvo)."""
 
+
+class RaciDowngradeBlocked(RaciApplyError):
+    """Proposta AUTOMATICA tentou andar pra tras (ex.: concluido -> pendente)."""
+
+
+# ── Trava de rebaixamento (29/07) ────────────────────────────────────────────
+# O apply so comparava `new_status != status_atual`: qualquer status diferente
+# passava, inclusive PRA TRAS. Como o webhook auto-aplica tudo que a IA marca
+# como confianca 'alta', uma mensagem no grupo tipo "isso ainda nao esta certo"
+# sobre um item ja fechado podia reabri-lo sozinha — e o Renato veria o item
+# que ele deu por concluido voltar sem ninguem ter decidido isso.
+#
+# Medido no Neon prod antes de mexer: 17 applies historicos, 1 rebaixamento
+# (em_andamento -> pendente, 08/06) e NENHUM a partir de `concluido`. Ou seja,
+# risco latente, nao incendio — o path consegue fazer, so nao fez ainda.
+#
+# `atrasado` empata com `pendente` de propósito: no ConselhoOS ele e um valor
+# gravado, e pendente<->atrasado e reclassificacao de prazo, nao retrocesso.
+#
+# A trava vale so pro caminho AUTOMATICO. Quando o Renato aprova a proposta na
+# tela (`apply_group_proposal`), rebaixar e decisao dele — ver `allow_downgrade`.
+_STATUS_RANK = {"pendente": 0, "atrasado": 0, "em_andamento": 1, "concluido": 2}
+
+
+def is_downgrade(old_status: Optional[str], new_status: Optional[str]) -> bool:
+    """True quando `new_status` anda pra tras em relacao a `old_status`.
+
+    Status desconhecido dos dois lados devolve False: inventar ordem pra valor
+    que nao esta na escala bloquearia update legitimo por engano.
+    """
+    old = _STATUS_RANK.get((old_status or "").strip().lower())
+    new = _STATUS_RANK.get((new_status or "").strip().lower())
+    if old is None or new is None:
+        return False
+    return new < old
+
+
 # Tamanho minimo de msg pra rodar AI (filtra "ok", "👍", reactions)
 MIN_TEXT_LEN_FOR_AI = 12
 
@@ -371,7 +408,8 @@ Responda APENAS o JSON array."""
         return []
 
 
-def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False) -> Optional[Dict]:
+def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
+                   allow_downgrade: bool = False) -> Optional[Dict]:
     """Aplica 1 proposta no DB + audit log. Retorna {acao, old_status, new_status}
     pra UI/confirmacao no grupo.
 
@@ -385,7 +423,12 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False) -> Opt
       - RaciConfigError  -> CONSELHOOS_DATABASE_URL ausente/vazia (conexao, retryable);
       - RaciItemNotFound -> item_id realmente inexistente em raci_itens;
       - RaciNoChange     -> item existe mas a proposta nao muda nada (no-op);
-      - RaciApplyError   -> excecao de DB inesperada."""
+      - RaciApplyError   -> excecao de DB inesperada.
+
+    allow_downgrade=False (default): recusa andar pra tras (ver `is_downgrade`).
+    O desfecho NAO e um None mudo — devolve {'blocked': 'downgrade', ...} pra que
+    o chamador consiga transformar a proposta em revisao humana em vez de a
+    mensagem sumir. Quem ja passou por aprovacao do Renato passa True."""
     import psycopg2, psycopg2.extras
     url = _conselhoos_url()
     if not url:
@@ -408,6 +451,18 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False) -> Opt
         sets = []
         params = []
         new_status = proposal.get('new_status')
+        if (new_status and not allow_downgrade
+                and is_downgrade(target['status'], new_status)):
+            conn.close()
+            motivo = (f"proposta automatica tentou {target['status']} -> {new_status} "
+                      f"em '{(target['acao'] or '')[:60]}'")
+            logger.warning("RACI downgrade bloqueado: %s", motivo)
+            if strict:
+                raise RaciDowngradeBlocked(motivo)
+            # Nao aplica NEM engole: vira revisao humana no chamador.
+            return {"blocked": "downgrade", "item_id": str(target['id']),
+                    "acao": target['acao'], "old_status": target['status'],
+                    "new_status": new_status, "motivo": motivo}
         if new_status and new_status != target['status']:
             sets.append("status = %s"); params.append(new_status)
         if proposal.get('new_prazo'):
@@ -611,11 +666,22 @@ async def extract_text_from_media(message: Dict, message_key: Dict, instance: st
 
 
 def format_pending_review_wa(pending: List[Dict], empresa_nome: str = "") -> str:
-    """Texto do aviso de propostas media-confianca esperando aprovacao."""
+    """Texto do aviso de propostas esperando aprovacao (media confianca + as
+    bloqueadas por rebaixamento).
+
+    A reabertura sai MARCADA e com o estado atual do item: "propor pendente" e
+    ambiguo demais pra decidir sobre um item que ja estava fechado — sem ver o
+    `concluido ->` do lado, o Renato aprovaria sem saber que esta desfazendo."""
     lines = [f"⚠️ Update RACI {empresa_nome or 'empresa'} precisa aprovacao:"]
     for p in pending:
+        bloq = p.get("_blocked") or {}
         lines.append(f"- _{(p.get('evidencia') or '')[:80]}_")
-        lines.append(f"  → propor {p.get('new_status') or 'note'} (conf {p.get('confianca')})")
+        if bloq:
+            lines.append(f"  ↩️ REABRIR *{(bloq.get('acao') or '')[:50]}*: "
+                         f"{bloq.get('old_status')} → {bloq.get('new_status')} "
+                         f"(nao apliquei sozinha)")
+        else:
+            lines.append(f"  → propor {p.get('new_status') or 'note'} (conf {p.get('confianca')})")
     lines.append("\nResponda no app /editorial ou edite manual no ConselhoOS.")
     return "\n".join(lines)
 
@@ -646,6 +712,12 @@ async def process_group_message(text: str, empresa_id: str, empresa_nome: str = 
     try:
         from services.raci_weekly_report import parse_raci_update
         regex_result = parse_raci_update(text, empresa_id)
+        if regex_result and regex_result.get("blocked"):
+            # NAO entra em `applied`: o webhook responde "✅ Atualizado" pra tudo
+            # que sai ali, e confirmar no grupo uma mudanca que nao aconteceu e
+            # pior que nao responder — vira fato falso pros outros conselheiros.
+            return {"applied": [], "pending_review": [], "skipped_low": 0,
+                    "blocked": [regex_result], "source": "regex"}
         if regex_result:
             return {"applied": [regex_result], "pending_review": [], "skipped_low": 0, "source": "regex"}
     except Exception as e:
@@ -663,7 +735,13 @@ async def process_group_message(text: str, empresa_id: str, empresa_nome: str = 
         conf = (p.get('confianca') or '').lower()
         if conf == 'alta':
             r = apply_proposal(p, empresa_id)
-            if r: applied.append(r)
+            if r and r.get('blocked') == 'downgrade':
+                # Rebaixamento nunca e automatico, nem com confianca alta: vira
+                # proposta pro Renato. Descartar aqui perderia a mensagem — e a
+                # IA pode estar certa, so nao pode decidir isso sozinha.
+                pending.append({**p, "_blocked": r})
+            elif r:
+                applied.append(r)
         elif conf == 'media':
             pending.append(p)
         else:
@@ -790,7 +868,13 @@ async def process_week_for_empresa(
     if auto_apply:
         for p in out["high_confidence"]:
             r = apply_proposal(p, empresa_id)
-            if r:
+            if r and r.get('blocked') == 'downgrade':
+                # Mesma regra do webhook: nao anda pra tras sozinho. Cai em
+                # medium_confidence pra sair na revisao em vez de virar `applied`
+                # (que o chamador anuncia como feito).
+                out.setdefault("blocked_downgrade", []).append(r)
+                out["medium_confidence"].append({**p, "_blocked": r})
+            elif r:
                 out["applied"].append(r)
 
     return out

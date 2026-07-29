@@ -171,3 +171,101 @@ def test_nonstrict_db_exception_retorna_none(monkeypatch):
         raise RuntimeError("connection reset")
     monkeypatch.setattr(psycopg2, "connect", boom)
     assert apply_proposal(_prop(), "emp-1") is None
+
+
+# ───────────────── trava de rebaixamento (29/07) ─────────────────
+#
+# Contexto: o apply so comparava `new_status != status_atual`, entao QUALQUER
+# status diferente passava — inclusive pra tras. Como o webhook auto-aplica o
+# que a IA marca como confianca 'alta', uma mensagem no grupo podia reabrir
+# sozinha um item que o Renato ja tinha dado por concluido.
+#
+# Medido no Neon prod antes do fix: 17 applies, 1 rebaixamento (em_andamento ->
+# pendente, 08/06), nenhum a partir de `concluido`. Risco latente, nao incendio.
+
+from services.raci_smart_updates import (  # noqa: E402
+    RaciDowngradeBlocked,
+    is_downgrade,
+)
+
+
+def _row(status):
+    return {"id": ITEM_ID, "acao": "Revisar contrato", "status": status}
+
+
+@pytest.mark.parametrize("velho,novo", [
+    ("concluido", "pendente"),
+    ("concluido", "em_andamento"),
+    ("concluido", "atrasado"),
+    ("em_andamento", "pendente"),
+])
+def test_is_downgrade_pega_o_retrocesso(velho, novo):
+    assert is_downgrade(velho, novo) is True
+
+
+@pytest.mark.parametrize("velho,novo", [
+    ("pendente", "em_andamento"),
+    ("pendente", "concluido"),
+    ("em_andamento", "concluido"),
+    ("concluido", "concluido"),
+    ("pendente", "atrasado"),      # reclassificacao de prazo, nao retrocesso
+    ("atrasado", "pendente"),      # idem, na volta
+])
+def test_is_downgrade_nao_barra_progresso_nem_empate(velho, novo):
+    assert is_downgrade(velho, novo) is False
+
+
+@pytest.mark.parametrize("velho,novo", [
+    ("cancelado", "pendente"),     # status fora da escala dos dois lados
+    (None, "concluido"),
+    ("concluido", None),
+])
+def test_status_fora_da_escala_nao_vira_palpite(velho, novo):
+    """Inventar ordem pra valor desconhecido bloquearia update legitimo."""
+    assert is_downgrade(velho, novo) is False
+
+
+def test_auto_apply_nao_reabre_item_concluido(monkeypatch):
+    """O caso que motivou a trava: webhook nao desfaz conclusao sozinho."""
+    monkeypatch.setenv("CONSELHOOS_DATABASE_URL", "postgresql://fake")
+    conn = _patch_connect(monkeypatch, select_row=_row("concluido"))
+    r = apply_proposal(_prop(new_status="pendente"), "emp-1")
+    assert r["blocked"] == "downgrade"
+    assert r["old_status"] == "concluido" and r["new_status"] == "pendente"
+    assert conn.committed is False
+    assert not any("UPDATE" in sql.upper() for sql, _ in conn.cur.executed)
+
+
+def test_bloqueado_nao_e_none_mudo(monkeypatch):
+    """Devolver None faria a mensagem sumir: o chamador precisa conseguir
+    transformar a proposta em revisao humana."""
+    monkeypatch.setenv("CONSELHOOS_DATABASE_URL", "postgresql://fake")
+    _patch_connect(monkeypatch, select_row=_row("concluido"))
+    r = apply_proposal(_prop(new_status="em_andamento"), "emp-1")
+    assert r is not None and r.get("acao") == "Revisar contrato"
+
+
+def test_strict_levanta_erro_tipado(monkeypatch):
+    monkeypatch.setenv("CONSELHOOS_DATABASE_URL", "postgresql://fake")
+    _patch_connect(monkeypatch, select_row=_row("concluido"))
+    with pytest.raises(RaciDowngradeBlocked):
+        apply_proposal(_prop(new_status="pendente"), "emp-1", strict=True)
+
+
+def test_humano_que_aprovou_pode_reabrir(monkeypatch):
+    """apply_group_proposal passa allow_downgrade=True: a trava e contra o
+    automatico, nao contra o Renato desfazer um fechamento errado."""
+    monkeypatch.setenv("CONSELHOOS_DATABASE_URL", "postgresql://fake")
+    conn = _patch_connect(monkeypatch, select_row=_row("concluido"))
+    r = apply_proposal(_prop(new_status="pendente"), "emp-1", allow_downgrade=True)
+    assert r.get("blocked") is None
+    assert conn.committed is True
+
+
+def test_progresso_normal_segue_aplicando(monkeypatch):
+    """A trava nao pode custar o caso comum (o que o path faz 16 de 17 vezes)."""
+    monkeypatch.setenv("CONSELHOOS_DATABASE_URL", "postgresql://fake")
+    conn = _patch_connect(monkeypatch, select_row=_row("em_andamento"))
+    r = apply_proposal(_prop(new_status="concluido"), "emp-1")
+    assert r.get("blocked") is None
+    assert conn.committed is True

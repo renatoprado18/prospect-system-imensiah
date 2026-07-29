@@ -429,7 +429,12 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
     # "item nao encontrado no RACI" — que mandava quem revisa cacar um bug de
     # mapeamento que nao existe (o item_id resolve; ver relatorio do fix 22/07).
     try:
-        result = apply_proposal(proposal, row["empresa_id"], strict=True)
+        # allow_downgrade=True: aqui o Renato JA aprovou esta proposta na tela.
+        # A trava de 29/07 existe pra impedir que o webhook reabra item sozinho;
+        # bloquear tambem o caminho humano tiraria dele a unica forma de desfazer
+        # um fechamento errado pelo fluxo de revisao.
+        result = apply_proposal(proposal, row["empresa_id"], strict=True,
+                                allow_downgrade=True)
     except RaciConfigError as e:
         # Problema de ambiente (env do ConselhoOS), nao da proposta: NAO marca
         # apply_error (a proposta segue aplicavel assim que a conexao voltar).

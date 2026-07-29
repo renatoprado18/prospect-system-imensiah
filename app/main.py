@@ -15323,6 +15323,10 @@ async def raci_update_from_message(request: Request):
         raise HTTPException(400, "message and empresa_id required")
     from services.raci_weekly_report import parse_raci_update
     result = parse_raci_update(message, empresa_id)
+    if result and result.get("blocked"):
+        # Recusa explicita, nao "updated": a trava de 29/07 impede que o
+        # caminho automatico ande pra tras (ou grave status fora do enum).
+        return {"status": "blocked", **result}
     if result:
         return {"status": "updated", **result}
     return {"status": "no_match"}

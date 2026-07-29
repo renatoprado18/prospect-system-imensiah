@@ -639,7 +639,17 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
             elif any(w in status_text for w in ['andamento', 'iniciado', 'trabalhando', 'progress']):
                 new_status = 'em_andamento'
             elif any(w in status_text for w in ['cancelado', 'removido']):
-                new_status = 'cancelado'
+                # `cancelado` NAO existe no enum `raci_status` do ConselhoOS
+                # (pendente | em_andamento | concluido | atrasado). O UPDATE
+                # estouraria com InvalidTextRepresentation — nunca estourou
+                # porque este regex jamais casou em prod (0 registros de
+                # `parse_raci_update` em agent_actions, medido 29/07). Cancelar
+                # item de ata nao tem representacao aqui: devolve o motivo em
+                # vez de gravar um valor que o banco recusa.
+                logger.info("RACI: 'cancelado' pedido por WA — sem equivalente no enum")
+                return {"blocked": "status_inexistente", "pedido": "cancelado",
+                        "motivo": "cancelar item nao existe no RACI — "
+                                  "edite no ConselhoOS ou marque concluido"}
             else:
                 continue
 
@@ -669,6 +679,25 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
                     return None
 
                 target = ordered[item_num - 1]
+
+                # Mesma trava do apply da IA (29/07): resposta no grupo nao
+                # anda pra tras. Aqui pesa ainda mais que la, porque a
+                # numeracao vem de uma lista RE-GERADA no momento da resposta —
+                # se algo mudou desde o envio do relatorio, o "5" do Renato
+                # pode estar apontando pra outro item. Bloquear o retrocesso
+                # limita o estrago desse desalinhamento a um no-op.
+                from services.raci_smart_updates import is_downgrade
+                if is_downgrade(target['status'], new_status):
+                    logger.warning(
+                        "RACI regex: bloqueado %s -> %s no item #%s ('%s')",
+                        target['status'], new_status, item_num,
+                        (target['acao'] or '')[:50])
+                    return {"blocked": "downgrade", "item_id": str(target['id']),
+                            "acao": target['acao'], "old_status": target['status'],
+                            "new_status": new_status,
+                            "motivo": f"item ja esta '{target['status']}' — "
+                                      f"reabrir so pelo INTEL ou ConselhoOS"}
+
                 # Reabre conexao pra UPDATE
                 conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
                 cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
