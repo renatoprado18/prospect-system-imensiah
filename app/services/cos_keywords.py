@@ -11,7 +11,9 @@ frente do PRIMEIRO match (frente menor = peso maior por convenção v5).
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 import unicodedata
 from typing import List, Optional, Tuple
 
@@ -44,8 +46,61 @@ def _keyword_matches(kw_norm: str, text_norm: str) -> bool:
     return kw_norm in text_norm
 
 
+# ============================================================================
+# CACHE DAS KEYWORDS (29/07/2026) — era 1 CONEXAO AO BANCO POR CHAMADA.
+# ============================================================================
+# `_load_keywords` abria conexao + query e era chamada DENTRO de
+# `is_frente_keyword`, que roda uma vez por item do chamador. Em
+# `circulos.get_prioridades_por_contexto` isso da uma conexao por contato:
+# medido 57 keywords contra 1.586 contatos = 1.586 conexoes ao Neon por request.
+#
+# Era a causa dos 31s de /api/contacts/needs-attention (medido 3x: 31,5 / 31,1 /
+# 30,4s), o spinner eterno da home. As queries em si sao rapidas — a soma delas
+# da ~15ms; o custo era 100% abertura de conexao. Da maquina local, com SSL +
+# latencia por conexao, a mesma chamada passava de 7 MINUTOS.
+#
+# Nao e so essa tela: `notification_router` e `email_triage` tambem chamam
+# is_frente_keyword em hot path.
+#
+# TTL curto em vez de lru_cache permanente: a tabela e editavel e nao quero
+# depender de achar todo ponto de escrita pra invalidar. 60s zera o N+1 dentro
+# de um request e mantem a edicao visivel em menos de um minuto.
+# COS_KEYWORDS_CACHE_TTL=0 desliga o cache (volta ao comportamento anterior).
+_KEYWORDS_CACHE: Optional[List[Tuple[int, str]]] = None
+_KEYWORDS_CACHE_AT: float = 0.0
+
+
+def _cache_ttl() -> float:
+    raw = (os.getenv("COS_KEYWORDS_CACHE_TTL") or "").strip()
+    if not raw:
+        return 60.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        logger.warning(f"COS_KEYWORDS_CACHE_TTL invalido: {raw!r} — usando 60s")
+        return 60.0
+
+
+def invalidate_keywords_cache() -> None:
+    """Zera o cache. Chamar depois de inserir/editar/remover frente_keywords."""
+    global _KEYWORDS_CACHE, _KEYWORDS_CACHE_AT
+    _KEYWORDS_CACHE = None
+    _KEYWORDS_CACHE_AT = 0.0
+
+
 def _load_keywords() -> List[Tuple[int, str]]:
-    """Retorna [(frente, keyword), ...] ordenado por frente ASC (menor=mais prio)."""
+    """Retorna [(frente, keyword), ...] ordenado por frente ASC (menor=mais prio).
+
+    Cacheado por TTL — ver bloco acima. Falha de DB devolve o cache velho se
+    houver (melhor keyword defasada que nenhuma), senao lista vazia.
+    """
+    global _KEYWORDS_CACHE, _KEYWORDS_CACHE_AT
+
+    ttl = _cache_ttl()
+    if ttl > 0 and _KEYWORDS_CACHE is not None:
+        if (time.monotonic() - _KEYWORDS_CACHE_AT) < ttl:
+            return _KEYWORDS_CACHE
+
     try:
         with get_db() as conn:
             cur = conn.cursor()
@@ -56,10 +111,14 @@ def _load_keywords() -> List[Tuple[int, str]]:
                 ORDER BY frente ASC, length(keyword) DESC
                 """
             )
-            return [(r["frente"], r["keyword"]) for r in cur.fetchall()]
+            rows = [(r["frente"], r["keyword"]) for r in cur.fetchall()]
+        _KEYWORDS_CACHE = rows
+        _KEYWORDS_CACHE_AT = time.monotonic()
+        return rows
     except Exception as e:
         logger.warning(f"cos_keywords._load_keywords falhou: {e}")
-        return []
+        # cache velho > nada: o consumidor perde priorizacao por frente sem ele
+        return _KEYWORDS_CACHE if _KEYWORDS_CACHE is not None else []
 
 
 def is_frente_keyword(text: Optional[str]) -> Optional[int]:

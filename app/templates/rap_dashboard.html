@@ -3931,8 +3931,15 @@
                 }
                 return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
             };
-            const optionsHtml = primaryOpts.map(renderOpt).join('') +
-                                (dismissOpt ? renderOpt(dismissOpt) : '');
+            // 29/07: proposta de noticia chega com options=[] (medido em prod nas 3
+            // pendentes), entao NAO havia como dispensar — o Renato lia e elas
+            // ficavam para sempre. Toda proposta agora tem saida: se o backend nao
+            // mandou um dismiss, renderiza o padrao.
+            const optionsHtml = primaryOpts.map(renderOpt).join('')
+                + (dismissOpt
+                    ? renderOpt(dismissOpt)
+                    : `<button class="btn btn-sm btn-outline-secondary" onclick="dismissProposal(${proposal.id})" title="Remover esta sugestao">`
+                      + `<i class="bi bi-bell-slash"></i> Silenciar</button>`);
 
             const safeTitle = escapeHtml(proposal.title || '');
             // 29/07: era escapeHtml(truncate(desc,200)) — a URL entrava como TEXTO

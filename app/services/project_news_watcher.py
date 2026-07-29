@@ -45,6 +45,19 @@ logger = logging.getLogger(__name__)
 # Protege contra "primeira rodada" floodando o Renato com 200+ propostas.
 MAX_HITS_PER_RUN = 50
 
+# 29/07/2026 — IDADE MAXIMA DA MATERIA.
+# O watcher nao tinha filtro nenhum de data: `_parse_pub_date` era usada so pra
+# ESCREVER "Publicado: ..." na descricao da proposta, nunca pra decidir. A dedup e
+# por `url_hash`, que so evita repetir a MESMA url — materia velha que aparece no
+# feed pela primeira vez entrava como novidade. Foi o que aconteceu: uma materia da
+# Revista Cafeicultura de 2016/2017 sobre microlotes da Suplicy virou "Acao
+# Sugerida", e outra de 2021. Google News reordena e ressuscita arquivo em busca
+# por termo generico ("cafes especiais"), entao isso nao e excecao, e o normal.
+# Sem data parseavel o item PASSA (nem todo feed traz pubDate, e barrar por
+# ausencia perderia noticia legitima) — mas o caso fica contado em
+# `skipped_no_date` pra nao virar buraco silencioso.
+NEWS_MAX_AGE_DAYS = int((os.environ.get("NEWS_MAX_AGE_DAYS") or "30").strip() or 30)
+
 # Modo B: filtro IA + push WA critico.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 ANTHROPIC_MODEL_HAIKU = llm.FAST
@@ -588,6 +601,8 @@ async def check_watcher(watcher_id: int) -> dict:
         "ai_scored": 0,
         "pushes_sent": 0,
         "pushes_skipped_below_threshold": 0,
+        "skipped_too_old": 0,
+        "skipped_no_date": 0,
         "error": None,
     }
 
@@ -658,6 +673,23 @@ async def check_watcher(watcher_id: int) -> dict:
 
         # Novo hit — cria proposal primeiro pra associar
         published_at = _parse_pub_date(item.get("pub_date"))
+
+        # Materia velha nao e novidade. Ver NEWS_MAX_AGE_DAYS.
+        if published_at is None:
+            stats["skipped_no_date"] += 1
+        elif NEWS_MAX_AGE_DAYS > 0:
+            # now_utc().replace(tzinfo=None) = mesmo padrao do resto do arquivo;
+            # `published_at` ja vem naive-UTC de _parse_pub_date. datetime.utcnow()
+            # e deprecated (CLAUDE.md).
+            idade_dias = (now_utc().replace(tzinfo=None) - published_at).days
+            if idade_dias > NEWS_MAX_AGE_DAYS:
+                stats["skipped_too_old"] += 1
+                logger.info(
+                    f"news_watcher: descartada materia de {idade_dias}d "
+                    f"(teto {NEWS_MAX_AGE_DAYS}d): {title[:70]}"
+                )
+                continue
+
         description = _strip_html(item.get("description") or "")[:500]
         source = item.get("source") or "Google News"
 
