@@ -210,9 +210,22 @@ def test_raci_smart_update_texto_preservado_na_migracao():
     assert m.format_pending_review_wa(pending, "Vallen Clinic") == esperado
 
 
-async def _fake_digest(group_jid, group_name, days=1):
-    # Formato que _format_digests_for_whatsapp consome: group/messages/summary.
-    return {"group": group_name, "messages": 4, "summary": "resumo do grupo"}
+async def _fake_digest(group_jid, group_name, projeto=None, days=1):
+    # Formato que _format_digest consome depois da reescrita de 29/07: o
+    # veredito de relevancia + a linha, nao mais um resumo solto.
+    return {"group": group_name, "projeto": projeto, "messages": 4,
+            "relevante": True, "linha": "Lara fechou o levantamento de VIPs",
+            "acao_sua": "Aprovar o corte da lista"}
+
+
+async def _fake_digest_sem_acao(group_jid, group_name, projeto=None, days=1):
+    return {"group": group_name, "projeto": projeto, "messages": 4,
+            "relevante": True, "linha": "Lara fechou o levantamento de VIPs",
+            "acao_sua": None}
+
+
+async def _fake_digest_irrelevante(group_jid, group_name, projeto=None, days=1):
+    return {"group": group_name, "projeto": projeto, "messages": 4, "relevante": False}
 
 
 class _FakeConn:
@@ -225,7 +238,9 @@ class _FakeConn:
         return None
 
     def fetchall(self):
-        return [{"group_jid": "j@g.us", "group_name": "Grupo Teste"}]
+        # `projeto` entrou na query com a reescrita: e ele que separa frente de
+        # trabalho (relevancia por movimento) de convivio (so se pedirem algo).
+        return [{"group_jid": "j@g.us", "group_name": "Grupo Teste", "projeto": None}]
 
     def __enter__(self):
         return self
@@ -242,15 +257,43 @@ def test_group_digest_dedup_por_dia_brt(cap, monkeypatch):
     esperado = "group_digest:" + to_brt(now_utc()).strftime("%Y%m%d")
 
     monkeypatch.setattr(m, "get_db", lambda: _FakeConn())
-    monkeypatch.setattr(m, "_generate_group_digest", _fake_digest)
+    monkeypatch.setattr(m, "_avaliar_grupo", _fake_digest)
     res = asyncio.run(m.generate_daily_group_digests())
 
     assert len(cap.calls) == 1, f"digest nao chamou o router (res={res})"
     kw = cap.calls[0]
     assert kw["source"] == "group_digest"
-    assert kw["urgency_score"] == 8
+    assert kw["urgency_score"] == 8  # tem acao esperada dele -> interrompe
     assert kw["dedup_key"] == esperado
     assert res["digests_sent"] == 1
+
+
+def test_group_digest_sem_acao_desce_pra_push(cap, monkeypatch):
+    """Graduacao por CONTEUDO (29/07): so interrompe no WhatsApp quando alguem
+    espera algo do Renato. Movimento de frente sem cobranca vira push."""
+    from services import group_digest as m
+
+    monkeypatch.setattr(m, "get_db", lambda: _FakeConn())
+    monkeypatch.setattr(m, "_avaliar_grupo", _fake_digest_sem_acao)
+    res = asyncio.run(m.generate_daily_group_digests())
+
+    assert len(cap.calls) == 1
+    assert cap.calls[0]["urgency_score"] == 6
+    assert res["digests_sent"] == 1
+
+
+def test_group_digest_sem_nada_relevante_nao_notifica(cap, monkeypatch):
+    """O coracao da reescrita: um digest diario de 'nada aqui' e o que ensina a
+    ignorar o canal. Sem item relevante, nao sai mensagem nenhuma."""
+    from services import group_digest as m
+
+    monkeypatch.setattr(m, "get_db", lambda: _FakeConn())
+    monkeypatch.setattr(m, "_avaliar_grupo", _fake_digest_irrelevante)
+    res = asyncio.run(m.generate_daily_group_digests())
+
+    assert cap.calls == []
+    assert res["digests_sent"] == 0
+    assert res["skipped"] == "nada relevante"
 
 
 def test_preview_semanal_conta_entrega_nao_canal(cap):

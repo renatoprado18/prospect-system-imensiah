@@ -15556,7 +15556,10 @@ async def cron_group_digest(request: Request):
 
     from services.group_digest import generate_daily_group_digests
     days = int(request.query_params.get("days", "1"))
-    results = await generate_daily_group_digests(days=days)
+    # ?dry_run=1 devolve o texto sem notificar — serve pra calibrar a régua de
+    # relevância sem gastar uma interrupção do Renato.
+    dry_run = request.query_params.get("dry_run") in ("1", "true", "on")
+    results = await generate_daily_group_digests(days=days, dry_run=dry_run)
     return {"job": "group-digest", "timestamp": datetime.now().isoformat(), **results}
 
 
