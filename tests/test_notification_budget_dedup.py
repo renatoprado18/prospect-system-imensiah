@@ -186,6 +186,13 @@ def wired(monkeypatch, db):
     monkeypatch.delenv("NOTIFICATION_DIGEST_MODE", raising=False)
     monkeypatch.delenv("WA_BUDGET_PIERCE_RULES", raising=False)
     monkeypatch.setenv("SUNDAY_SILENCE_OFF", "1")  # domingo nao interfere
+    # Este arquivo testa o TETO e o DEDUP, que sao travas sobre um candidato a
+    # WhatsApp. O silencio por produtor (29/07) age ANTES: quem esta na lista
+    # nunca se torna candidato, e todo teste daqui usa 'email_triage', que esta
+    # nela. Desligo o silencio aqui pra que estes testes sigam medindo o que
+    # foram escritos pra medir — a cobertura do gate novo mora em
+    # test_notification_silenced_producers.py.
+    monkeypatch.setenv("WA_SILENCED_PRODUCERS", "none")
     state = {"wa": [], "push": [], "push_ok": True}
 
     async def _fake_send_now(text):

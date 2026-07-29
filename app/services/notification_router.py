@@ -386,12 +386,26 @@ def decide_channel(
 
     - urgente (is_urgent gate: force_immediate / score>=8 / URGENCY_RULES)
       -> ('whatsapp', <rule>)
+    - urgente MAS de produtor silenciado -> ('push', 'producer_silenced:<rule>')
+      (ver bloco SILENCIO POR PRODUTOR; regras que furam o teto seguem indo
+      pro WhatsApp, porque sao verificadas contra fato e nao contra a
+      auto-declaracao de quem emitiu)
     - senao 5<=score<=7 -> ('push', 'score_5_7')
     - senao -> ('pill', 'score_lt_5')
     """
     urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
     if urgent:
-        return "whatsapp", (urgency_rule or "urgent")
+        rule = urgency_rule or "urgent"
+        # `rule` aqui NAO serve pra decidir o furo: is_urgent() curto-circuita em
+        # 'score_ge_8' antes do loop de URGENCY_RULES, entao um cron critico
+        # chega etiquetado como score_ge_8. Quem sabe reavaliar o FATO e
+        # _budget_pierce_rule (mesma armadilha documentada la).
+        if is_silenced_producer(source):
+            pierce = _budget_pierce_rule(source, msg_type, payload, urgency_score)
+            if not pierce:
+                return "push", f"{RULE_PRODUCER_SILENCED}:{rule}"
+            return "whatsapp", pierce
+        return "whatsapp", rule
     if isinstance(urgency_score, int) and 5 <= urgency_score <= 7:
         return "push", "score_5_7"
     return "pill", "score_lt_5"
@@ -504,6 +518,74 @@ BUDGET_PIERCING_RULES_DEFAULT = (
     "press_detection",
     "cron_error_prod",
 )
+
+
+# ============================================================================
+# SILENCIO POR PRODUTOR (decisao do Renato, 29/07/2026)
+# ============================================================================
+# O teto diario e o dedup graduam por EVENTO; nao resolvem o problema de fundo,
+# que e de IDENTIDADE: medido em 14 dias, todo produtor automatico declara
+# urgency 8 (email_triage 15x, inbox_smart 9x, platform_costs 8x, inbox_triage
+# 3x, raci_smart_update 2x, group_digest 2x) e por isso todos ganham WhatsApp.
+# Um snapshot de custo de plataforma interrompe igual a um e-mail do pai dele.
+# Baseline do canal: 127 mensagens em 14 dias -> 5 respostas (~1,6% de acao).
+#
+# Decisao: quem e MAQUINA nao interrompe por WhatsApp. Desce pra push (toque no
+# celular) e fica no ledger `pending_notifications`, que e lido pela tela de
+# silenciadas (statcard "Silenciadas" no dashboard + /api/admin/notifications-
+# silenced). O trabalho das camadas NAO muda — inbox_smart segue encaminhando
+# pra Andressa e fechando task; o que muda e so por onde ele te conta.
+#
+# NAO e "pill = sumir". Isso valia antes de 27/07: o endpoint das silenciadas
+# passou a mostrar item nunca-entregue por ate 30 dias, exatamente pra deixar
+# de esconder pela borda da janela de 24h. O bloco "NADA TERMINA EM PILL" mais
+# acima descreve o mundo ANTERIOR a esse fix e por isso justifica a escada que
+# devolve item rebaixado pro WhatsApp. Este gate nao usa essa escada: um
+# produtor silenciado entra pelo caminho de push normal (linha ~1155), que
+# enfileira SEMPRE e cai em pill se o push falhar, sem voltar pro WhatsApp.
+# Isso e proposital — o push falhou 1 de 4 vezes na janela medida (as duas
+# inscricoes sao de 15/07 e nao renovam), e era essa escalacao que anulava o
+# teto no evento de 28/07 registrado no board.
+#
+# O que AINDA fura o silencio: as mesmas regras deterministicas que furam o
+# teto (WA_BUDGET_PIERCE_RULES — reuniao em <30min, imprensa, cron com
+# severity error/critical em prod). Sao verificadas contra um FATO, nao contra
+# a auto-declaracao do produtor, e perdem valor se atrasarem.
+#
+# Reversivel sem deploy: WA_SILENCED_PRODUCERS=none religa todo mundo;
+# WA_SILENCED_PRODUCERS=a,b,c troca a lista.
+SILENCED_PRODUCERS_DEFAULT = (
+    "email_triage",
+    "inbox_smart",
+    "inbox_triage",
+    "platform_costs",
+    "cost_tracker",
+    "raci_smart_update",
+    "group_digest",
+    "raci_group_shadow",
+    "cron_health",
+    "smart_message_processor",
+)
+
+RULE_PRODUCER_SILENCED = "producer_silenced"
+
+
+def get_silenced_producers() -> tuple:
+    """Produtores automaticos que nao interrompem por WhatsApp.
+
+    env WA_SILENCED_PRODUCERS: csv troca a lista; 'none'/'off' desliga o gate
+    inteiro (volta ao comportamento pre-29/07).
+    """
+    raw = (os.getenv("WA_SILENCED_PRODUCERS") or "").strip()
+    if not raw:
+        return SILENCED_PRODUCERS_DEFAULT
+    if raw.lower() in ("none", "-", "off"):
+        return ()
+    return tuple(p.strip() for p in raw.split(",") if p.strip())
+
+
+def is_silenced_producer(source: Optional[str]) -> bool:
+    return bool(source) and source in get_silenced_producers()
 
 
 def _gate_mode(env_name: str, default: str) -> str:
