@@ -15364,6 +15364,51 @@ async def raci_group_proposal_apply(proposal_id: int, request: Request):
     return result
 
 
+@app.post("/api/raci/reconcile-ata")
+async def raci_reconcile_ata(request: Request):
+    """Reconcilia o RACI de um conselho contra a ata recem-gerada (3a peca, 29/07).
+
+    Body: {reuniao_id, force?, dry_run?}. Chamado pelo worker Railway logo depois
+    de gravar `reunioes.ata_md` — e disparavel a mao pra reprocessar uma ata.
+
+    NAO aplica nada: gera propostas pending_review na mesma fila human-gated do
+    caminho de grupo. Item aberto que a ata nao menciona fica ABERTO (regra do
+    Renato) e volta em `nao_tratados` so pra ficar visivel.
+
+    Auth: X-API-Key, sessao OU Bearer CRON_SECRET. O terceiro existe pro worker
+    Railway chamar sem env nova — ele ja carrega o CRON_SECRET pro scheduler, e
+    inventar uma segunda credencial pra mesma maquina so cria um segredo a mais
+    pra rotacionar.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = (
+        bool(api_key and intel_api_key and api_key == intel_api_key)
+        or bool(get_current_user(request))
+        or verify_cron_auth(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reuniao_id = (body or {}).get("reuniao_id")
+    if not reuniao_id:
+        raise HTTPException(status_code=400, detail="reuniao_id e obrigatorio")
+
+    from services.raci_ata_reconciler import reconcile_ata, AtaReconcileError
+    try:
+        return await reconcile_ata(
+            str(reuniao_id),
+            force=bool((body or {}).get("force")),
+            dry_run=bool((body or {}).get("dry_run")),
+        )
+    except AtaReconcileError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/raci/group-proposals/{proposal_id}/dismiss")
 async def raci_group_proposal_dismiss(proposal_id: int, request: Request):
     """Descarta UMA proposta shadow (reversivel via reopen). Body opcional {reason}."""

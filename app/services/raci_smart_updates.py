@@ -520,6 +520,77 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
         return None
 
 
+def create_item_from_proposal(payload: Dict, empresa_id: str,
+                              reuniao_id: Optional[str] = None) -> Dict:
+    """Cria um item NOVO no RACI do ConselhoOS a partir de uma proposta aprovada.
+
+    Existe por causa da reconciliação por ata (29/07): até aqui toda proposta era
+    ATUALIZAÇÃO de item existente, porque o caminho de grupo só sabe comentar o
+    que já está no RACI. A ata traz compromisso que ainda não tem linha nenhuma —
+    e, sem este caminho, aprovar a proposta não teria como materializá-la.
+
+    Só é chamado depois da aprovação do Renato (`apply_group_proposal`). Levanta
+    erro tipado; quem chama traduz pra fila de revisão.
+
+    `area` e `prazo` são NOT NULL do lado de lá. O prazo já vem resolvido (e
+    justificado) pela proposta; `area` cai em 'Geral' quando a ata não classifica
+    — inventar uma área plausível seria pior, porque a área guia o agrupamento
+    do relatório semanal.
+    """
+    import psycopg2, psycopg2.extras
+    url = _conselhoos_url()
+    if not url:
+        raise RaciConfigError("CONSELHOOS_DATABASE_URL ausente ou vazia — sem conexao pro RACI")
+
+    acao = (payload.get("acao") or "").strip()
+    if not acao:
+        raise RaciApplyError("proposta de item novo sem 'acao'")
+    prazo = payload.get("prazo")
+    if not prazo:
+        raise RaciApplyError("proposta de item novo sem 'prazo' (coluna NOT NULL no ConselhoOS)")
+
+    notas = payload.get("prazo_motivo") or None
+    try:
+        conn = psycopg2.connect(url)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute(
+            """INSERT INTO raci_itens
+                   (empresa_id, reuniao_id, area, acao, prazo, status,
+                    responsavel_r, responsavel_a, responsavel_c, responsavel_i, notas)
+               VALUES (%s,%s,%s,%s,%s,'pendente',%s,%s,%s,%s,%s)
+               RETURNING id""",
+            (empresa_id, reuniao_id, (payload.get("area") or "Geral")[:100], acao, prazo,
+             payload.get("responsavel_r"), payload.get("responsavel_a"),
+             payload.get("responsavel_c"), payload.get("responsavel_i"), notas),
+        )
+        new_id = str(cur.fetchone()["id"])
+        conn.commit()
+        conn.close()
+    except RaciApplyError:
+        raise
+    except Exception as e:
+        logger.warning(f"create_item_from_proposal falhou: {e}")
+        raise RaciApplyError(f"{type(e).__name__}: {e}") from e
+
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type='raci_item_created',
+            category='conselho',
+            title=f"RACI (ata): item novo '{acao[:60]}'",
+            scope_ref={'raci_item_id': new_id, 'empresa_id': str(empresa_id),
+                       'reuniao_id': str(reuniao_id) if reuniao_id else None},
+            source='raci_smart_updates.create_item_from_proposal',
+            payload=payload,
+            undo_hint=f"DELETE FROM raci_itens WHERE id='{new_id}'::uuid;",
+        )
+    except Exception as e:
+        logger.warning(f"audit log create_item_from_proposal falhou: {e}")
+
+    return {"item_id": new_id, "acao": acao, "created": True,
+            "prazo": str(prazo), "area": payload.get("area") or "Geral"}
+
+
 async def _download_media_from_evolution(message_key: Dict, instance: str) -> Optional[Dict]:
     """Baixa media (base64 + mime) da Evolution API via key.id.
     Returns {'base64', 'mimetype'} ou None. Timeout 15s pra nao bloquear webhook."""

@@ -409,7 +409,7 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
         cur = conn.cursor()
         cur.execute(
             """SELECT id, empresa_id, item_id, action, new_status, new_prazo, notes,
-                      evidencia, confianca, status
+                      evidencia, confianca, status, origem, reuniao_id, item_payload
                  FROM raci_group_proposals WHERE id = %s""",
             (proposal_id,),
         )
@@ -418,6 +418,38 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
         return {"error": f"proposta #{proposal_id} nao encontrada"}
     if row["status"] == "applied":
         return {"error": f"proposta #{proposal_id} ja aplicada"}
+
+    # Proposta de item NOVO (só nasce da reconciliação por ata): não há item pra
+    # atualizar — o apply CRIA a linha no ConselhoOS. Caminho separado de
+    # propósito: `apply_proposal` inteiro pressupõe um item alvo existente, e
+    # espremer criação lá dentro faria os guardrails (downgrade, no-op) rodarem
+    # contra um item que ainda não existe.
+    if row["action"] == "create_item":
+        payload = row["item_payload"]
+        if isinstance(payload, str):
+            import json as _json
+            payload = _json.loads(payload)
+        if not payload:
+            _update_proposal_status(proposal_id, "apply_error", "proposta create_item sem item_payload")
+            return {"error": "proposta de item novo sem payload", "id": proposal_id}
+        try:
+            from services.raci_smart_updates import create_item_from_proposal
+            created = create_item_from_proposal(payload, row["empresa_id"], row["reuniao_id"])
+        except RaciConfigError as e:
+            log.warning("apply_group_proposal #%s: config ConselhoOS ausente (%s)", proposal_id, e)
+            return {"error": f"conexao ConselhoOS indisponivel: {e}", "id": proposal_id, "retryable": True}
+        except RaciApplyError as e:
+            _update_proposal_status(proposal_id, "apply_error", str(e))
+            return {"error": f"criacao falhou: {e}", "id": proposal_id}
+        # Guarda o id do item criado: sem isto, reaplicar a mesma proposta criaria
+        # uma segunda linha idêntica (o `status='applied'` já barra, mas o id
+        # gravado é o que permite achar/desfazer o item depois).
+        _update_proposal_status(proposal_id, "applied", str(created))
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE raci_group_proposals SET item_id = %s WHERE id = %s",
+                        (created["item_id"], proposal_id))
+        return {"ok": True, "id": proposal_id, "result": created, "created": True}
 
     proposal = {
         "item_id": row["item_id"], "action": row["action"],
@@ -528,7 +560,7 @@ def list_pending_proposals(limit: int = 50) -> List[Dict[str, Any]]:
         cur = conn.cursor()
         cur.execute(
             """SELECT id, empresa_nome, sender_name, item_acao, action, new_status,
-                      confianca, evidencia, criado_em
+                      confianca, evidencia, criado_em, origem, reuniao_id, item_payload
                  FROM raci_group_proposals
                 WHERE status = 'pending_review'
              ORDER BY criado_em DESC LIMIT %s""",

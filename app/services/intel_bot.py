@@ -1853,7 +1853,7 @@ def _get_pending_raci_proposals(limit: int = 12) -> List[Dict[str, Any]]:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, empresa_nome, item_acao, action, new_status
+                SELECT id, empresa_nome, item_acao, action, new_status, origem
                   FROM raci_group_proposals
                  WHERE status = 'pending_review'
                  ORDER BY id DESC
@@ -2769,14 +2769,22 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         if raci_pending:
             rlines = [
                 "\n\n## RACI — PROPOSTAS ESPERANDO SUA APROVACAO\n",
-                "Mudancas no RACI dos conselhos (extraidas do que foi dito nos grupos) "
-                "em shadow, aguardando o Renato aprovar. Cada uma tem ID no formato "
+                "Mudancas no RACI dos conselhos em shadow, aguardando o Renato "
+                "aprovar. Vem de duas origens: do que foi dito nos GRUPOS de "
+                "WhatsApp, ou da reconciliacao da ATA de uma reuniao (essas "
+                "aparecem marcadas com [ata]). Cada uma tem ID no formato "
                 "RACI-N — NAO confunda com task #N (numeracoes independentes).\n",
             ]
             for p in raci_pending:
-                alvo = p.get("new_status") or (p.get("action") or "nota")
+                # 'create_item' cru nao diz nada a quem le; item novo e uma
+                # natureza diferente de proposta (cria linha em vez de mexer numa).
+                if p.get("action") == "create_item":
+                    alvo = "CRIAR item novo"
+                else:
+                    alvo = p.get("new_status") or (p.get("action") or "nota")
+                marca = "[ata] " if p.get("origem") == "ata" else ""
                 rlines.append(
-                    f"- RACI-{p['id']}: {p.get('empresa_nome') or '?'} — "
+                    f"- RACI-{p['id']}: {marca}{p.get('empresa_nome') or '?'} — "
                     f"{(p.get('item_acao') or '')[:60]} -> {alvo}"
                 )
             rlines.append(
