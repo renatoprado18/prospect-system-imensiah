@@ -40,8 +40,14 @@ Thumbs.db
 .env*.local
 .last_sync
 
-# Claude Code project state (per-session, not source)
-.claude/
+# Claude Code project state (per-session, not source) — EXCETO as skills.
+# `.claude/*` em vez de `.claude/`: um diretório excluído não é percorrido pelo
+# Git, e a negação abaixo nunca chegaria a valer. Excluindo os FILHOS, o Git
+# desce em .claude/ e enxerga a exceção.
+# Fica de fora, de propósito: worktrees/ e projects/ (85 MB de estado de sessão)
+# e settings.local.json (permissões desta máquina).
+.claude/*
+!.claude/skills/
 
 # Generated reports (one-shot script outputs)
 reports/
