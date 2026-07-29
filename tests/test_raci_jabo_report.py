@@ -19,6 +19,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(_ROOT, "app"))
 sys.path.insert(0, _ROOT)
 
+from services import raci_weekly_report as m  # noqa: E402
 from services.raci_weekly_report import (  # noqa: E402
     _infer_task_responsavel,
     _strip_task_prefix,
@@ -152,3 +153,28 @@ class TestFormatNaoInterativo:
     def test_interactive_true_mantem_convite(self):
         msg = format_raci_whatsapp(self._report(), interactive=True)
         assert "Responda com o nº" in msg
+
+
+# ── Preview semanal dos conselhos desligado (29/07) ──────────────────────────
+# Decisao do Renato: "agora que temos o RACI dentro do projeto, com botao de
+# disparo, nao faz sentido continuar mandando o preview". O Jabo NAO sai junto —
+# o RACI dele sao as tasks do #28 e a pagina nao as le (zero raci_itens), entao
+# desligar os dois deixaria a fazenda sem superficie nenhuma.
+class TestPreviewConselhosDesligado:
+    def test_default_desligado(self, monkeypatch):
+        monkeypatch.delenv("RACI_WEEKLY_PREVIEW_CONSELHOS", raising=False)
+        assert m._preview_conselhos_enabled() is False
+
+    def test_liga_por_env(self, monkeypatch):
+        for valor in ("on", "1", "true", "YES"):
+            monkeypatch.setenv("RACI_WEEKLY_PREVIEW_CONSELHOS", valor)
+            assert m._preview_conselhos_enabled() is True, valor
+
+    def test_whitespace_do_railway_nao_quebra(self, monkeypatch):
+        """Railway/Vercel colam '\\n' no valor — padrao anti-whitespace do repo."""
+        monkeypatch.setenv("RACI_WEEKLY_PREVIEW_CONSELHOS", " on\n")
+        assert m._preview_conselhos_enabled() is True
+
+    def test_valor_qualquer_mantem_desligado(self, monkeypatch):
+        monkeypatch.setenv("RACI_WEEKLY_PREVIEW_CONSELHOS", "talvez")
+        assert m._preview_conselhos_enabled() is False

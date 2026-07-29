@@ -300,34 +300,61 @@ async def _send_preview(title: str, body: str, dedup: str, topic: Optional[str] 
     return r.get("action") != "skipped"
 
 
-async def send_raci_to_groups() -> Dict:
-    """Envia PREVIEW dos reports RACI semanais pro Renato no chat privado.
+def _preview_conselhos_enabled() -> bool:
+    """Preview semanal dos CONSELHOS por WhatsApp — desligado em 29/07/2026.
 
-    Mudanca de design 2026-05-11: nao envia mais diretamente pros grupos.
-    Cron Sabado 18h gera o preview por empresa e manda pro Renato; ele revisa,
-    edita se quiser, e cola manualmente nos grupos (segunda 8h tipicamente).
-    Garantia de "humano no loop" antes de qualquer comunicacao externa.
+    Decisão do Renato: "agora que temos o RACI dentro do projeto, com botão de
+    disparo, não faz sentido continuar mandando o preview. Simplesmente deve ser
+    lembrado toda 2ª feira de mandar o RACI quando abrir a sessão CoS."
+
+    O preview existia porque não havia superfície: a única forma de ver o RACI
+    era ele chegar pronto no WhatsApp. Desde 28-29/07 a página
+    `/projetos/{id}/raci` mostra a matriz das duas fontes, deixa editar na fonte
+    e tem botão "Enviar no grupo" com preview editável — o preview semanal virou
+    a segunda cópia do mesmo texto, e a pior das duas: chegava **truncado**
+    (5.243 / 5.866 / 4.669 chars contra o corte silencioso de 4.096 da
+    Evolution, em 13, 20 e 27/07). O lembrete agora mora na abertura da `/cos`
+    de segunda.
+
+    Kill-switch: `RACI_WEEKLY_PREVIEW_CONSELHOS=on` volta o comportamento antigo
+    sem deploy. Não vale pro Jabô — ver `send_raci_to_groups`.
+    """
+    return (os.getenv("RACI_WEEKLY_PREVIEW_CONSELHOS") or "").strip().lower() in (
+        "1", "on", "true", "yes")
+
+
+async def send_raci_to_groups() -> Dict:
+    """Preview semanal do RACI. Hoje sobra só a Governança Jabô.
+
+    Os conselhos (ConselhoOS) saíram em 29/07 — ver `_preview_conselhos_enabled`.
+    O **Jabô continua** porque não tem substituto: o RACI dele são as *tasks* do
+    projeto #28, e a página `/projetos/28/raci` lê `raci_itens` (INTEL +
+    ConselhoOS), onde ele tem **zero** linhas. Desligar os dois deixaria a
+    governança da fazenda sem superfície nenhuma.
 
     Mantem o nome da funcao pra nao quebrar callers (cron_raci_weekly_report).
     """
     from database import get_db
 
-    results = {"previews_sent": 0, "skipped": 0, "errors": 0, "empresas": []}
+    results = {"previews_sent": 0, "skipped": 0, "errors": 0, "empresas": [],
+               "conselhos_preview": "on" if _preview_conselhos_enabled() else "off"}
 
     if not CONSELHOOS_DATABASE_URL:
         return {"error": "CONSELHOOS_DATABASE_URL not configured"}
 
-    # Get all empresas from ConselhoOS
-    import psycopg2
-    import psycopg2.extras
-    try:
-        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT id, nome FROM empresas")
-        empresas = cur.fetchall()
-        conn.close()
-    except Exception as e:
-        return {"error": str(e)}
+    empresas = []
+    if _preview_conselhos_enabled():
+        # Get all empresas from ConselhoOS
+        import psycopg2
+        import psycopg2.extras
+        try:
+            conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute("SELECT id, nome FROM empresas")
+            empresas = cur.fetchall()
+            conn.close()
+        except Exception as e:
+            return {"error": str(e)}
 
     # Pra cada empresa, valida que tem grupo WA linkado e gera preview
     with get_db() as conn:
