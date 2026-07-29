@@ -884,6 +884,12 @@
             font-size: 0.8rem;
             font-weight: 600;
             color: var(--dark);
+            /* 29/07: nowrap+ellipsis so trunca se houver largura pra respeitar.
+               O titulo de noticia (~140 chars) esticava a linha e, com o card em
+               flex sem teto, empurrava o widget: o body ia a 3107px contra 1415 de
+               viewport = scroll horizontal na pagina inteira. max-width:100% da o
+               teto que o ellipsis precisa. */
+            max-width: 100%;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -894,10 +900,21 @@
             font-size: 0.7rem;
             color: var(--gray-500);
             line-height: 1.3;
+            /* A URL do Google News RSS (~180 chars, zero espaco) nao tem ponto de
+               quebra: o line-clamp corta a ALTURA em 2 linhas, mas a linha 1 fica
+               infinitamente larga. overflow-wrap:anywhere e o que quebra token
+               continuo. */
+            overflow-wrap: anywhere;
+            max-width: 100%;
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
+        }
+
+        .proposal-content p a {
+            color: var(--primary);
+            text-decoration: underline;
         }
 
         .proposal-actions {
@@ -3909,7 +3926,10 @@
                                 (dismissOpt ? renderOpt(dismissOpt) : '');
 
             const safeTitle = escapeHtml(proposal.title || '');
-            const safeDesc = escapeHtml(truncate(proposal.description || '', 200));
+            // 29/07: era escapeHtml(truncate(desc,200)) — a URL entrava como TEXTO
+            // (nao clicavel) e o truncate de 200 nao a cortava, porque ela tem ~180.
+            // linkifySuggestionDesc troca a URL pelo dominio e devolve <a> de verdade.
+            const safeDesc = linkifySuggestionDesc(proposal.description || '', 0);
 
             return `
                 <div class="proposal-card ${isUrgent ? 'urgent' : ''}">
