@@ -4714,10 +4714,9 @@
                     summaryParts.push(`aniversario de ${nomes}`);
                 }
 
-                const precisamAtencao = stats.precisam_atencao || alertas.total || 0;
-                if (precisamAtencao > 0) {
-                    summaryParts.push(`${precisamAtencao} contato${precisamAtencao > 1 ? 's' : ''} precisando atenção`);
-                }
+                // 30/07: a frase "N contatos precisando atencao" saiu junto com a
+                // regua `precisam_atencao` (o 306). Contato so entra em superficie
+                // alguma com FATO relevante — ver feedback_contato_precisa_motivo.
 
                 // Filtrar contatos at-risk apenas dos circulos 1-2 (intimo/proximo)
                 const priorityAtRisk = atRiskContacts.filter(c => c.circulo && c.circulo <= 2);

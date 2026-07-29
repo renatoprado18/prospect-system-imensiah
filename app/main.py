@@ -13775,13 +13775,11 @@ async def get_contacts_by_circulo(
     }
 
 
-@app.get("/api/circulos/health")
-async def get_circulos_health():
-    """Dashboard de saude - contatos precisando atencao"""
-    return {
-        "precisam_atencao": get_contatos_precisando_atencao(20),
-        "aniversarios": get_aniversarios_proximos(30)
-    }
+# 30/07: /api/circulos/health REMOVIDO. Endpoint sem consumidor nenhum no front
+# (grep em templates/static = 0 hits) que existia so pra expor
+# `precisam_atencao` — a regua que o Renato mandou eliminar. Contato so merece
+# atencao com FATO relevante; health score sozinho nao e gancho.
+# Ver feedback_contato_precisa_motivo.
 
 
 @app.get("/api/contacts/{contact_id}/circulo")

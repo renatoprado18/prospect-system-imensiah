@@ -37,7 +37,14 @@ def get_dashboard_stats() -> Dict:
             SELECT
                 COUNT(*) as total_contatos,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact_snoozes s WHERE s.contact_id = contacts.id AND s.ate >= CURRENT_DATE)) as precisam_atencao,
+                -- 30/07: `precisam_atencao` ELIMINADO por decisao do Renato. Era a
+                -- segunda regua da mesma metrica: este COUNT devolvia 306 enquanto o
+                -- card lia /api/contacts/needs-attention e mostrava 6 — 51x, com o
+                -- codigo afirmando que o criterio era o mesmo. Pior, o retorno ainda
+                -- somava `aniversarios_proximos` por cima. Nao foi consertado porque a
+                -- REGRA mudou: contato so merece atencao com FATO relevante (noticia
+                -- sobre ele, mudanca de cargo, promessa pendente) — health score
+                -- sozinho nao e gancho. Ver feedback_contato_precisa_motivo.
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as briefings_pendentes,
                 COUNT(*) FILTER (
                     WHERE aniversario IS NOT NULL
@@ -85,7 +92,6 @@ def get_dashboard_stats() -> Dict:
         return {
             "total_contatos": stats["total_contatos"],
             "circulos_ativos": stats["circulos_ativos"],
-            "precisam_atencao": stats["precisam_atencao"] + stats["aniversarios_proximos"],
             "briefings_pendentes": stats["briefings_pendentes"],
             "conversas_ativas": conversas_ativas,
             "reunioes_hoje": reunioes_hoje,
@@ -149,8 +155,7 @@ def get_full_dashboard() -> Dict:
             stats AS (
                 SELECT
                     COUNT(*) as total_contatos,
-                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact_snoozes s WHERE s.contact_id = contacts.id AND s.ate >= CURRENT_DATE)) as precisam_atencao
+                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos
                 FROM contacts
             ),
             -- Circulos resumo
@@ -203,7 +208,7 @@ def get_full_dashboard() -> Dict:
         row = cursor.fetchone()
 
         # Processar stats
-        stats = row['stats'] or {"total_contatos": 0, "circulos_ativos": 0, "precisam_atencao": 0}
+        stats = row['stats'] or {"total_contatos": 0, "circulos_ativos": 0}
 
         # Processar circulos
         circulos_list = row['circulos'] or []
