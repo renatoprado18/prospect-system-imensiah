@@ -22926,12 +22926,13 @@ async def api_create_project_raci_item(project_id: int, request: Request):
     return result
 
 
-@app.patch("/api/raci-itens/{item_id}")
-async def api_update_raci_item(item_id: int, request: Request):
-    """Atualiza item de RACI do INTEL. So mexe nos campos enviados."""
+@app.patch("/api/raci-itens/{item_uid}")
+async def api_update_raci_item(item_uid: str, request: Request):
+    """Atualiza item de RACI NA FONTE dele (`intel:12` ou `conselhoos:<uuid>`;
+    id nu = INTEL, retrocompat). So mexe nos campos enviados."""
     from services.raci_matrix import update_item
     data = await request.json()
-    result = update_item(item_id, data)
+    result = update_item(item_uid, data)
     if result.get("error") == "item não encontrado":
         raise HTTPException(status_code=404, detail="Item nao encontrado")
     if result.get("error"):
@@ -22939,13 +22940,16 @@ async def api_update_raci_item(item_id: int, request: Request):
     return result
 
 
-@app.delete("/api/raci-itens/{item_id}")
-async def api_delete_raci_item(item_id: int):
-    """Remove item de RACI do INTEL."""
+@app.delete("/api/raci-itens/{item_uid}")
+async def api_delete_raci_item(item_uid: str):
+    """Remove item de RACI — so o lado INTEL (item de conselho se apaga no
+    ConselhoOS; ver services/raci_matrix.py)."""
     from services.raci_matrix import delete_item
-    result = delete_item(item_id)
+    result = delete_item(item_uid)
+    if result.get("error") == "item não encontrado":
+        raise HTTPException(status_code=404, detail="Item nao encontrado")
     if result.get("error"):
-        raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result["error"])
     return result
 
 

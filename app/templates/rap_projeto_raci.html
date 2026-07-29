@@ -112,6 +112,35 @@ tbody tr:hover{background:#fff}
 .acoes-linha{white-space:nowrap}
 .acoes-linha button{padding:4px 8px;font-size:9.5px;letter-spacing:.06em}
 
+/* ---------- edição inline ----------
+   Clicar na própria célula em vez de abrir modal: o uso real é pós-reunião,
+   varrendo a matriz e corrigindo prazo/responsável/status de vários itens
+   seguidos. Um modal por item transformaria isso em dezenas de aberturas. */
+.edit{cursor:text;border-radius:4px;transition:.12s;display:inline-block;min-width:14px}
+.edit:hover{background:#fff;box-shadow:inset 0 0 0 1px var(--frame)}
+td.edit{display:table-cell}
+.add{color:#c9bfb2;font-weight:400;font-style:italic;font-size:11px}
+.inline-edit{
+  width:100%;min-width:110px;padding:5px 7px;border:1px solid var(--gold);
+  border-radius:4px;background:#fff;color:var(--ink);
+  font-family:'Montserrat',sans-serif;font-size:12.5px;
+}
+.inline-edit:focus{outline:none;box-shadow:0 0 0 2px rgba(195,149,83,.22)}
+.legenda-edicao{font-size:11px;color:var(--muted);margin:-6px 0 14px}
+.legenda-edicao b{color:var(--gold-deep);font-weight:600}
+
+/* ---------- toast de gravação ---------- */
+#toast{
+  position:fixed;right:18px;bottom:18px;z-index:50;
+  background:var(--charcoal);color:var(--creme);
+  padding:10px 16px;border-radius:7px;font-size:12px;font-weight:500;
+  box-shadow:0 4px 18px rgba(38,32,25,.28);
+  opacity:0;transform:translateY(8px);transition:.18s;pointer-events:none;
+  max-width:min(420px,86vw);
+}
+#toast.on{opacity:1;transform:none}
+#toast.erro{background:var(--atrasado)}
+
 .vazio-msg{padding:40px 20px;text-align:center;color:var(--muted);
            background:var(--card);border:1px dashed var(--border);border-radius:8px}
 .aviso{
@@ -182,6 +211,11 @@ tbody tr:hover{background:#fff}
   th:nth-child(7),td:nth-child(7){width:9%}
   .papel{white-space:normal;word-break:break-word}
   a{text-decoration:none;color:inherit}
+  /* Convites de edição ("+ área") são affordance de tela. No papel viram
+     ruído — e pior, parecem campo em branco de um documento incompleto. */
+  .add{display:none}
+  .edit:hover{background:none;box-shadow:none}
+  #toast{display:none}
 }
 @media(max-width:760px){
   #form-novo{grid-template-columns:1fr}
@@ -217,6 +251,8 @@ tbody tr:hover{background:#fff}
     <a class="btn" id="link-projeto" href="#">← Voltar ao projeto</a>
   </div>
 
+  <div class="legenda-edicao no-print" id="legenda-edicao"></div>
+
   <form id="form-novo" class="no-print" onsubmit="criar(event)">
     <div class="wide">
       <label for="f-acao">Ação *</label>
@@ -250,6 +286,8 @@ tbody tr:hover{background:#fff}
     <span>Renato de Faria e Almeida Prado · almeida-prado.com</span>
   </div>
 </div>
+
+<div id="toast"></div>
 
 <script>
 const PROJECT_ID = {{ project_id }};
@@ -300,6 +338,16 @@ function render(){
 
   document.getElementById('btn-limpar').style.display = filtro ? '' : 'none';
 
+  // Onde a edição vai parar não pode ser adivinhado: numa matriz de conselho
+  // clicar numa célula grava no banco de OUTRO produto. Dizer isso uma vez no
+  // topo evita a surpresa e a pergunta "isso salvou onde?".
+  const temConselho = dados.fontes.some(f => f.fonte === 'conselhoos' && f.itens);
+  document.getElementById('legenda-edicao').innerHTML = temConselho
+    ? `Clique em qualquer célula pra editar. Itens marcados <b>ConselhoOS</b>
+       gravam <b>no ConselhoOS</b> (não aqui) e lá o prazo é obrigatório —
+       remover item de conselho só de lá.`
+    : 'Clique em qualquer célula pra editar. <b>Enter</b> salva, <b>Esc</b> cancela.';
+
   if(!dados.itens.length){
     document.getElementById('tabela').innerHTML =
       `<div class="vazio-msg">${filtro
@@ -319,26 +367,34 @@ function render(){
 }
 
 function linha(it){
-  const papel = v => v ? `<td class="papel">${esc(v)}</td>`
-                       : `<td class="papel vazio">—</td>`;
+  const u = esc(it.uid);
+  const cel = (campo, conteudo, cls) =>
+    `<td class="${cls} edit" onclick="editar('${u}','${campo}',this)">${conteudo}</td>`;
+  const papel = (campo, v) =>
+    cel(campo, v ? esc(v) : '<span class="add">—</span>',
+        'papel' + (v ? '' : ' vazio'));
+
   let rel = '';
   if(it.dias_para_prazo !== null && it.status_efetivo !== 'concluido'){
     const d = it.dias_para_prazo;
     rel = d < 0 ? `${-d}d em atraso` : d === 0 ? 'hoje' : `em ${d}d`;
   }
+
   return `<tr>
     <td class="acao">
-      ${it.area ? `<span class="area">${esc(it.area)}</span>` : ''}
-      ${esc(it.acao)}
-      ${it.notas && mostrarNotas ? `<span class="notas">${esc(it.notas)}</span>` : ''}
+      <span class="area edit" onclick="editar('${u}','area',this)">${
+        it.area ? esc(it.area) : '<span class="add">+ área</span>'}</span>
+      <span class="edit" onclick="editar('${u}','acao',this)">${esc(it.acao)}</span>
+      ${mostrarNotas ? `<span class="notas edit" onclick="editar('${u}','notas',this)">${
+        it.notas ? esc(it.notas) : '<span class="add">+ nota</span>'}</span>` : ''}
       ${it.fonte === 'conselhoos' ? '<span class="fonte">ConselhoOS</span>' : ''}
     </td>
-    ${papel(it.r)}${papel(it.a)}${papel(it.c)}${papel(it.i)}
-    <td class="prazo">${it.prazo_br || '—'}${rel ? `<span class="rel">${rel}</span>` : ''}</td>
-    <td><span class="pill ${it.status_efetivo}">${esc(it.status_label)}</span></td>
-    <td class="no-print acoes-linha">${it.editavel ? `
-      <button onclick="mudarStatus(${it.id}, '${it.status}')">Status</button>
-      <button onclick="remover(${it.id})">×</button>` : ''}</td>
+    ${papel('r', it.r)}${papel('a', it.a)}${papel('c', it.c)}${papel('i', it.i)}
+    ${cel('prazo', `${it.prazo_br || '<span class="add">+ prazo</span>'}${
+      rel ? `<span class="rel">${rel}</span>` : ''}`, 'prazo')}
+    ${cel('status', `<span class="pill ${it.status_efetivo}">${esc(it.status_label)}</span>`, '')}
+    <td class="no-print acoes-linha">${it.removivel
+      ? `<button onclick="remover('${u}')">×</button>` : ''}</td>
   </tr>`;
 }
 
@@ -370,23 +426,112 @@ async function criar(e){
   toggleForm(); carregar();
 }
 
-// Ciclo pendente → em andamento → concluído → pendente. Um clique só: a
-// alternativa (modal de edição completa) é mais tela pra menos uso — o que
-// muda no dia a dia é status.
-const CICLO = {pendente:'em_andamento', em_andamento:'concluido', concluido:'pendente'};
-async function mudarStatus(id, atual){
-  const novo = CICLO[atual] || 'pendente';
-  const r = await fetch(`/api/raci-itens/${id}`, {
-    method:'PATCH', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({status:novo})
+// ==================== edição inline ====================
+// O PATCH vai pro `uid` (`intel:12` / `conselhoos:<uuid>`), e o backend grava
+// NA FONTE. Item de conselho é UPDATE no ConselhoOS — nada é espelhado aqui.
+
+const API_CAMPO = {r:'responsavel_r', a:'responsavel_a',
+                   c:'responsavel_c', i:'responsavel_i'};
+const VALOR_ATUAL = (it, campo) => ({
+  r:it.r, a:it.a, c:it.c, i:it.i,
+  area:it.area, acao:it.acao, notas:it.notas, prazo:it.prazo, status:it.status
+})[campo] || '';
+
+let editando = false;
+
+function editar(uid, campo, el){
+  if(editando) return;               // um editor por vez: dois abertos, o
+  editando = true;                   // segundo blur restauraria HTML velho
+  const it = dados.itens.find(i => i.uid === uid);
+  if(!it){ editando = false; return; }
+
+  const original = el.innerHTML;
+  const atual = VALOR_ATUAL(it, campo);
+  let campoEl;
+
+  if(campo === 'status'){
+    campoEl = document.createElement('select');
+    // 'atrasado' só entra se for o valor GRAVADO. Ele normalmente é derivado
+    // do prazo vencido (não escolhido), e oferecê-lo como opção convidaria a
+    // marcar atraso na mão — que a próxima leitura recalcularia por cima.
+    const opcoes = ['pendente','em_andamento','concluido'];
+    if(it.status === 'atrasado') opcoes.unshift('atrasado');
+    campoEl.innerHTML = opcoes.map(s =>
+      `<option value="${s}"${s === it.status ? ' selected' : ''}>${LABELS[s]}</option>`).join('');
+  } else {
+    campoEl = document.createElement('input');
+    campoEl.type = campo === 'prazo' ? 'date' : 'text';
+    campoEl.value = atual;
+    if(campo === 'prazo' && it.prazo_obrigatorio) campoEl.required = true;
+  }
+  campoEl.className = 'inline-edit';
+
+  el.innerHTML = '';
+  el.appendChild(campoEl);
+  campoEl.focus();
+  if(campoEl.select) campoEl.select();
+
+  let fechou = false;
+  const restaurar = () => { el.innerHTML = original; editando = false; };
+  const cancelar = () => { if(fechou) return; fechou = true; restaurar(); };
+  const confirmar = async () => {
+    if(fechou) return; fechou = true;
+    const novo = campoEl.value;
+    if(novo === atual){ restaurar(); return; }
+    const ok = await salvar(uid, campo, novo);
+    editando = false;
+    if(ok) carregar(); else el.innerHTML = original;
+  };
+
+  campoEl.addEventListener('blur', confirmar);
+  campoEl.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); campoEl.blur(); }
+    if(e.key === 'Escape'){ e.preventDefault(); cancelar(); }
   });
-  if(r.ok) carregar();
+  // No select o `change` já decide; o blur que vem logo depois cai no guarda
+  // `fechou` e não dispara um segundo PATCH.
+  if(campo === 'status') campoEl.addEventListener('change', confirmar);
 }
 
-async function remover(id){
+async function salvar(uid, campo, valor){
+  const body = {};
+  body[API_CAMPO[campo] || campo] = valor === '' ? null : valor;
+  let r;
+  try{
+    r = await fetch(`/api/raci-itens/${encodeURIComponent(uid)}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+  }catch(e){ toast('Sem conexão — não gravei.', true); return false; }
+
+  if(!r.ok){
+    // A mensagem do backend é a que explica o caso real (ex.: o ConselhoOS
+    // não aceita item sem prazo). Trocá-la por "erro ao salvar" esconderia
+    // justamente o que o Renato precisa saber pra decidir o que fazer.
+    const e = await r.json().catch(() => ({}));
+    toast(e.detail || 'Não consegui salvar.', true);
+    return false;
+  }
+  const fonte = (await r.json().catch(() => ({}))).fonte;
+  toast(fonte === 'conselhoos' ? 'salvo no ConselhoOS ✓' : 'salvo ✓');
+  return true;
+}
+
+async function remover(uid){
   if(!confirm('Remover este item da matriz?')) return;
-  const r = await fetch(`/api/raci-itens/${id}`, {method:'DELETE'});
-  if(r.ok) carregar();
+  const r = await fetch(`/api/raci-itens/${encodeURIComponent(uid)}`, {method:'DELETE'});
+  if(r.ok){ toast('removido'); carregar(); return; }
+  const e = await r.json().catch(() => ({}));
+  toast(e.detail || 'Não consegui remover.', true);
+}
+
+let toastTimer = null;
+function toast(msg, erro){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'on' + (erro ? ' erro' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, erro ? 5000 : 1600);
 }
 
 carregar();

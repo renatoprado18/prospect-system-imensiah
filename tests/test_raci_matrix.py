@@ -30,7 +30,12 @@ from services.raci_matrix import (  # noqa: E402
     FONTE_INTEL,
     _normalize,
     _sort_key,
+    _split_uid,
+    _update_conselhoos,
+    _update_intel,
+    delete_item,
     get_matrix,
+    update_item,
 )
 
 
@@ -58,11 +63,22 @@ def test_as_duas_fontes_viram_o_mesmo_formato():
     assert a["r"] == b["r"] == "Piccino"
 
 
-def test_so_o_lado_intel_e_editavel():
-    """O ConselhoOS é lido cross-DB, read-only. Uma tela que oferecesse editar
-    o que ela não escreve prometeria o que não cumpre."""
-    assert _normalize(linha(), FONTE_INTEL)["editavel"] is True
-    assert _normalize(linha(), FONTE_CONSELHOOS)["editavel"] is False
+def test_as_duas_fontes_sao_editaveis_mas_so_o_intel_e_removivel():
+    """Write-through (29/07): editar vale nos dois lados, gravando NA FONTE.
+    Remover, não — apagar linha de RACI de conselho é destruir registro de ata
+    de uma empresa por um caminho que não é o dela."""
+    intel = _normalize(linha(), FONTE_INTEL)
+    conselho = _normalize(linha(), FONTE_CONSELHOOS)
+    assert intel["editavel"] is True and conselho["editavel"] is True
+    assert intel["removivel"] is True
+    assert conselho["removivel"] is False
+
+
+def test_so_o_conselhoos_exige_prazo():
+    """`prazo` é NOT NULL lá e opcional aqui. A tela usa isto pra avisar antes,
+    em vez de deixar limpar o campo e falhar na gravação."""
+    assert _normalize(linha(), FONTE_INTEL)["prazo_obrigatorio"] is False
+    assert _normalize(linha(), FONTE_CONSELHOOS)["prazo_obrigatorio"] is True
 
 
 def test_uid_separa_ids_iguais_de_fontes_diferentes():
@@ -259,3 +275,138 @@ def test_projeto_inexistente_devolve_erro_e_nao_estoura(matriz):
     matriz(None, [])
     r = get_matrix(999999)
     assert r["error"] == "projeto não encontrado"
+
+
+# ==================== escrita: roteamento por fonte ====================
+#
+# O que estes testes protegem: um `uid` mal lido escreveria no BANCO ERRADO —
+# `12` do INTEL e um uuid do ConselhoOS chegam pelo mesmo endpoint.
+
+UUID = "9c246a3a-3e7e-4472-9854-ce83f6e22e14"
+
+
+def test_uid_separa_as_duas_fontes():
+    assert _split_uid("intel:12") == (FONTE_INTEL, "12")
+    assert _split_uid(f"conselhoos:{UUID}") == (FONTE_CONSELHOOS, UUID)
+
+
+def test_id_nu_continua_valendo_como_intel():
+    """Formato da 1ª versão da tela; segue chegando de aba aberta ou link
+    salvo. Quebrar isso daria 400 num caminho que funcionava."""
+    assert _split_uid("12") == (FONTE_INTEL, "12")
+    assert _split_uid(12) == (FONTE_INTEL, "12")
+
+
+@pytest.mark.parametrize("ruim", ["", "  ", "outro:9", "intel:", "intel:abc", ":12"])
+def test_uid_indecifravel_nao_vira_palpite(ruim):
+    """Adivinhar a fonte aqui grava no banco errado — melhor recusar."""
+    assert _split_uid(ruim) == (None, None)
+
+
+def test_update_com_uid_invalido_nao_toca_banco_nenhum(monkeypatch):
+    monkeypatch.setattr(raci_matrix, "_update_intel",
+                        lambda *a: pytest.fail("não podia chegar no INTEL"))
+    monkeypatch.setattr(raci_matrix, "_update_conselhoos",
+                        lambda *a: pytest.fail("não podia chegar no ConselhoOS"))
+    assert "inválido" in update_item("outro:9", {"status": "concluido"})["error"]
+
+
+def test_update_roteia_pra_fonte_certa(monkeypatch):
+    chamou = {}
+    monkeypatch.setattr(raci_matrix, "_update_intel",
+                        lambda i, d: chamou.setdefault("intel", i) or {"ok": True})
+    monkeypatch.setattr(raci_matrix, "_update_conselhoos",
+                        lambda i, d: chamou.setdefault("cos", i) or {"ok": True})
+
+    update_item("intel:12", {"status": "concluido"})
+    update_item(f"conselhoos:{UUID}", {"status": "concluido"})
+
+    assert chamou["intel"] == 12          # int, não string
+    assert chamou["cos"] == UUID
+
+
+def test_delete_de_item_de_conselho_e_recusado(monkeypatch):
+    """DELETE segue INTEL-only mesmo com a escrita aberta."""
+    monkeypatch.setattr(raci_matrix, "get_db",
+                        lambda: pytest.fail("não podia abrir o banco"))
+    r = delete_item(f"conselhoos:{UUID}")
+    assert "não se remove pelo INTEL" in r["error"]
+
+
+# ==================== escrita: guardas do ConselhoOS ====================
+
+@pytest.fixture
+def sem_conexao(monkeypatch):
+    """Faz qualquer tentativa de conectar no ConselhoOS falhar o teste: o que
+    se quer provar é que a validação barra ANTES de abrir conexão."""
+    monkeypatch.setattr(raci_matrix, "_conselhoos_url",
+                        lambda: pytest.fail("validação devia ter barrado antes"))
+
+
+@pytest.mark.parametrize("campo", ["area", "acao", "prazo"])
+def test_conselhoos_recusa_apagar_campo_not_null(campo, sem_conexao):
+    """Mandar None nestes viraria IntegrityError genérico, e a tela mostraria
+    'erro ao salvar' sem dizer que o campo nunca foi opcional."""
+    r = _update_conselhoos(UUID, {campo: None})
+    assert "ConselhoOS não aceita" in r["error"]
+    assert campo in r["error"]      # a mensagem diz QUAL campo
+
+
+def test_status_nulo_cai_na_validacao_de_enum(sem_conexao):
+    """`status` também é NOT NULL, mas a mensagem útil aqui é a do enum."""
+    assert "status inválido" in _update_conselhoos(UUID, {"status": None})["error"]
+
+
+def test_conselhoos_recusa_string_so_de_espaco(sem_conexao):
+    assert "error" in _update_conselhoos(UUID, {"area": "   "})
+
+
+@pytest.mark.parametrize("valor", ["concluído", "done", "CONCLUIDO", ""])
+def test_status_invalido_e_barrado_nas_duas_fontes(valor, sem_conexao, monkeypatch):
+    """ENUM lá, CHECK aqui: os dois estouram feio. 400 legível > 500."""
+    monkeypatch.setattr(raci_matrix, "get_db",
+                        lambda: pytest.fail("não podia abrir o banco"))
+    assert "status inválido" in _update_intel(12, {"status": valor})["error"]
+    assert "error" in _update_conselhoos(UUID, {"status": valor})
+
+
+def test_patch_vazio_nao_gera_update(sem_conexao, monkeypatch):
+    """Um UPDATE sem SET só carimbaria `updated_at` — ruído de auditoria."""
+    monkeypatch.setattr(raci_matrix, "get_db",
+                        lambda: pytest.fail("não podia abrir o banco"))
+    assert _update_intel(12, {})["error"] == "nada a atualizar"
+    assert _update_conselhoos(UUID, {})["error"] == "nada a atualizar"
+
+
+def test_task_id_nao_atravessa_pro_conselhoos(sem_conexao):
+    """Lá a coluna é `intel_task_id` e quem a governa é o `conselhoos_raci_sync`.
+    Aceitar `task_id` aqui criaria um segundo dono do mesmo elo."""
+    assert _update_conselhoos(UUID, {"task_id": 999})["error"] == "nada a atualizar"
+
+
+def test_concluir_pelo_intel_nao_marca_como_ja_relatado(monkeypatch):
+    """`concluido_relatado_em` é do `raci_weekly_report`: item concluído com o
+    campo preenchido nunca é anunciado no grupo. A edição não pode tocá-lo."""
+    sql = {}
+
+    class Cur:
+        rowcount = 1
+        def execute(self, q, v=None): sql["q"] = q
+        def close(self): pass
+
+    class Conn:
+        def cursor(self): return Cur()
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(raci_matrix, "_conselhoos_url", lambda: "postgres://x")
+    monkeypatch.setitem(sys.modules, "psycopg2",
+                        type(sys)("psycopg2"))
+    sys.modules["psycopg2"].connect = lambda *a, **k: Conn()
+    sys.modules["psycopg2"].extras = type(sys)("extras")
+
+    r = _update_conselhoos(UUID, {"status": "concluido"})
+    assert r["ok"] is True
+    assert "concluido_relatado_em" not in sql["q"]
+    assert "::raci_status" in sql["q"]     # sem o cast, o enum recusa o texto
+    assert "updated_at" in sql["q"]

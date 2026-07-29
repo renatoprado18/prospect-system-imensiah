@@ -25,9 +25,35 @@ classe de defeito que já mordeu aqui (a nota #302 que sobrevive contradizendo
 o memo certo). Então cada fonte é lida NA FONTE, em cada requisição, e a
 união só existe em memória.
 
-Consequência aceita: o ConselhoOS é READ-ONLY por aqui. Editar item de
-conselho continua sendo no ConselhoOS (ou pelo fluxo de propostas do
-`raci_weekly_report`). O INTEL escreve só no que é dele.
+ESCRITA: NA FONTE TAMBÉM (write-through, 29/07)
+------------------------------------------------
+A primeira versão era read-only em relação ao ConselhoOS. Durou um dia: o
+caso real que motivou a tela — atualizar o RACI da Vallen depois da reunião —
+esbarrava em 57 itens dos quais ZERO eram editáveis, porque todos vêm do
+ConselhoOS. Uma matriz que mostra tudo e deixa mexer em nada não serve pro
+momento em que ela é usada.
+
+Renato decidiu abrir a escrita (29/07). O que NÃO muda é a regra de cópia:
+editar aqui grava NA FONTE — item de conselho é `UPDATE` no ConselhoOS, item
+do INTEL é `UPDATE` no INTEL. Nada é espelhado, então não nasce a terceira
+cópia. Precedente já existia: `conselhoos_raci_sync` escreve lá desde sempre
+quando a task INTEL fecha.
+
+O que a escrita cross-DB exige de cuidado (o schema dos dois lados NÃO é o
+mesmo — ver `_update_conselhoos`):
+  - `area`, `acao`, `prazo` e `status` são NOT NULL no ConselhoOS; no INTEL
+    `prazo` é opcional. Apagar prazo de item de conselho é rejeitado com
+    mensagem, não com erro 500 do banco;
+  - `status` é ENUM (`raci_status`) lá e CHECK aqui — valor inválido é
+    barrado antes do INSERT, dos dois lados;
+  - `concluido_relatado_em` NÃO é tocado ao concluir. É o campo que o
+    `raci_weekly_report` usa pra saber o que ainda não foi anunciado no
+    grupo; preenchê-lo aqui faria a conclusão nascer "já relatada" e sumir
+    do relatório sem nunca ter sido dita.
+
+DELETE segue INTEL-only. Apagar linha de RACI de conselho é destruir registro
+de ata de uma empresa que não é minha, por um caminho que não é o dela — e
+ninguém pediu isso.
 
 COMO UM PROJETO ACHA O RACI DE CONSELHO DELE
 ---------------------------------------------
@@ -126,7 +152,14 @@ def _normalize(row: Dict, fonte: str) -> Dict:
         "status_label": STATUS_LABEL.get(status_efetivo, status_efetivo),
         "notas": (row.get("notas") or "").strip() or None,
         "task_id": row.get("task_id"),
-        "editavel": fonte == FONTE_INTEL,
+        # Editar vale nas duas fontes (write-through, 29/07). Remover, não:
+        # `removivel` é o que separa mexer numa linha de destruí-la.
+        "editavel": True,
+        "removivel": fonte == FONTE_INTEL,
+        # O ConselhoOS não aceita item sem prazo (coluna NOT NULL). A tela usa
+        # isto pra avisar ANTES, em vez de deixar o usuário limpar o campo e
+        # descobrir no erro que aquilo nunca foi possível.
+        "prazo_obrigatorio": fonte == FONTE_CONSELHOOS,
     }
 
 
@@ -258,10 +291,57 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     }
 
 
-# ==================== escrita (só o lado INTEL) ====================
+# ==================== escrita (write-through, cada fonte na sua) ==========
 
 _CAMPOS = ("area", "acao", "responsavel_r", "responsavel_a", "responsavel_c",
            "responsavel_i", "prazo", "status", "notas", "task_id")
+
+# `task_id` fica de fora: do lado de lá a coluna é `intel_task_id` e quem a
+# governa é o `conselhoos_raci_sync`. Deixar a tela escrever nela seria criar
+# um segundo dono pro mesmo elo.
+_CAMPOS_CONSELHOOS = ("area", "acao", "responsavel_r", "responsavel_a",
+                      "responsavel_c", "responsavel_i", "prazo", "status",
+                      "notas")
+
+# NOT NULL no ConselhoOS (`\d raci_itens` do outro Neon, conferido 29/07).
+_OBRIGATORIOS_CONSELHOOS = ("area", "acao", "prazo", "status")
+
+
+def _split_uid(uid: Any):
+    """
+    `'intel:12'` / `'conselhoos:<uuid>'` -> `(fonte, ident)`.
+
+    Id nu (`12`) é aceito como INTEL: era o formato da primeira versão da
+    tela e continua chegando de link salvo ou aba aberta. `(None, None)`
+    quando não dá pra dizer com certeza de qual fonte é — adivinhar aqui
+    escreveria no banco errado.
+    """
+    texto = str(uid).strip()
+    if ":" in texto:
+        fonte, _, ident = texto.partition(":")
+        fonte, ident = fonte.strip().lower(), ident.strip()
+    else:
+        fonte, ident = FONTE_INTEL, texto
+
+    if fonte not in (FONTE_INTEL, FONTE_CONSELHOOS) or not ident:
+        return None, None
+    if fonte == FONTE_INTEL and not ident.lstrip("-").isdigit():
+        return None, None
+    return fonte, ident
+
+
+def _limpar(valor: Any) -> Any:
+    return (valor.strip() or None) if isinstance(valor, str) else valor
+
+
+def _validar_status(campos: Dict) -> Optional[str]:
+    """`status` é ENUM lá e CHECK aqui: os dois estouram feio com valor
+    inválido. Barrar antes devolve 400 legível em vez de 500."""
+    if "status" in campos:
+        valor = _limpar(campos["status"])
+        if valor not in STATUS_ORDER:
+            return f"status inválido: {campos['status']!r}"
+    return None
 
 
 def create_item(project_id: int, data: Dict) -> Dict:
@@ -269,6 +349,9 @@ def create_item(project_id: int, data: Dict) -> Dict:
     acao = (data.get("acao") or "").strip()
     if not acao:
         return {"error": "acao é obrigatória"}
+    erro = _validar_status({"status": data.get("status") or "pendente"})
+    if erro:
+        return {"error": erro}
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -297,21 +380,34 @@ def create_item(project_id: int, data: Dict) -> Dict:
     return {"ok": True, "id": item_id}
 
 
-def update_item(item_id: int, data: Dict) -> Dict:
+def update_item(item_uid: Any, data: Dict) -> Dict:
     """
-    Atualiza um item do lado INTEL. Só mexe nos campos que vieram — um PATCH
-    que zerasse o que não foi enviado apagaria responsável por omissão.
+    Atualiza um item na FONTE dele. `item_uid` é `'intel:12'` ou
+    `'conselhoos:<uuid>'` (id nu = INTEL, retrocompat).
+
+    Só mexe nos campos que vieram — um PATCH que zerasse o que não foi
+    enviado apagaria responsável por omissão.
     """
+    fonte, ident = _split_uid(item_uid)
+    if not fonte:
+        return {"error": f"identificador de item inválido: {item_uid!r}"}
+    if fonte == FONTE_CONSELHOOS:
+        return _update_conselhoos(ident, data)
+    return _update_intel(int(ident), data)
+
+
+def _update_intel(item_id: int, data: Dict) -> Dict:
     campos = {k: data[k] for k in _CAMPOS if k in data}
     if not campos:
         return {"error": "nada a atualizar"}
+    erro = _validar_status(campos)
+    if erro:
+        return {"error": erro}
 
     sets, valores = [], []
     for k, v in campos.items():
         sets.append(f"{k} = %s")
-        if isinstance(v, str):
-            v = v.strip() or None
-        valores.append(v)
+        valores.append(_limpar(v))
     sets.append("atualizado_em = CURRENT_TIMESTAMP")
     valores.append(item_id)
 
@@ -323,15 +419,87 @@ def update_item(item_id: int, data: Dict) -> Dict:
         conn.commit()
     if not afetados:
         return {"error": "item não encontrado", "id": item_id}
-    return {"ok": True, "id": item_id}
+    return {"ok": True, "uid": f"{FONTE_INTEL}:{item_id}", "fonte": FONTE_INTEL}
 
 
-def delete_item(item_id: int) -> Dict:
+def _update_conselhoos(item_uuid: str, data: Dict) -> Dict:
+    """
+    `UPDATE` no banco do ConselhoOS. Escreve na fonte, não espelha.
+
+    As duas diferenças de schema que precisam morrer aqui, e não no banco:
+    os NOT NULL (mandar `None` viraria `IntegrityError` genérico, e o Renato
+    leria "erro ao salvar" sem saber que aquele campo nunca foi opcional) e o
+    ENUM de status. `concluido_relatado_em` fica intocado de propósito — é do
+    `raci_weekly_report`, ver cabeçalho do módulo.
+    """
+    campos = {k: data[k] for k in _CAMPOS_CONSELHOOS if k in data}
+    if not campos:
+        return {"error": "nada a atualizar"}
+    erro = _validar_status(campos)
+    if erro:
+        return {"error": erro}
+
+    for k in _OBRIGATORIOS_CONSELHOOS:
+        if k in campos and _limpar(campos[k]) in (None, ""):
+            rotulo = "prazo" if k == "prazo" else k
+            return {"error": f"o ConselhoOS não aceita item sem {rotulo} — "
+                             f"preencha ou edite lá"}
+
+    url = _conselhoos_url()
+    if not url:
+        return {"error": "CONSELHOOS_DATABASE_URL não configurada"}
+
+    sets, valores = [], []
+    for k, v in campos.items():
+        # O cast é obrigatório: psycopg2 manda `status` como texto e o Postgres
+        # não converte pro enum sozinho num UPDATE parametrizado.
+        sets.append(f"{k} = %s::raci_status" if k == "status" else f"{k} = %s")
+        valores.append(_limpar(v))
+    sets.append("updated_at = NOW()")
+    valores.append(item_uuid)
+
+    try:
+        import psycopg2
+        import psycopg2.extras
+
+        conn = psycopg2.connect(url, connect_timeout=5)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"UPDATE raci_itens SET {', '.join(sets)} WHERE id = %s::uuid",
+                valores)
+            afetados = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"RACI ConselhoOS: falha ao gravar {item_uuid}: {e}")
+        return {"error": f"não consegui gravar no ConselhoOS: {e}"}
+
+    if not afetados:
+        return {"error": "item não encontrado", "id": item_uuid}
+    return {"ok": True, "uid": f"{FONTE_CONSELHOOS}:{item_uuid}",
+            "fonte": FONTE_CONSELHOOS}
+
+
+def delete_item(item_uid: Any) -> Dict:
+    """
+    Remove item — só do lado INTEL. Ver cabeçalho: apagar linha de RACI de
+    conselho é destruir registro de ata de uma empresa, por um caminho que não
+    é o dela.
+    """
+    fonte, ident = _split_uid(item_uid)
+    if not fonte:
+        return {"error": f"identificador de item inválido: {item_uid!r}"}
+    if fonte == FONTE_CONSELHOOS:
+        return {"error": "item de conselho não se remove pelo INTEL — "
+                         "apague no ConselhoOS"}
+
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM raci_itens WHERE id = %s", (item_id,))
+        cursor.execute("DELETE FROM raci_itens WHERE id = %s", (int(ident),))
         afetados = cursor.rowcount
         conn.commit()
     if not afetados:
-        return {"error": "item não encontrado", "id": item_id}
-    return {"ok": True, "id": item_id}
+        return {"error": "item não encontrado", "id": ident}
+    return {"ok": True, "uid": f"{FONTE_INTEL}:{ident}", "fonte": FONTE_INTEL}
