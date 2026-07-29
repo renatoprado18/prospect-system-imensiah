@@ -831,7 +831,16 @@
 
         .proposals-list {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            /* 29/07 — CAUSA RAIZ do scroll horizontal da home. `1fr` em Grid e
+               atalho de `minmax(auto, 1fr)`, e esse minimo `auto` = tamanho do
+               conteudo: com o titulo da noticia em `nowrap`, a trilha NAO consegue
+               encolher e estica. Medido em prod: grid de 1067px com
+               grid-template-columns computado em "1225px 956px" (soma 2182), body
+               a 3107px contra 1415 de viewport. `minmax(0, 1fr)` da a trilha um
+               minimo de zero, que e o unico jeito de ela respeitar o container.
+               (max-width nos filhos nao resolve: 100% de um pai que ja cresceu
+               cresce junto.) */
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
         }
 
@@ -940,7 +949,7 @@
         /* Responsivo: 1 coluna em telas menores */
         @media (max-width: 1400px) {
             .proposals-list {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
             }
         }
 
