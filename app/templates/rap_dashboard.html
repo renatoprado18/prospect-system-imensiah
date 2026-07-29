@@ -1646,16 +1646,27 @@
         .suggestion-icon.birthday { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
         .suggestion-icon.risk { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
         .suggestion-content { flex: 1; min-width: 0; }
+        /* 29/07: `min-width:0` deixa o flex ENCOLHER, mas nao quebra o conteudo.
+           As sugestoes de noticia traziam a URL do Google News crua (~200 chars sem
+           espaco): sem ponto de quebra ela transbordava o card e criava scroll
+           horizontal na pagina inteira. `overflow-wrap:anywhere` quebra em qualquer
+           ponto, que e o unico jeito de segurar token continuo. */
         .suggestion-title {
             font-weight: 500;
             font-size: 0.8rem;
             color: var(--dark);
             margin-bottom: 2px;
+            overflow-wrap: anywhere;
         }
         .suggestion-desc {
             font-size: 0.7rem;
             color: var(--gray-500);
             line-height: 1.3;
+            overflow-wrap: anywhere;
+        }
+        .suggestion-desc a {
+            color: var(--primary);
+            text-decoration: underline;
         }
         .suggestion-actions {
             display: flex;
@@ -1823,14 +1834,10 @@
             border: 1px solid var(--border-color, #e2e8f0);
             overflow: hidden;
         }
-        #intelChatPane {
-            background: #fff;
-            border-radius: 8px;
-            border: 1px solid var(--border-color, #e2e8f0);
-            overflow: hidden;
-            --intel-chat-height: 520px;
-            --intel-chat-max-width: 100%;
-        }
+        /* 29/07: #intelChatPane removido da home. O painel lia bot_conversations
+           (cerebro intel-bot), que nao recebe mensagem desde 16/06 — mostrava uma
+           conversa de 43 dias atras ocupando um terco da tela. O chat vivo e outro
+           (tonIAH). A pagina /intel-chat segue existindo com o mesmo widget. */
         .drill-header {
             display: flex;
             justify-content: space-between;
@@ -2190,15 +2197,13 @@
                     <div class="stat-breakdown" id="statProjectsBreakdown"></div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" data-drill="contatos" onclick="openDrill('contatos')">
-                <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
-                <div class="stat-content">
-                    <div class="stat-headline">
-                        <div class="stat-value" id="statAtencao">-</div>
-                        <div class="stat-label">Atenção</div>
-                    </div>
-                </div>
-            </div>
+            {# 29/07: statcard "Atenção" + drill "Contatos c/ Atenção" REMOVIDOS.
+               Veredito do Renato (repetido — ele já havia dito antes): listar contato
+               por health score baixo NÃO é acionável. "Só serve se houver um motivo
+               para contatar (notícia relacionada a ele ou seus interesses)."
+               Somava dois defeitos: o card mostrava 6 e /api/v1/dashboard dizia 306
+               pro mesmo critério, e a lista levava 31s pra carregar (spinner eterno).
+               Reintroduzir só quando existir MOTIVO por contato — não a lista crua. #}
             <div class="stat-card" style="cursor: pointer;" data-drill="tarefas" onclick="openDrill('tarefas')">
                 <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
@@ -2299,9 +2304,6 @@
                     <i class="bi bi-arrow-up-circle text-muted" style="font-size:2rem;"></i>
                     <div class="mt-2">Clique em um statcard pra abrir o drill</div>
                 </div>
-            </div>
-            <div id="intelChatPane">
-                {% include '_intel_chat_widget.html' %}
             </div>
         </div>
 
@@ -2424,7 +2426,7 @@
         }
 
         function applyMutedState() {
-            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             stats.forEach(id => {
                 const valEl = document.getElementById(id);
                 if (!valEl) return;
@@ -2440,7 +2442,7 @@
         function updateCleanSlateBanner() {
             const banner = document.getElementById('cleanSlateBanner');
             if (!banner) return;
-            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             // Mostra so se TODOS estao idle (nao "-" ainda carregando, nao algo ativo).
             let allIdle = true;
             for (const id of stats) {
@@ -2563,10 +2565,10 @@
                     }
                 }
 
-                // Alertas - precisam atenção
-                // statAtencao agora vem de loadContatosAtencao() — mesma fonte do drill
-                // (alinhamento count <-> drill, evita mismatch tipo "statcard 7 vs drill 30").
-                // Sidebar badge atualizada dentro de loadContatosAtencao tambem.
+                // 29/07: statAtencao nao existe mais (card removido — health score
+                // sozinho nao e acionavel). O alinhamento count<->drill descrito aqui
+                // nunca foi alcancado: o card lia needs-attention (6) e
+                // /api/v1/dashboard reportava precisam_atencao=306 pro mesmo criterio.
 
                 // Briefings pendentes - buscar da API especifica
                 loadTasksOverdue();
@@ -3819,6 +3821,28 @@
                 .replace(/'/g, '&#39;');
         }
 
+        /* 29/07: a descricao das sugestoes de noticia vinha como "Link: https://..."
+           em texto puro — nao clicavel, e a URL do Google News RSS (~200 chars) nao
+           dizia nada e estourava o card. Aqui a URL vira ancora de verdade, rotulada
+           pelo dominio. stopPropagation porque o card abre modal no clique. */
+        function linkifySuggestionDesc(text, idx) {
+            const raw = String(text || '');
+            const urlRe = /https?:\/\/[^\s<>"')]+/g;
+            let out = '', last = 0, m;
+            while ((m = urlRe.exec(raw)) !== null) {
+                out += escapeHtml(raw.slice(last, m.index));
+                const url = m[0];
+                let label = url;
+                try { label = new URL(url).hostname.replace(/^www\./, ''); } catch (e) {}
+                out += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"`
+                     + ` onclick="event.stopPropagation()" title="${escapeHtml(url)}">`
+                     + `${escapeHtml(label)} <i class="bi bi-box-arrow-up-right"></i></a>`;
+                last = m.index + url.length;
+            }
+            out += escapeHtml(raw.slice(last));
+            return out;
+        }
+
         function truncate(s, n) {
             if (!s) return '';
             const str = String(s);
@@ -4475,9 +4499,9 @@
                             <div class="suggestion-icon ${iconClass}">
                                 <i class="bi ${icon}"></i>
                             </div>
-                            <div class="suggestion-content" onclick="openSuggestionModal(${idx})" style="cursor: pointer;">
-                                <div class="suggestion-title">${s.title || 'Sugestao'}</div>
-                                <div class="suggestion-desc">${s.description || ''}</div>
+                            <div class="suggestion-content" style="cursor: pointer;">
+                                <div class="suggestion-title" onclick="openSuggestionModal(${idx})">${escapeHtml(s.title || 'Sugestao')}</div>
+                                <div class="suggestion-desc">${linkifySuggestionDesc(s.description || '', idx)}</div>
                             </div>
                             <div class="suggestion-actions">
                                 <button class="suggestion-btn accept" onclick="acceptSuggestion(${idx})" title="Aceitar">
@@ -5006,7 +5030,9 @@
 
         loadAllData().then(() => {
             loadDashboardData();
-            loadContatosAtencao();
+            // loadContatosAtencao() nao roda mais no load da home (29/07):
+            // o statcard morreu e o endpoint leva 31s. A funcao segue definida
+            // porque o fluxo de snooze ainda a chama pra atualizar o badge.
         });
 
         // Load secondary features after short delay (lower priority)
@@ -5561,20 +5587,9 @@
                 },
                 fullPage: '/projetos'
             },
-            contatos: {
-                label: 'Contatos c/ Atenção',
-                color: '#f59e0b',
-                // Usar /api/contacts/needs-attention pra alinhar com o count do statcard
-                // (precisam_atencao em /api/v1/dashboard usa o mesmo criterio: circulo<=3 + health<50).
-                // Antes usava /api/v1/contact-suggestions que aplica filtros narrower (so quem contatar HOJE)
-                // — causava mismatch tipo "statcard 7 vs drill 2".
-                endpoint: () => '/api/contacts/needs-attention?limit=200',
-                extract: (d) => d.contacts || [],
-                emptyIcon: 'bi-check-circle',
-                emptyText: 'Você está em dia com todos os contatos',
-                renderItem: (c) => drillRenderNeedsAttentionContact(c),
-                fullPage: '/contatos?filter=needs_attention'
-            },
+            // drill 'contatos' REMOVIDO 29/07 — ver comentario no statcard. A lista
+            // por health score nao e acionavel sem MOTIVO por contato. O endpoint
+            // /api/contacts/needs-attention continua existindo (31s, /contatos usa).
             tarefas: {
                 label: 'Tarefas Vencidas',
                 color: '#ef4444',
@@ -6064,10 +6079,7 @@
                 fecharModalSnooze();
                 if (typeof showToast === 'function') showToast(`Contato adiado por ${dias} dia(s)`, 'success');
                 // Recarrega drill e statcard pra refletir a remocao
-                if (typeof currentDrill !== 'undefined' && currentDrill === 'contatos') {
-                    currentDrill = null; // forca reabrir
-                    openDrill('contatos');
-                }
+                // drill 'contatos' nao existe mais (29/07) — nada a reabrir aqui.
                 if (typeof loadContatosAtencao === 'function') loadContatosAtencao();
             } catch (e) {
                 if (typeof showToast === 'function') showToast('Erro ao adiar contato', 'danger');
@@ -6135,9 +6147,8 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            if (window.IntelChat) {
-                IntelChat.init('#intelChatRoot', { autofocus: false });
-            }
+            // IntelChat.init removido junto com #intelChatPane (29/07). O widget
+            // continua em /intel-chat, que faz o proprio init.
             try {
                 const last = localStorage.getItem('intel.dashboard.lastDrill');
                 if (last && drillConfig[last]) {
