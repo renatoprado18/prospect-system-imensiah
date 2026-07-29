@@ -22957,6 +22957,92 @@ async def api_delete_raci_item(item_uid: str):
     return result
 
 
+@app.get("/api/projects/{project_id}/raci/whatsapp-preview")
+async def api_raci_whatsapp_preview(project_id: int, incluir_concluidos: bool = False):
+    """Texto do RACI pronto pro grupo + grupos vinculados ao projeto.
+
+    So PREPARA. Quem dispara e o Renato, depois de ler e editar — o texto sai
+    da pagina pro grupo do cliente, entao revisar antes nao e formalidade."""
+    from services.raci_matrix import (
+        format_for_whatsapp, get_matrix, WHATSAPP_MAX_CHARS)
+    matrix = get_matrix(project_id)
+    if matrix.get("error") == "projeto não encontrado":
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+    texto = format_for_whatsapp(matrix, incluir_concluidos=incluir_concluidos)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT group_jid, group_name FROM project_whatsapp_groups
+             WHERE project_id = %s AND ativo IS TRUE ORDER BY group_name
+        """, (project_id,))
+        grupos = [dict(r) for r in cursor.fetchall()]
+
+    return {"text": texto, "chars": len(texto), "max_chars": WHATSAPP_MAX_CHARS,
+            "grupos": grupos, "project": matrix.get("project")}
+
+
+@app.post("/api/projects/{project_id}/raci/send-to-group")
+async def api_raci_send_to_group(project_id: int, request: Request):
+    """Manda o texto do RACI num grupo WhatsApp vinculado ao projeto.
+
+    O `text` vem do cliente de proposito: o Renato edita o preview antes de
+    mandar, e reformatar aqui jogaria fora a edicao dele.
+
+    O grupo e validado contra `project_whatsapp_groups` DESTE projeto — nao
+    aceitamos jid arbitrario do corpo, senao o endpoint viraria um relay pra
+    qualquer grupo da conta."""
+    data = await request.json()
+    group_jid = (data.get("group_jid") or "").strip()
+    texto = (data.get("text") or "").strip()
+    if not group_jid or not texto:
+        raise HTTPException(status_code=400, detail="group_jid e text sao obrigatorios")
+
+    from services.raci_matrix import WHATSAPP_MAX_CHARS
+    if len(texto) > WHATSAPP_MAX_CHARS:
+        # A Evolution corta em silencio: metade do RACI chegaria no grupo sem
+        # ninguem notar a falta.
+        raise HTTPException(
+            status_code=400,
+            detail=f"texto tem {len(texto)} caracteres e o limite e "
+                   f"{WHATSAPP_MAX_CHARS} — encurte ou mande em partes")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT group_name FROM project_whatsapp_groups
+             WHERE project_id = %s AND group_jid = %s AND ativo IS TRUE
+        """, (project_id, group_jid))
+        row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404,
+                            detail="grupo nao vinculado a este projeto")
+    group_name = row["group_name"]
+
+    from integrations.evolution_api import get_evolution_client
+    client = get_evolution_client()
+    result = await client.send_text(group_jid, texto, instance_name="rap-whatsapp")
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(status_code=502,
+                            detail=f"Evolution recusou o envio: {result['error']}")
+
+    # Rastro: o RACI foi pro grupo do cliente. Sem isto, so o WhatsApp sabe.
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type='raci_sent_to_group',
+            category='conselho',
+            title=f"RACI do projeto #{project_id} enviado em '{group_name}'",
+            scope_ref={'project_id': project_id, 'group_jid': group_jid},
+            source='main.api_raci_send_to_group',
+            payload={'chars': len(texto), 'group_name': group_name},
+        )
+    except Exception as e:
+        logger.warning(f"audit log do envio de RACI falhou: {e}")
+
+    return {"ok": True, "group_name": group_name, "chars": len(texto)}
+
+
 @app.get("/projetos/{project_id}/raci", response_class=HTMLResponse)
 async def projeto_raci_page(request: Request, project_id: int):
     """Matriz RACI do projeto — pagina on-brand, imprimivel em PDF num clique."""

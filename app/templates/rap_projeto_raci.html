@@ -129,6 +129,33 @@ td.edit{display:table-cell}
 .legenda-edicao{font-size:11px;color:var(--muted);margin:-6px 0 14px}
 .legenda-edicao b{color:var(--gold-deep);font-weight:600}
 
+/* ---------- painel de envio pro grupo ---------- */
+#painel-envio{
+  display:none;background:var(--card);border:1px solid var(--border);
+  border-radius:8px;padding:14px 16px;margin-bottom:14px;
+}
+#painel-envio.on{display:block}
+.linha-envio{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.linha-envio.fim{justify-content:flex-end;margin:10px 0 0}
+.linha-envio label{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+                   color:var(--muted);font-weight:600}
+.linha-envio label.chk{display:flex;align-items:center;gap:5px;cursor:pointer;
+                       letter-spacing:.06em;text-transform:none;font-size:11px}
+#sel-grupo{
+  padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;
+  font-family:'Montserrat',sans-serif;font-size:13px;color:var(--ink);min-width:220px;
+}
+#txt-envio{
+  width:100%;min-height:260px;padding:12px;border:1px solid var(--border);
+  border-radius:6px;background:#fff;color:var(--ink);resize:vertical;
+  font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;
+}
+#txt-envio:focus{outline:none;border-color:var(--gold);
+                 box-shadow:0 0 0 2px rgba(195,149,83,.18)}
+#contador{margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:11px;
+          color:var(--muted)}
+#contador.estourou{color:var(--atrasado);font-weight:700}
+
 /* ---------- toast de gravação ---------- */
 #toast{
   position:fixed;right:18px;bottom:18px;z-index:50;
@@ -248,7 +275,25 @@ td.edit{display:table-cell}
          na tela é o que sai no papel. -->
     <button id="btn-notas" onclick="toggleNotas()">Notas: exibindo</button>
     <button id="btn-limpar" onclick="filtrar(null)" style="display:none">Ver todos</button>
+    <button id="btn-grupo" onclick="abrirEnvio()">Enviar no grupo</button>
     <a class="btn" id="link-projeto" href="#">← Voltar ao projeto</a>
+  </div>
+
+  <!-- Envio pro grupo: preview EDITÁVEL, nunca disparo direto. O texto vai pro
+       grupo do cliente — ler antes não é formalidade. -->
+  <div id="painel-envio" class="no-print">
+    <div class="linha-envio">
+      <label for="sel-grupo">Grupo</label>
+      <select id="sel-grupo"></select>
+      <label class="chk"><input type="checkbox" id="chk-concluidos" onchange="carregarPreview()"> listar concluídos</label>
+      <span id="contador"></span>
+    </div>
+    <textarea id="txt-envio" spellcheck="false"
+              oninput="atualizarContador()"></textarea>
+    <div class="linha-envio fim">
+      <button onclick="fecharEnvio()">Cancelar</button>
+      <button class="btn-gold" id="btn-disparar" onclick="enviarNoGrupo()">Enviar agora</button>
+    </div>
   </div>
 
   <div class="legenda-edicao no-print" id="legenda-edicao"></div>
@@ -523,6 +568,80 @@ async function remover(uid){
   if(r.ok){ toast('removido'); carregar(); return; }
   const e = await r.json().catch(() => ({}));
   toast(e.detail || 'Não consegui remover.', true);
+}
+
+// ==================== enviar no grupo ====================
+// Preview editável + confirmação nomeando o grupo. O texto vai pro grupo do
+// cliente: o disparo é sempre um clique consciente, nunca efeito colateral.
+
+let maxChars = 4096;
+
+async function abrirEnvio(){
+  const painel = document.getElementById('painel-envio');
+  if(painel.classList.contains('on')){ fecharEnvio(); return; }
+  painel.classList.add('on');
+  await carregarPreview();
+}
+
+function fecharEnvio(){ document.getElementById('painel-envio').classList.remove('on'); }
+
+async function carregarPreview(){
+  const inc = document.getElementById('chk-concluidos').checked;
+  const r = await fetch(
+    `/api/projects/${PROJECT_ID}/raci/whatsapp-preview?incluir_concluidos=${inc}`);
+  if(!r.ok){ toast('Não consegui montar o texto.', true); return; }
+  const d = await r.json();
+  maxChars = d.max_chars || 4096;
+  document.getElementById('txt-envio').value = d.text;
+
+  const sel = document.getElementById('sel-grupo');
+  sel.innerHTML = d.grupos.length
+    ? d.grupos.map(g => `<option value="${esc(g.group_jid)}">${esc(g.group_name)}</option>`).join('')
+    : '<option value="">— nenhum grupo vinculado —</option>';
+  // Sem grupo vinculado o botão some: prometer envio que não pode acontecer é
+  // pior que não oferecer. O vínculo se faz na página do projeto.
+  document.getElementById('btn-disparar').disabled = !d.grupos.length;
+  atualizarContador();
+}
+
+function atualizarContador(){
+  const n = document.getElementById('txt-envio').value.length;
+  const c = document.getElementById('contador');
+  c.textContent = `${n} / ${maxChars}`;
+  c.className = n > maxChars ? 'estourou' : '';
+}
+
+async function enviarNoGrupo(){
+  const sel = document.getElementById('sel-grupo');
+  const jid = sel.value;
+  const texto = document.getElementById('txt-envio').value.trim();
+  if(!jid || !texto) return;
+  if(texto.length > maxChars){
+    toast(`Texto tem ${texto.length} caracteres; o limite é ${maxChars}.`, true);
+    return;
+  }
+  const nomeGrupo = sel.options[sel.selectedIndex].text;
+  if(!confirm(`Enviar este RACI no grupo "${nomeGrupo}"?\n\nA mensagem vai pro grupo agora.`)) return;
+
+  const btn = document.getElementById('btn-disparar');
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  try{
+    const r = await fetch(`/api/projects/${PROJECT_ID}/raci/send-to-group`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group_jid: jid, text: texto})
+    });
+    if(!r.ok){
+      const e = await r.json().catch(() => ({}));
+      toast(e.detail || 'Não consegui enviar.', true);
+      return;
+    }
+    toast(`enviado em "${nomeGrupo}" ✓`);
+    fecharEnvio();
+  }catch(e){
+    toast('Sem conexão — não enviei.', true);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Enviar agora';
+  }
 }
 
 let toastTimer = null;

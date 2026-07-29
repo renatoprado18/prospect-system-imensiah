@@ -291,6 +291,92 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     }
 
 
+# ==================== envio pro grupo do projeto ====================
+
+_EMOJI_STATUS = {"atrasado": "🚨", "em_andamento": "🔄",
+                 "pendente": "⏳", "concluido": "✅"}
+
+_TITULO_BUCKET = {
+    "atrasado": "Atrasados",
+    "em_andamento": "Em andamento",
+    "pendente": "Pendentes",
+}
+
+
+def _primeiro_nome(nome: Optional[str]) -> str:
+    """'Jéssica (cobrindo Veridiana)' -> 'Jéssica'. No grupo todo mundo sabe
+    quem é quem; o parêntese come a linha e empurra o prazo pra outra."""
+    if not nome:
+        return "—"
+    limpo = nome.split("(")[0].strip()
+    return limpo.split("/")[0].strip() or nome.strip()
+
+
+def _cortar(texto: str, n: int = 95) -> str:
+    texto = (texto or "").strip().replace("\n", " ")
+    return texto if len(texto) <= n else texto[: n - 1].rstrip() + "…"
+
+
+def format_for_whatsapp(matrix: Dict, incluir_concluidos: bool = False) -> str:
+    """
+    A matriz como texto de WhatsApp, pra mandar no grupo do projeto.
+
+    SEM NUMERAÇÃO, e isso é decisão, não esquecimento. O `parse_raci_update`
+    escuta os grupos e interpreta "3 concluído" pela ordem do
+    `generate_raci_report` — que NÃO é esta ordem (a daqui inclui itens do
+    INTEL que aquele report não enxerga, e ordena por `status_efetivo`
+    derivado). Mandar numerado convidaria uma resposta que acertaria o item
+    errado — exatamente o desalinhamento que a trava de 29/07 existe pra
+    conter. Bullet não convida número.
+
+    Concluídos entram só como contagem por padrão: quem lê o RACI no grupo
+    quer saber o que falta. O texto é editável antes de sair, então listar é
+    escolha de quem envia, não default de quem gera.
+    """
+    p = matrix.get("project") or {}
+    itens = matrix.get("itens") or []
+    resumo = matrix.get("resumo") or {}
+
+    linhas = [f"📋 *RACI — {p.get('nome') or 'projeto'}*",
+              f"_{date.today().strftime('%d/%m/%Y')}_", ""]
+
+    for bucket in ("atrasado", "em_andamento", "pendente"):
+        do_bucket = [i for i in itens if i["status_efetivo"] == bucket]
+        if not do_bucket:
+            continue
+        linhas.append(f"{_EMOJI_STATUS[bucket]} *{_TITULO_BUCKET[bucket]} "
+                      f"({len(do_bucket)}):*")
+        for it in do_bucket:
+            prazo = f" ({it['prazo_br']})" if it.get("prazo_br") else ""
+            linhas.append(f"• {_cortar(it['acao'])} — *{_primeiro_nome(it.get('r'))}*{prazo}")
+        linhas.append("")
+
+    concluidos = [i for i in itens if i["status_efetivo"] == "concluido"]
+    if concluidos:
+        if incluir_concluidos:
+            linhas.append(f"✅ *Concluídos ({len(concluidos)}):*")
+            for it in concluidos:
+                linhas.append(f"• {_cortar(it['acao'])}")
+            linhas.append("")
+        else:
+            linhas.append(f"✅ *{len(concluidos)} concluído"
+                          f"{'s' if len(concluidos) > 1 else ''}* desde o início.")
+            linhas.append("")
+
+    if not itens:
+        linhas.append("_Nenhum item na matriz._")
+
+    total = sum(resumo.values()) if resumo else len(itens)
+    linhas.append(f"_{total} itens no total._")
+    return "\n".join(linhas).strip()
+
+
+# Teto do corpo de texto da Evolution/WhatsApp. Um RACI de 60+ itens passa
+# disso com folga — e a Evolution corta em silêncio, então metade do RACI
+# chegaria no grupo sem ninguém perceber que faltou.
+WHATSAPP_MAX_CHARS = 4096
+
+
 # ==================== escrita (write-through, cada fonte na sua) ==========
 
 _CAMPOS = ("area", "acao", "responsavel_r", "responsavel_a", "responsavel_c",

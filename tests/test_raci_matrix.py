@@ -15,6 +15,7 @@ O que esta coberto (sem tocar Neon nem o ConselhoOS):
 Rodar: .venv/bin/python -m pytest tests/test_raci_matrix.py -v
 """
 import os
+import re
 import sys
 from datetime import date, timedelta
 
@@ -410,3 +411,103 @@ def test_concluir_pelo_intel_nao_marca_como_ja_relatado(monkeypatch):
     assert "concluido_relatado_em" not in sql["q"]
     assert "::raci_status" in sql["q"]     # sem o cast, o enum recusa o texto
     assert "updated_at" in sql["q"]
+
+
+# ==================== texto pro grupo (29/07) ====================
+#
+# A decisão que estes testes protegem: o texto sai SEM numeração. O
+# `parse_raci_update` escuta os grupos e interpreta "3 concluído" pela ordem do
+# `generate_raci_report` — que não é esta ordem. Numerar aqui convidaria uma
+# resposta que acertaria o item errado.
+
+from services.raci_matrix import (  # noqa: E402
+    WHATSAPP_MAX_CHARS,
+    _primeiro_nome,
+    format_for_whatsapp,
+)
+
+
+def _matriz(itens, nome="Vallen Clinic"):
+    normalizados = [_normalize(i, i.pop("_fonte", FONTE_INTEL)) for i in itens]
+    resumo = {s: 0 for s in ("atrasado", "pendente", "em_andamento", "concluido")}
+    for it in normalizados:
+        resumo[it["status_efetivo"]] += 1
+    return {"project": {"id": 24, "nome": nome}, "itens": normalizados,
+            "resumo": resumo, "total": len(normalizados)}
+
+
+def test_texto_nao_numera_os_itens():
+    """O guard-rail principal: numeração convidaria resposta desalinhada."""
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Revisar contrato", prazo=ONTEM),
+        linha(id=2, acao="Fechar julho", prazo=AMANHA),
+    ]))
+    assert "• " in txt
+    assert not re.search(r"^\s*\d+\.\s", txt, re.M)
+
+
+def test_texto_nao_convida_resposta_por_numero():
+    txt = format_for_whatsapp(_matriz([linha(id=1, prazo=AMANHA)])).lower()
+    for isca in ("responda", "nº", "numero", "número"):
+        assert isca not in txt
+
+
+def test_agrupa_por_status_efetivo():
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Vencido", status="pendente", prazo=ONTEM),
+        linha(id=2, acao="Tocando", status="em_andamento", prazo=AMANHA),
+        linha(id=3, acao="Parado", status="pendente", prazo=AMANHA),
+    ]))
+    assert "Atrasados (1)" in txt and "Em andamento (1)" in txt and "Pendentes (1)" in txt
+    # atrasado primeiro — é o que precisa de resposta no grupo
+    assert txt.index("Atrasados") < txt.index("Pendentes")
+
+
+def test_concluidos_sao_contagem_por_padrao():
+    """Quem lê o RACI no grupo quer saber o que FALTA."""
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Ja feito", status="concluido"),
+        linha(id=2, acao="Falta isso", status="pendente", prazo=AMANHA),
+    ]))
+    assert "1 concluído" in txt
+    assert "Ja feito" not in txt
+
+
+def test_concluidos_listam_quando_pedido():
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Ja feito", status="concluido")]), incluir_concluidos=True)
+    assert "Ja feito" in txt
+
+
+def test_bucket_vazio_nao_vira_cabecalho_orfao():
+    txt = format_for_whatsapp(_matriz([linha(id=1, status="pendente", prazo=AMANHA)]))
+    assert "Atrasados" not in txt and "Em andamento" not in txt
+
+
+def test_matriz_vazia_nao_estoura():
+    txt = format_for_whatsapp(_matriz([]))
+    assert "Nenhum item" in txt
+
+
+@pytest.mark.parametrize("bruto,esperado", [
+    ("Jéssica (cobrindo Veridiana)", "Jéssica"),
+    ("Thalita/Renato", "Thalita"),
+    ("  Renato  ", "Renato"),
+    (None, "—"),
+    ("", "—"),
+])
+def test_responsavel_sai_curto(bruto, esperado):
+    """'Jéssica (cobrindo Veridiana)' come a linha e empurra o prazo pra outra."""
+    assert _primeiro_nome(bruto) == esperado
+
+
+def test_acao_longa_e_cortada_com_reticencia():
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="A" * 300, status="pendente", prazo=AMANHA)]))
+    assert "…" in txt
+    assert "A" * 300 not in txt
+
+
+def test_limite_do_whatsapp_e_o_real():
+    """4096 é o teto do corpo; acima disso a Evolution corta EM SILÊNCIO."""
+    assert WHATSAPP_MAX_CHARS == 4096
