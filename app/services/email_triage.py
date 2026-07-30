@@ -3165,6 +3165,18 @@ async def apply_triage_to_inbox(
                             entry["smart"] = "needs_you"
                             smart_needs_you.append(outcome["record"])
                             stats["smart_needs_you"] += 1
+                            # O motivo e o estágio TÊM que sair na telemetria da
+                            # run, não só no resumo: o resumo é WhatsApp, e o
+                            # gate de silêncio por produtor (58e6ec1) rebaixou o
+                            # inbox_smart pra push — desde 27/07 nenhum resumo
+                            # dele chega ao Renato, então o "por quê" morria em
+                            # memória. `cron_runs.result_json` é o que sobrevive.
+                            _rec = outcome.get("record") or {}
+                            entry["smart_reason"] = (_rec.get("reason") or "")[:160]
+                            _stage = _rec.get("stage") or "unknown"
+                            entry["smart_stage"] = _stage
+                            _by_stage = stats.setdefault("smart_declined_by_stage", {})
+                            _by_stage[_stage] = _by_stage.get(_stage, 0) + 1
 
                 if bucket == "noop":
                     entry["action"] = (
@@ -4850,7 +4862,17 @@ async def _smart_triage_renato(
 
     subject = headers.get("subject") or ""
     from_hdr = headers.get("from") or ""
-    needs_record = {"from": from_hdr[:40], "subject": subject[:60], "reason": ""}
+    # `stage` = ONDE a camada desistiu. Sem isso a telemetria só sabia que ela não
+    # agiu, nunca por quê: medido em 30/07, `smart_reason` era NULL em 51 de 52
+    # itens do balde Renato (10 dias), porque o motivo ia só pro resumo de
+    # WhatsApp — e o gate de silêncio por produtor (58e6ec1) rebaixou esse resumo
+    # pra push, ou seja, o único lugar onde o "por quê" vivia deixou de ser lido.
+    # A consequência prática: `smart_resolved` era 0 em 52 oportunidades e não
+    # havia como saber se isso é natureza (recibo da Anthropic não fecha task
+    # mesmo) ou defeito (o gate de candidatas nunca casando). Decidir o futuro da
+    # Parte B sem esse campo seria decidir no escuro.
+    needs_record = {"from": from_hdr[:40], "subject": subject[:60], "reason": "",
+                    "stage": ""}
     text = f"{subject}\n{body_text[:2000]}"
 
     # 1. Cruza a frente: prefiltro barato -> confirma LLM só no que passou.
@@ -4873,9 +4895,15 @@ async def _smart_triage_renato(
     # 2. Tasks candidatas (por frente confirmada OU contato). Sem tasks -> escala.
     tasks = _smart_candidate_tasks(project_ids, contact_id)
     if not tasks:
+        # Curto-circuito ANTES do LLM: nem projeto confirmado nem contato com
+        # ficha. Era ~79% dos casos (52 no balde Renato em 10 dias contra 11
+        # chamadas de inbox_smart.judge), e ficava indistinguível de "o LLM
+        # analisou e recusou" na telemetria.
+        needs_record["stage"] = "no_candidate_task"
         needs_record["reason"] = "sem task/frente casada — decisão sua"
         return {"resolved": False, "record": needs_record}
     if not api_key:
+        needs_record["stage"] = "no_api_key"
         needs_record["reason"] = "sem API key — mantido p/ você"
         return {"resolved": False, "record": needs_record}
 
@@ -4891,6 +4919,7 @@ async def _smart_triage_renato(
         and action in ("close", "reschedule")
     ):
         if action == "reschedule" and not verdict.get("new_due_date"):
+            needs_record["stage"] = "reschedule_no_date"
             needs_record["reason"] = verdict.get("reason") or "remarcação sem data clara"
             return {"resolved": False, "record": needs_record}
         task = task_map[tid]
@@ -4910,6 +4939,10 @@ async def _smart_triage_renato(
         }
         return {"resolved": True, "record": rec}
 
+    # Chegou ao LLM e ele recusou (ou veio abaixo da barra / task fora da lista
+    # candidata). É o caso que diz se a barra está calibrada — distinto de nunca
+    # ter julgado.
+    needs_record["stage"] = "llm_declined"
     needs_record["reason"] = verdict.get("reason") or "precisa de decisão sua"
     return {"resolved": False, "record": needs_record}
 
