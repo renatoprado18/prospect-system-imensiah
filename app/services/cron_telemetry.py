@@ -232,6 +232,25 @@ def _finalize_run(
         logger.warning("cron_telemetry: finalize run %s failed", run_id, exc_info=True)
 
 
+def _discard_run(run_id: Optional[int]) -> None:
+    """Apaga a row de uma invocacao que nunca chegou a executar o job.
+
+    Existe por causa da ordem do decorator: `_insert_run` grava ANTES do handler,
+    e a verificacao de credencial mora dentro dele. Sem isto, bater na porta sem
+    a chave produz uma linha permanente numa tabela cujo unico proposito e medir
+    se o job esta saudavel. Nunca levanta — telemetria nao pode derrubar request.
+    """
+    if run_id is None:
+        return
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM cron_runs WHERE id = %s", (run_id,))
+            conn.commit()
+    except Exception:
+        logger.warning("cron_telemetry: discard run %s failed", run_id, exc_info=True)
+
+
 def track_cron_run(handler):
     """
     Decorator pra cron endpoints. Garante que cada invocacao seja registrada
@@ -282,6 +301,38 @@ def track_cron_run(handler):
                 http_status = e.status_code if isinstance(e, HTTPException) else 500
             except Exception:
                 http_status = 500
+
+            # 401/403 e falha do CHAMADOR, nao do job: a `verify_cron_auth` roda
+            # DENTRO do handler, e o `_insert_run` acima ja gravou a linha antes
+            # dela — entao toda requisicao nao-autenticada a /api/cron/* virava
+            # `status='error'`, indistinguivel de job quebrado. O job nao chegou a
+            # rodar: nada dele falhou, nao ha o que medir.
+            #
+            # Medido em 30/07: 4 linhas assim na base, DUAS produzidas por mim
+            # tentando disparar um cron com a chave errada. Um scanner batendo na
+            # porta encheria o `cron-health` de alarme sobre job saudavel.
+            #
+            # A linha e APAGADA em vez de receber um status proprio. Um status
+            # novo ('unauthorized') parecia mais informativo, mas vazaria em tres
+            # reguas de `_compute_cron_health` que nao o conhecem — e a pior
+            # delas silenciosamente: o `error_streak` (main.py) percorre as runs
+            # recentes e PARA no primeiro status que nao e 'error', entao uma
+            # batida anonima no meio de uma sequencia de falhas reais zeraria o
+            # streak e esconderia o job quebrado. Trocar falso-positivo por
+            # falso-negativo e pior que o defeito original: alarme a toa incomoda,
+            # alarme que nao dispara engana.
+            #
+            # O sinal nao se perde: vai pro log, que e onde se investiga acesso
+            # indevido — e nao na tabela que mede saude de job.
+            if http_status in (401, 403):
+                logger.warning(
+                    "cron_telemetry: requisicao NAO AUTENTICADA em %s (http=%s, source=%s) "
+                    "— run descartada da telemetria (falha de chamador, nao do job)",
+                    path, http_status, trigger_source,
+                )
+                _discard_run(run_id)
+                raise
+
             _finalize_run(
                 run_id,
                 status="error",

@@ -2218,7 +2218,10 @@
                 <div class="stat-content">
                     <div class="stat-headline">
                         <div class="stat-value" id="statProjectsAction">-</div>
-                        <div class="stat-label">Projetos</div>
+                        {# "Projetos" nomeava um numero que nao era a contagem de
+                           projetos: era vencidos+proximos somados. O rotulo agora
+                           diz o que o numero mede. #}
+                        <div class="stat-label">Projetos atrasados</div>
                     </div>
                     <div class="stat-breakdown" id="statProjectsBreakdown"></div>
                 </div>
@@ -2546,7 +2549,14 @@
                         window._statcardData.projects = projData;
                         const atencaoN = (projData.atencao || []).length;
                         const proximosN = (projData.proximos || []).length;
-                        document.getElementById('statProjectsAction').textContent = atencaoN + proximosN;
+                        // 30/07: o numero grande e SO o que precisa de acao agora.
+                        // Antes era `atencaoN + proximosN` — somava duas coisas
+                        // semanticamente diferentes ("vencido" + "vence nos proximos
+                        // 7 dias") num numero unico, e foi exatamente o que fez o
+                        // Renato ler "13 projetos precisam de mim" quando eram 4
+                        // atrasados e 9 apenas agendados. O breakdown abaixo ja
+                        // mostrava os dois separados; o headline e que mentia.
+                        document.getElementById('statProjectsAction').textContent = atencaoN;
                         const breakdown = document.getElementById('statProjectsBreakdown');
                         if (breakdown) {
                             breakdown.innerHTML = `
