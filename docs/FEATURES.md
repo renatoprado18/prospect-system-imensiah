@@ -202,6 +202,16 @@
 | Fathom | Import reuniões | FATHOM_API_KEY |
 | ConselhoOS | Sync dados conselhos | CONSELHOOS_DATABASE_URL |
 
+### Vocabulário de `projects.status` — PT/EN unificado (30/07)
+A tabela tinha **7 valores para 4 estados** (ativo 29 · concluido 6 · archived 5 · pausado 4 · paused 1 · completed 1 · encerrado 1). Consultar um valor inexistente **não levanta erro** — devolve zero linhas — então o recurso deixa de acontecer sem nenhum sinal. Duas vítimas:
+- **`circulos.py`** filtrava `status = 'active'`, valor que nunca existiu. O fator **"Projeto ativo" (+60 legacy / +10 cos) nunca pontuou ninguém** desde que foi escrito. Medido antes: 0 contatos; depois: **49**. Confirmado em prod — o fator `project` passou de 0 para 30 ocorrências em `/api/contacts/needs-attention`.
+- **`contact_intelligence.py`** (2ª vítima, achada varrendo a classe): mesma consulta ao montar o dossiê do contato, então a lista de frentes da pessoa vinha **sempre vazia** — justamente o contexto que a função existe para montar.
+- **`list_projects(include_completed=False)`** excluía apenas `'concluido'`, então projetos encerrados passavam como trabalho vivo. Agora exclui `STATUS_ENCERRADOS` = concluido/cancelado/arquivado. **`pausado` fica de fora de propósito: parado não é terminado.**
+- **`arquivado` entrou no vocabulário** porque 5 projetos já estavam nesse estado como `archived` — não são concluídos nem cancelados, e mapeá-los para um dos outros mentiria sobre o desfecho.
+- **`normalize_status`** canoniza na escrita (create/update/filtro por status). Traduz em vez de rejeitar, para não trocar um dado errado por um 400 em cliente antigo. Nenhum `select` da UI oferece os valores em inglês e nenhum caminho atual os escreve (são resíduo de mar–jun/2026), mas sem guarda na entrada o passivo se recria.
+- **Normalização dos dados (com backup JSON, gate do Renato):** 3 → `arquivado`, 2 → `concluido`, 1 → `pausado`, e **#33 "Almeida Prado — Governança da Firma" + #34 "Governança APCE" voltaram a `ativo`** por decisão dele — os temas reapareceram nas frentes, e arquivar registraria como encerrado o que está em curso. Lista de Projetos: **41 → 36**. Vocabulário divergente restante: **zero**.
+- Testes: `tests/test_project_status_vocabulary.py` (18). A guarda de classe varre os **literais SQL por AST** e reprova consulta a `projects` filtrando status em inglês — fica vermelha contra o código original (verificado por stash). A 1ª versão dela usava janela de linhas e acusou uma query de `tasks` vizinha; há teste garantindo que `campaigns` (onde `'active'` é legítimo) e `tasks.status='completed'` num JOIN com projects **não** sejam acusados.
+
 ### Por que a camada esperta não age — estágio da desistência (30/07)
 A régua que matou o digest ("está gerando valor?") aplicada ao vizinho `inbox_smart`. **A medição desmontou a premissa do item de backlog** e achou outra coisa.
 - **O ruído já tinha sido resolvido**: a última interrupção por WhatsApp do `inbox_smart` foi **27/07 20:25**; o gate de silêncio por produtor (`58e6ec1`, 29/07) o rebaixou pra push e ele não escala de volta. As 9 mensagens que ele mandou tinham **todas o mesmo título "Triagem inteligente"** — a estrutura repetida que o Renato criticou no digest — mas isso deixou de chegar nele.
