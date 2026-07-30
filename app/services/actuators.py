@@ -38,6 +38,13 @@ ALLOWED_ACTIONS = {"create_task", "update_task", "schedule_wa",
 CALENDAR_DELETE_SCOPES = {"single", "future", "all"}
 
 # Estados válidos de task (espelha os em uso na tabela tasks).
+
+# Intenção default de quem parqueia sem declarar (snooze da Tônia, UI): a
+# convenção de 29/07 descreve espera de terceiro, que é o caso ao qual "aguarda
+# X / deixa quieto" corresponde. `parqueio_indefinido` é decisão explícita e não
+# nasce de gesto de conversa. Ver scripts/migrations/058 + task_reconciler.
+_ON_HOLD_DEFAULT_REASON = "espera_terceiro"
+
 TASK_STATUSES = {"pending", "in_progress", "on_hold", "completed",
                  "cancelled", "delegated"}
 
@@ -154,6 +161,16 @@ def _do_update_task(cur, payload: Dict[str, Any]) -> Dict[str, Any]:
         # concluir também carimba data_conclusao (paridade com o fluxo normal)
         if status == "completed":
             sets.append("data_conclusao = NOW()")
+        # Parquear carimba DESDE QUANDO (migration 058): a janela de espera de 7
+        # dias tem que começar no gesto, não na primeira varredura do sweep. E
+        # sair do parqueio zera o carimbo, senão a task volta a pending
+        # carregando um "parqueada desde" que não vale mais.
+        if status == "on_hold":
+            sets.append("on_hold_since = COALESCE(on_hold_since, NOW())")
+            sets.append(f"on_hold_reason = COALESCE(on_hold_reason, '{_ON_HOLD_DEFAULT_REASON}')")
+        elif status in ("pending", "in_progress"):
+            sets.append("on_hold_since = NULL")
+            sets.append("on_hold_reason = NULL")
 
     if payload.get("prioridade") is not None:
         try:

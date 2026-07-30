@@ -14,6 +14,18 @@ from integrations.gmail import GmailIntegration
 
 logger = logging.getLogger(__name__)
 
+# Estados que existem SÓ no INTEL. O Google Tasks tem apenas needsAction|completed,
+# então qualquer um destes volta do Google como needsAction — e o pull traduzia isso
+# como 'pending', REBAIXANDO o estado local. Foi o que apagou o parqueio de 4 tasks
+# em 30/07 às 05:00:23 (o daily-sync rodou 05:00:02): `on_hold` deixou de existir e
+# elas reapareceram como vencidas, desfazendo a convenção ratificada em 29/07
+# (memória feedback_aguardar_terceiro_on_hold).
+#
+# `completed` NÃO entra aqui de propósito: desmarcar a task no Google tem que poder
+# reabri-la no INTEL. O que não pode é o Google, que não conhece o conceito, decidir
+# que uma task parqueada/em-andamento/cancelada voltou a ser pendente.
+LOCAL_ONLY_STATUSES = frozenset({"on_hold", "in_progress", "cancelled", "delegated"})
+
 
 class TasksSyncService:
     """
@@ -202,6 +214,7 @@ class TasksSyncService:
                 (google_id,)
             )
             local_task = cursor.fetchone()
+            local_task = dict(local_task) if local_task else None
 
             # Parse due date
             due_date = None
@@ -213,15 +226,17 @@ class TasksSyncService:
                 except:
                     pass
 
-            # Determinar status local
+            # Determinar status local. Ver LOCAL_ONLY_STATUSES no topo: o Google não
+            # representa on_hold/in_progress/cancelled/delegated, então needsAction
+            # vindo dele NÃO é evidência de que a task voltou a ser pendente.
             local_status = "pending"
             if google_task.get("status") == "completed":
                 local_status = "completed"
+            elif local_task and local_task.get("status") in LOCAL_ONLY_STATUSES:
+                local_status = local_task["status"]
 
             if local_task:
                 # Update existing
-                local_task = dict(local_task)
-
                 # Conflict resolution: se local foi modificado depois do ultimo sync
                 # (ex: user editou via UI, ou cron interno fechou task), local vence —
                 # marca pending_push pra reconciliar Google na proxima push.
