@@ -1,0 +1,287 @@
+"""Rotas de andaime (teste/seed/trigger manual) nao podem escrever nem disparar
+integracao externa sem credencial.
+
+Achado que originou (30/07/2026): `GET /api/tasks/sync/test` rodava
+`tasks_service.full_sync()` — sync BIDIRECIONAL com o Google Tasks, isto e,
+ESCRITA na conta do Renato — anonimo, em producao, com o docstring admitindo
+"sem autenticacao". O vizinho imediato `POST /api/tasks/sync` faz exatamente o
+mesmo trabalho e exige sessao. Grep em app/templates, app/static, scripts,
+workers, mcp e api nao achou nenhum consumidor da rota /test.
+
+Mesma classe do commit 26252d8 (`verify_cron_auth` liberando ~40 rotas
+/api/cron/* sem secret). Por isso o teste nao checa so a instancia:
+
+- TestClient prova 401 real, request de verdade, sem credencial nenhuma
+  (a auth rejeita antes de qualquer efeito — nao precisa de banco).
+- Uma varredura AST guarda a CLASSE: se alguem adicionar uma rota de andaime
+  nova sem auth, ou tirar a guarda de uma destas, o teste quebra.
+
+Rodar:
+  PYTHONPATH=app .venv/bin/pytest tests/test_endpoint_auth_exposure.py -q
+"""
+import ast
+import os
+import re
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "app"))
+sys.path.insert(0, _ROOT)
+
+import pytest  # noqa: E402
+
+MAIN_PY = os.path.join(_ROOT, "app", "main.py")
+
+# (metodo, path) fechados em 30/07/2026. Cada um escrevia no banco ou disparava
+# integracao externa (Google Tasks, WhatsApp, Anthropic) sem verificar nada.
+ROTAS_FECHADAS = [
+    ("GET", "/api/tasks/sync/test"),                        # full_sync -> Google Tasks (escrita)
+    ("POST", "/api/action-proposals/test-notification"),    # INSERT + WhatsApp real pro Renato
+    ("GET", "/api/action-proposals/test-notification"),
+    ("DELETE", "/api/action-proposals/test-cleanup"),       # DELETE FROM action_proposals
+    ("GET", "/api/action-proposals/test-cleanup"),
+    ("POST", "/api/intel-chat/synthesize-now"),             # Anthropic + INSERT system_memories
+    ("POST", "/api/veiculos/seed-prado"),                   # seed sem idempotencia
+    ("POST", "/api/oficinas/seed"),                         # seed sem idempotencia
+]
+
+# Nomes que contam como verificacao de auth no corpo de um handler.
+AUTH_CALLS = {
+    "require_scaffold_auth", "get_current_user", "require_auth", "require_admin",
+    "require_operador", "verify_cron_auth", "_empresas_require_auth",
+    "verify_session_token",
+}
+
+
+@pytest.fixture(scope="module")
+def client():
+    from fastapi.testclient import TestClient
+    import main
+    # raise_server_exceptions=False: se alguma rota vazar a guarda e explodir no
+    # banco, queremos ver o status, nao um traceback mascarando o resultado.
+    return TestClient(main.app, raise_server_exceptions=False)
+
+
+class TestSemCredencial:
+    """O contrato: sem cookie e sem X-API-Key, 401. Nunca 200."""
+
+    @pytest.mark.parametrize("metodo,path", ROTAS_FECHADAS)
+    def test_401_sem_credencial(self, client, metodo, path):
+        r = client.request(metodo, path)
+        assert r.status_code == 401, (
+            f"{metodo} {path} respondeu {r.status_code} sem credencial — "
+            f"esperado 401. Corpo: {r.text[:200]}"
+        )
+
+    @pytest.mark.parametrize("metodo,path", ROTAS_FECHADAS)
+    def test_nao_executou_o_efeito(self, client, metodo, path):
+        """Guarda contra 'fecha mas depois de agir': a resposta 401 nao pode
+        trazer payload de execucao (result/deleted_count/proposal_id/veiculo)."""
+        r = client.request(metodo, path)
+        corpo = r.text
+        for vazamento in ("deleted_count", "proposal_id", "\"result\"", "\"veiculo\""):
+            assert vazamento not in corpo, (
+                f"{metodo} {path} vazou {vazamento} em resposta 401 — "
+                "a guarda esta depois do efeito"
+            )
+
+    def test_cookie_de_sessao_invalido_tambem_401(self, client):
+        """Cookie forjado nao passa (o token e assinado)."""
+        # cookie via header: `cookies=` por request esta deprecado no httpx
+        r = client.request("GET", "/api/tasks/sync/test",
+                           headers={"Cookie": "session=forjado"})
+        assert r.status_code == 401
+
+    def test_x_api_key_errada_tambem_401(self, client):
+        r = client.request("GET", "/api/tasks/sync/test",
+                           headers={"X-API-Key": "chave-errada-de-proposito"})
+        assert r.status_code == 401
+
+    def test_vizinho_autenticado_continua_401(self, client):
+        """`POST /api/tasks/sync` era a referencia do fix — nao pode ter
+        regredido junto."""
+        assert client.request("POST", "/api/tasks/sync").status_code == 401
+
+
+class TestCaminhoDaMaquina:
+    """Fechar nao pode matar o uso real: FEATURES.md documenta
+    `/api/intel-chat/synthesize-now` como trigger manual via curl. O helper tem
+    que aceitar X-API-Key == INTEL_API_KEY.
+
+    Testado no helper, nao via HTTP: um request valido EXECUTARIA o sync/a
+    sintese de verdade (Google Tasks, Anthropic) — teste nao dispara efeito.
+    """
+
+    def _request(self, headers=None):
+        from starlette.requests import Request
+        cabecalhos = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+        return Request({"type": "http", "method": "GET", "path": "/x",
+                        "headers": cabecalhos, "query_string": b""})
+
+    def test_api_key_correta_libera(self, monkeypatch):
+        import main
+        monkeypatch.setenv("INTEL_API_KEY", "chave-de-teste-123")
+        assert main.require_scaffold_auth(self._request({"X-API-Key": "chave-de-teste-123"})) is None
+
+    def test_api_key_com_newline_libera(self, monkeypatch):
+        """A UI da Vercel cola \\n no fim de env var — o strip() precisa existir."""
+        import main
+        monkeypatch.setenv("INTEL_API_KEY", "chave-de-teste-123\n")
+        assert main.require_scaffold_auth(self._request({"X-API-Key": " chave-de-teste-123 "})) is None
+
+    def test_sem_header_levanta_401(self, monkeypatch):
+        from fastapi import HTTPException
+        import main
+        monkeypatch.setenv("INTEL_API_KEY", "chave-de-teste-123")
+        with pytest.raises(HTTPException) as exc:
+            main.require_scaffold_auth(self._request({}))
+        assert exc.value.status_code == 401
+
+    def test_env_vazia_nao_vira_bypass(self, monkeypatch):
+        """INTEL_API_KEY ausente + header vazio nao podem 'casar' em ''. Era
+        exatamente a forma do bug do 26252d8: comparacao que passa por acidente."""
+        from fastapi import HTTPException
+        import main
+        monkeypatch.delenv("INTEL_API_KEY", raising=False)
+        with pytest.raises(HTTPException) as exc:
+            main.require_scaffold_auth(self._request({"X-API-Key": ""}))
+        assert exc.value.status_code == 401
+
+    def test_sem_bypass_de_dev_local(self, monkeypatch):
+        """`verify_cron_auth` libera tudo quando BASE_URL=localhost — foi assim
+        que o 26252d8 abriu 40 rotas em prod. Este helper nao herda isso."""
+        from fastapi import HTTPException
+        import main
+        monkeypatch.setenv("BASE_URL", "http://localhost:8000")
+        monkeypatch.delenv("INTEL_API_KEY", raising=False)
+        with pytest.raises(HTTPException):
+            main.require_scaffold_auth(self._request({}))
+
+
+# --------------------------------------------------------------------------
+# Guarda da CLASSE (AST): nenhuma rota de andaime em main.py sem auth.
+# --------------------------------------------------------------------------
+
+# Path com pinta de andaime. `/fix-names`, `/cleanup` etc. entram; superficie de
+# produto (CRUD de contatos, projetos, editorial...) esta FORA de proposito:
+# neste single-tenant a API de produto e anonima por historico, e fechar aquilo
+# e decisao de modulo, nao drive-by. Ver relatorio da varredura de 30/07/2026.
+PINTA_DE_ANDAIME = re.compile(r"/(test|debug|seed|force|trigger|manual)\b|"
+                              r"/(test|debug|seed)-|-(now|test)$|/synthesize-now")
+
+# Sem efeito nenhum — anonimo aqui e inofensivo.
+ANDAIME_ANONIMO_OK = {
+    # Retorna {"status":"ok"} e nada mais. Zero efeito, zero dado.
+    "/api/v1/test",
+    # Read-only por design declarado no proprio docstring: pulse de timestamps
+    # consumido por agente externo (claude.ai routines) pra checar se cron
+    # dispara. Nao muta e nao expoe conteudo.
+    "/api/cron/pulse",
+    # Redirect 301 legado /rap/* -> /contatos/limpeza. Nao toca em nada.
+    "/rap/contacts/cleanup",
+}
+
+# NAO e "ok" — e vazamento de leitura conhecido e fora do escopo do fix de
+# 30/07/2026, que fechou ESCRITA/disparo. Registrado aqui pra o guard medir a
+# classe certa sem fingir que o problema nao existe: `/api/tasks/test-list`
+# despeja 30 tasks (titulo, status, vencimento) pra qualquer um. Fechar exige
+# decidir junto o resto da superficie de leitura anonima do single-tenant.
+ANDAIME_LEITURA_EXPOSTA = {
+    "/api/tasks/test-list",
+}
+
+
+def _rotas_de_main():
+    """[(lineno, metodo, path, tem_auth, nome_da_funcao)] de app/main.py."""
+    with open(MAIN_PY, encoding="utf-8") as fh:
+        fonte = fh.read()
+    linhas = fonte.split("\n")
+    arvore = ast.parse(fonte, filename=MAIN_PY)
+    saida = []
+    for node in ast.walk(arvore):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        rotas = []
+        for dec in node.decorator_list:
+            if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)):
+                continue
+            if not (isinstance(dec.func.value, ast.Name) and dec.func.value.id == "app"):
+                continue
+            if dec.func.attr not in ("get", "post", "put", "patch", "delete"):
+                continue
+            if dec.args and isinstance(dec.args[0], ast.Constant):
+                rotas.append((dec.func.attr.upper(), dec.args[0].value))
+        if not rotas:
+            continue
+        tem_auth = False
+        # Depends(require_admin) e cia na assinatura
+        for default in list(node.args.defaults) + list(node.args.kw_defaults):
+            if default is None:
+                continue
+            despejo = ast.dump(default)
+            if any(nome in despejo for nome in AUTH_CALLS):
+                tem_auth = True
+        # chamada de auth no corpo
+        for interno in ast.walk(node):
+            if isinstance(interno, ast.Call):
+                f = interno.func
+                nome = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
+                if nome in AUTH_CALLS:
+                    tem_auth = True
+        # comparacao manual de segredo (X-API-Key / CRON_SECRET / hmac)
+        corpo = "\n".join(linhas[node.lineno - 1:node.end_lineno])
+        if any(t in corpo for t in ("X-API-Key", "CRON_SECRET", "compare_digest", "hmac")):
+            tem_auth = True
+        for metodo, path in rotas:
+            saida.append((node.lineno, metodo, path, tem_auth, node.name))
+    return saida
+
+
+class TestClasseAndaime:
+    def test_as_oito_rotas_fechadas_tem_auth_no_codigo(self):
+        """Prova por inspecao (complementa o 401 do TestClient): a guarda esta
+        no corpo, nao num middleware que alguem pode desligar."""
+        por_rota = {(m, p): tem_auth for _, m, p, tem_auth, _ in _rotas_de_main()}
+        faltando = [r for r in ROTAS_FECHADAS if not por_rota.get(r)]
+        assert not faltando, f"rota fechada perdeu a verificacao de auth: {faltando}"
+
+    def test_nenhum_andaime_novo_sem_auth(self):
+        """A CLASSE. Rota nova com pinta de teste/seed/trigger sem auth reprova
+        aqui — em vez de virar o proximo /api/tasks/sync/test."""
+        expostas = sorted({
+            f"{m} {p} (main.py:{ln})"
+            for ln, m, p, tem_auth, _ in _rotas_de_main()
+            if not tem_auth and PINTA_DE_ANDAIME.search(p)
+            and p not in ANDAIME_ANONIMO_OK and p not in ANDAIME_LEITURA_EXPOSTA
+        })
+        assert not expostas, (
+            "rota de andaime sem verificacao de auth (use require_scaffold_auth, "
+            f"ou justifique em ANDAIME_ANONIMO_OK): {expostas}"
+        )
+
+    def test_o_detector_realmente_pega_o_padrao(self):
+        """Guarda contra o teste virar decoracao: prova que a varredura acusa o
+        caso ruim — o codigo original da rota, palavra por palavra."""
+        import tempfile
+
+        ruim = (
+            '@app.get("/api/tasks/sync/test")\n'
+            "async def test_tasks_sync():\n"
+            '    """Endpoint para testar sync de tasks (sem autenticacao)."""\n'
+            "    tasks_service = get_tasks_sync_service()\n"
+            "    result = await tasks_service.full_sync()\n"
+            "    return result\n"
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
+            fh.write(ruim)
+            tmp = fh.name
+        global MAIN_PY
+        original = MAIN_PY
+        try:
+            MAIN_PY = tmp
+            achados = [(m, p) for _, m, p, tem_auth, _ in _rotas_de_main() if not tem_auth]
+            assert ("GET", "/api/tasks/sync/test") in achados
+            assert PINTA_DE_ANDAIME.search("/api/tasks/sync/test")
+        finally:
+            MAIN_PY = original
+            os.unlink(tmp)

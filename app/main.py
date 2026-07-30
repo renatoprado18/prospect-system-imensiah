@@ -128,6 +128,36 @@ from auth import (
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
 )
 
+
+def require_scaffold_auth(request: Request) -> Optional[dict]:
+    """Fecha rotas de andaime (teste / seed / trigger manual) que escrevem ou
+    disparam integracao externa.
+
+    Por que existir em vez de so `require_admin`: essas rotas nao tem consumidor
+    no repo — sao chamadas a mao, quase sempre por curl. Exigir apenas sessao
+    (cookie assinado) mataria o unico uso real que elas tem. Entao aceita as
+    duas credenciais que o resto do arquivo ja usa pra "admin OU maquina":
+    sessao admin (padrao de `POST /api/tasks/sync`) OU `X-API-Key` ==
+    INTEL_API_KEY (padrao de `_empresas_require_auth`, `/api/dev/delegations`
+    e cia). Nada novo foi inventado.
+
+    Por que 401 e nao 403 quando falta credencial: 403 e "identificado mas sem
+    permissao". Sem cookie e sem key nao ha identidade — `require_auth` ja
+    devolve 401 nesse caso, e a diferenca importa pro teste de exposicao.
+
+    Evidencia que motivou (30/07/2026): `GET /api/tasks/sync/test` rodava
+    `tasks_service.full_sync()` — sync BIDIRECIONAL com o Google Tasks, ou seja
+    ESCRITA na conta do usuario — anonimo, em producao, com o docstring
+    admitindo "sem autenticacao". Mesma classe do commit 26252d8 (verify_cron_auth
+    liberando ~40 rotas /api/cron/* sem secret): a correcao e da classe, nao da
+    instancia. `strip()` na key porque a UI da Vercel cola \\n em env var.
+    """
+    api_key = (request.headers.get("X-API-Key", "") or "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if api_key and intel_api_key and api_key == intel_api_key:
+        return None
+    return require_admin(request)
+
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -16256,11 +16286,18 @@ async def sync_tasks(request: Request):
 
 
 @app.get("/api/tasks/sync/test")
-async def test_tasks_sync():
+async def test_tasks_sync(request: Request):
     """
-    Endpoint para testar sync de tasks (sem autenticacao).
-    Executa sync bidirecional completo.
+    Endpoint para testar sync de tasks. Executa sync bidirecional completo.
+
+    Fechado em 30/07/2026: era anonimo ("sem autenticacao" no docstring antigo) e
+    chamava o mesmo `full_sync()` do vizinho autenticado `POST /api/tasks/sync`,
+    isto e, qualquer um na internet escrevia no Google Tasks do usuario. Grep em
+    templates/static/scripts/workers nao achou nenhum consumidor, entao fechar
+    nao quebra nada.
     """
+    require_scaffold_auth(request)
+
     tasks_service = get_tasks_sync_service()
     result = await tasks_service.full_sync()
 
@@ -18166,7 +18203,14 @@ async def get_action_proposals_stats(request: Request, days: int = 30):
 @app.post("/api/action-proposals/test-notification")
 @app.get("/api/action-proposals/test-notification")
 async def test_proposal_notification(request: Request, contact_name: str = "Pedro Salles"):
-    """Endpoint de teste - cria proposta fake e envia notificacao via intel-bot (sem auth)"""
+    """Endpoint de teste - cria proposta fake e envia notificacao via intel-bot.
+
+    Fechado em 30/07/2026 (era "sem auth"): grava linha em `action_proposals` e
+    DISPARA WhatsApp de verdade pro Renato. Anonimo, isso e um canal de spam
+    direto no telefone dele. Sem consumidor no repo.
+    """
+    require_scaffold_auth(request)
+
     from services.action_proposals import get_action_proposals
     from services.whatsapp_notifications import get_whatsapp_notifications
 
@@ -18217,8 +18261,16 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
 
 @app.delete("/api/action-proposals/test-cleanup")
 @app.get("/api/action-proposals/test-cleanup")
-async def cleanup_test_proposals():
-    """Remove todas as proposals de teste (sem contact_id)"""
+async def cleanup_test_proposals(request: Request):
+    """Remove todas as proposals de teste (sem contact_id).
+
+    Fechado em 30/07/2026: era anonimo e roda `DELETE FROM action_proposals
+    WHERE contact_id IS NULL` — o filtro "de teste" e frouxo, qualquer proposta
+    legitima ainda sem contato casava. Apagar dado dado por bom nunca e Auto,
+    muito menos por request anonimo. Sem consumidor no repo.
+    """
+    require_scaffold_auth(request)
+
     with get_pg_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -26803,8 +26855,15 @@ async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
 
 
 @app.post("/api/veiculos/seed-prado")
-async def api_seed_prado():
-    """Cria o veiculo Prado JRW5025 com dados completos"""
+async def api_seed_prado(request: Request):
+    """Cria o veiculo Prado JRW5025 com dados completos.
+
+    Fechado em 30/07/2026: seed de bootstrap, nao e superficie de produto —
+    sem consumidor no repo e sem guarda de idempotencia, cada request anonimo
+    empilhava mais um veiculo + itens de manutencao no banco.
+    """
+    require_scaffold_auth(request)
+
     veiculo = criar_prado_jrw5025()
     return {"status": "success", "veiculo": veiculo}
 
@@ -26959,8 +27018,14 @@ async def api_deletar_oficina(oficina_id: int):
 
 
 @app.post("/api/oficinas/seed")
-async def api_seed_oficinas():
-    """Registra as oficinas pre-definidas (Sollo 4WD, Bela Vista, Fall Car)"""
+async def api_seed_oficinas(request: Request):
+    """Registra as oficinas pre-definidas (Sollo 4WD, Bela Vista, Fall Car).
+
+    Fechado em 30/07/2026: mesmo motivo do `/api/veiculos/seed-prado` — seed de
+    bootstrap sem consumidor, escrita anonima no banco.
+    """
+    require_scaffold_auth(request)
+
     from services.oficinas import seed_oficinas
     oficinas = seed_oficinas()
     return {"status": "success", "oficinas": oficinas, "count": len(oficinas)}
@@ -29585,7 +29650,15 @@ async def cron_pulse():
 @app.post("/api/intel-chat/synthesize-now")
 async def api_intel_chat_synthesize_now(request: Request):
     """Manual trigger: roda sintese das ultimas 24h imediatamente.
-    Pra testar sem esperar o cron noturno."""
+    Pra testar sem esperar o cron noturno.
+
+    Fechado em 30/07/2026: era anonimo e o gemeo agendado
+    (`/api/cron/daily-synthesis`) exige `verify_cron_auth` pro MESMO trabalho —
+    queima token da Anthropic e grava em `system_memories`. Aceita X-API-Key
+    porque FEATURES.md documenta este endpoint como trigger manual (curl).
+    """
+    require_scaffold_auth(request)
+
     from services.daily_synthesis import run_daily_synthesis
     return await run_daily_synthesis(hours=24)
 
