@@ -34,6 +34,7 @@ import httpx
 
 from database import get_db
 from services import llm, llm_usage
+from services.contact_identity import owner_contact_ids
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,18 @@ def _prefilter(text_norm: str, projects: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[str, Any]]:
-    """Inbound recente (email+WA DM) ainda não etiquetado, fora do lixo do email."""
+    """Inbound recente (email+WA DM) ainda não etiquetado, fora do lixo do email.
+
+    O SELF-CHAT do Renato fica FORA (30/07). Toda notificação que a máquina lhe
+    manda — ponte cruzada, "URGENTE: reunião em 30min", update de RACI, digest,
+    spike de custo — é gravada como `outgoing` na conversa dele com ele mesmo.
+    O roteador reconhecia o assunto e ligava à frente: 31 links em 10 frentes.
+    Daí a camada as lia como PROVA de que o Renato agiu (ver o comentário em
+    `frente_review._gather_renato_outbound`) e podia derrubar um portão real.
+
+    Etiquetar mensagem-da-máquina como sinal de frente é o sistema medindo o
+    próprio eco. Cortado na origem além de na leitura — assim o passivo para de
+    crescer enquanto os 31 links antigos são limpos."""
     cursor.execute("""
         SELECT m.id, cv.canal, c.nome AS sender, m.direcao, m.conteudo,
                COALESCE(m.enviado_em, m.recebido_em) AS ts
@@ -126,9 +138,10 @@ def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[
           AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 20
           AND NOT (cv.canal = 'email' AND et.classification = ANY(%s))
           AND NOT EXISTS (SELECT 1 FROM message_project_links l WHERE l.message_id = m.id)
+          AND NOT (cv.contact_id = ANY(%s))
         ORDER BY ts DESC
         LIMIT %s
-    """, (since_hours, list(_EMAIL_TRASH), limit))
+    """, (since_hours, list(_EMAIL_TRASH), owner_contact_ids(cursor) or [0], limit))
     return [dict(r) for r in cursor.fetchall()]
 
 

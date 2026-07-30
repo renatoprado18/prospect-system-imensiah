@@ -48,12 +48,15 @@ KILL-SWITCH
 Default dos dois: ligado.
 """
 import json
+import logging
 import os
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.contact_dedup import normalize_phone, normalize_name_for_dedup
+
+logger = logging.getLogger(__name__)
 
 
 # ============== Onde mora o mapa multi-conta ==============
@@ -1036,6 +1039,53 @@ def phone_match_order_sql(alias: str = "c") -> str:
     """ORDER BY que acompanha `phone_match_sql`. Consome UM parametro: o
     numero INTEIRO na forma canonica (`canonical_br_phone(phone)`)."""
     return _PHONE_MATCH_ORDER.format(alias=alias)
+
+
+OWNER_PHONE_ENV = "RENATO_PHONE"
+OWNER_PHONE_FALLBACK = "5511984153337"  # mesmo canonico de notification_router/intel_bot
+
+
+def owner_contact_ids(cursor) -> List[int]:
+    """TODAS as fichas do dono do sistema (o Renato). Ponto unico.
+
+    Por que nao basta `users.id=1.contact_id`: medido em 30/07, ele aponta pra
+    ficha **#14911, que tem UMA conversa**, enquanto o self-chat vive na
+    **#23419, com 18**. Existem 4 fichas dele na base (#14911, #23419, #25407,
+    #26638) — resto das ondas de duplicacao de mar/mai. Um filtro
+    `contact_id = (SELECT contact_id FROM users WHERE id=1)` compila, roda,
+    devolve zero linha e **nao da erro nenhum** — a classe de defeito de
+    [[feedback_filtro_vocabulario_errado_falha_calado]].
+
+    Resolucao por TELEFONE canonico (a identidade estavel; ver
+    [[reference_telefone_br_normalizacao]]), unindo o `users.id=1` como sinal
+    extra. Devolve lista, nunca um id: o dono E plural nesta base ate as fichas
+    serem fundidas, e fingir que e singular foi exatamente o que quebrou.
+
+    Lista VAZIA e sinal de defeito, nao de ausencia — o dono sempre existe. Quem
+    chama deve tratar vazio como "nao filtra" (nunca como "filtra tudo") e o
+    warning abaixo denuncia."""
+    ids: List[int] = []
+    key = phone_lookup_key(os.getenv(OWNER_PHONE_ENV) or OWNER_PHONE_FALLBACK)
+    if key:
+        try:
+            cursor.execute(
+                f"SELECT c.id FROM contacts c WHERE {phone_match_sql('c')}", (key,)
+            )
+            ids = [r["id"] if isinstance(r, dict) else r[0] for r in cursor.fetchall()]
+        except Exception as e:
+            logger.warning("owner_contact_ids: busca por telefone falhou (%s)", e)
+    try:
+        cursor.execute("SELECT contact_id FROM users WHERE id = 1")
+        row = cursor.fetchone()
+        uid = (row["contact_id"] if isinstance(row, dict) else row[0]) if row else None
+        if uid and uid not in ids:
+            ids.append(uid)
+    except Exception as e:
+        logger.warning("owner_contact_ids: users.id=1 indisponivel (%s)", e)
+    if not ids:
+        logger.warning("owner_contact_ids: NENHUMA ficha do dono resolvida — "
+                       "filtros de self-chat vao ficar inertes")
+    return ids
 
 
 def find_contact_by_phone(cursor, phone: Any,

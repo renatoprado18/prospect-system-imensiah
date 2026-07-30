@@ -24,7 +24,7 @@ import os
 import re
 import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -105,6 +105,7 @@ Para a frente, decida:
 - **nota**: honestidade — se uma task está alarmista/desatualizada, se há spam/ruído a ignorar, se algo está driftando. Vazio se nada.
 
 Regras duras:
+- **TAREFA PARQUEADA NÃO É PORTÃO.** Uma task marcada `[PARQUEADA]` foi tirada do radar deliberadamente pelo Renato (ou está na janela normal de espera por um terceiro). Ela **não conta como atrasada**, **não vira `precisa_de_voce`** e **não se cobra** — mesmo que a data de vencimento já tenha passado, que é o normal nesse estado. Só `[ATRASADA]` é atraso de verdade. Se o parqueio parecer errado (o terceiro já respondeu, o motivo caiu), diga isso na `nota` em vez de abrir portão.
 - **HIERARQUIA DAS FONTES.** Se o bloco "MEMÓRIA / DECISÕES REGISTRADAS" contradisser qualquer outra coisa (nota da frente, task, mensagem), **a MEMÓRIA vence** — ela é o registro durável, revisado e corrigido pelo Renato; nota e task são o rascunho do dia e envelhecem sem que ninguém volte pra consertar. Quando houver contradição, use o que diz a MEMÓRIA **e registre a divergência no campo `nota`**, nomeando o que contradiz (ex.: "a nota de 27/07 trata o Orestes como sócio; o memo diz que ele só financia — nota desatualizada").
 - Prioridade no INTEL: número MAIOR = mais importante (8-10 gate estratégico; 1-3 baixa).
 - Cite evidência ao afirmar (ID de task, quem disse no grupo). Nunca invente.
@@ -195,13 +196,32 @@ def _gather_memories(project_name: str, description: Optional[str],
     return out
 
 
-def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int]) -> List[Dict[str, Any]]:
+def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int],
+                            owner_ids: List[int]) -> List[Dict[str, Any]]:
     """AÇÕES do Renato: outbound (email+WA) que ELE já enviou nesta frente, por
     MEMBERSHIP (DM a membro) OU por LINK do roteador (não-membro). Recency-first,
     cap pequeno. Fecha a cegueira de outbound: a prova do que ele JÁ fez chega
     SEMPRE ao debriefing, num bloco próprio — independente do LIMIT do window de
     DM (que truncava o e-mail recém-enviado) e independente do roteador ter ligado
-    a mensagem. Read-only; falha graciosa = lista vazia (nunca quebra o gather)."""
+    a mensagem. Read-only; falha graciosa = lista vazia (nunca quebra o gather).
+
+    ⚠️ O SELF-CHAT FICA DE FORA — e isso é o conserto de um CIRCUITO FECHADO.
+    Tudo que a máquina manda pro Renato (ponte cruzada, "URGENTE: reunião em
+    30min", update de RACI, digest de grupos, spike de custo) é gravado como
+    `direcao='outgoing'` na conversa dele com ele mesmo. Medido em 30/07: 395
+    dessas em 30 dias, e o roteador tinha ligado **31 a 10 frentes** (8 na
+    Vallen, 7 na Alba, 7 na Reorg). Elas chegavam aqui sob o título "AÇÕES
+    RECENTES DO RENATO — o que ELE JÁ enviou", e a REGRA DE OUTBOUND manda não
+    cobrar o que ele já fez. Ou seja: o aviso da máquina virava prova de que o
+    Renato agiu, e **podia derrubar um portão legítimo no dia seguinte**. Falha
+    silenciosa — não gera ruído, gera omissão, que é o que ninguém vê.
+
+    Mandar mensagem PRA SI MESMO nunca é execução de ação numa frente (não há
+    terceiro do outro lado), então excluir é correto por semântica, não só por
+    higiene. As fichas do dono vêm de `contact_identity.owner_contact_ids` —
+    LISTA, não id: a 1ª versão deste fix usou `users.id=1.contact_id` e ficaria
+    INERTE, porque esse aponta pra #14911 (1 conversa) e o self-chat está na
+    #23419 (18). `owner_ids` vazio ⇒ não filtra nada (nunca filtra tudo)."""
     rows: List[Dict[str, Any]] = []
     try:
         cursor.execute("""
@@ -217,9 +237,11 @@ def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int]) -> L
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
               AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
               AND (cv.contact_id = ANY(%s) OR l.project_id = %s)
+              AND NOT (cv.contact_id = ANY(%s))
             ORDER BY ts DESC
             LIMIT %s
-        """, (project_id, _OUTBOUND_DAYS, member_ids or [0], project_id, _OUTBOUND_LIMIT))
+        """, (project_id, _OUTBOUND_DAYS, member_ids or [0], project_id,
+              owner_ids or [0], _OUTBOUND_LIMIT))
         rows = [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         # message_project_links (053) pode não existir — degrada gracioso.
@@ -228,16 +250,26 @@ def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int]) -> L
     return rows
 
 
-def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
-    """Reúne o estado real de uma frente (read-only). Espelha o smart_update."""
+def _gather_frente(cursor, project_id: int,
+                   owner_ids: Optional[List[int]] = None) -> Dict[str, Any]:
+    """Reúne o estado real de uma frente (read-only). Espelha o smart_update.
+
+    `owner_ids` = fichas do próprio Renato, pra excluir o self-chat das três
+    janelas de mensagem. Injetável pra o batch resolver UMA vez em vez de 29."""
+    if owner_ids is None:
+        from services.contact_identity import owner_contact_ids
+        owner_ids = owner_contact_ids(cursor)
     cursor.execute("SELECT id, nome, descricao FROM projects WHERE id = %s", (project_id,))
     project = cursor.fetchone()
     if not project:
         return {}
     project = dict(project)
 
+    # `on_hold_since`/`on_hold_reason` (migration 058) entram no SELECT porque o
+    # prompt PRECISA distinguir atrasada de PARQUEADA — ver _task_marker.
     cursor.execute("""
         SELECT t.id, t.titulo, t.descricao, t.status, t.data_vencimento, t.prioridade,
+               t.on_hold_since, t.on_hold_reason,
                c.nome AS responsavel
         FROM tasks t
         LEFT JOIN contacts c ON c.id = t.contact_id
@@ -272,9 +304,10 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
             WHERE cv.contact_id = ANY(%s)
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
               AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
+              AND NOT (cv.contact_id = ANY(%s))
             ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
             LIMIT 40
-        """, (member_ids, _DM_DAYS))
+        """, (member_ids, _DM_DAYS, owner_ids or [0]))
         dms = [dict(r) for r in cursor.fetchall()]
 
     # Mensagens ROTEADAS por conteúdo (roteador B) — de QUALQUER um, membro ou não.
@@ -291,8 +324,9 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
             JOIN contacts c ON c.id = cv.contact_id
             WHERE l.project_id = %s
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
+              AND NOT (cv.contact_id = ANY(%s))
             ORDER BY ts DESC LIMIT 25
-        """, (project_id, _DM_DAYS))
+        """, (project_id, _DM_DAYS, owner_ids or [0]))
         routed = [dict(r) for r in cursor.fetchall() if dict(r)["id"] not in dm_ids]
     except Exception as e:
         # tabela do roteador (053) pode não existir ainda — degrada gracioso
@@ -323,7 +357,7 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
 
     # Ações outbound do Renato (o que ELE já fez) — só quando a consciência de
     # outbound está ligada (kill-switch). Reversível: off = gather sem o bloco.
-    renato_outbound = (_gather_renato_outbound(cursor, project_id, member_ids)
+    renato_outbound = (_gather_renato_outbound(cursor, project_id, member_ids, owner_ids)
                        if _outbound_awareness_on() else [])
 
     return {"project": project, "tasks": tasks, "members": members, "dms": dms,
@@ -334,6 +368,45 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
 def _has_signal(g: Dict[str, Any]) -> bool:
     """Frente tem algo pra raciocinar? (evita gastar LLM em casca vazia)."""
     return bool(g.get("tasks") or g.get("dms") or g.get("routed") or g.get("groups") or g.get("notes"))
+
+
+def _task_marker(t: Dict[str, Any], today: str) -> str:
+    """Rótulo de estado da task no prompt.
+
+    Até 30/07 a ÚNICA informação de estado que chegava ao modelo era
+    `[ATRASADA]`, derivada só da data — e o filtro do gather deixa `on_hold`
+    passar. Consequência medida em prod: **12 das 16 tasks apresentadas como
+    atrasadas eram exatamente as que a CoS tinha PARQUEADO**, com janela de
+    espera correndo. O modelo lia "atrasada há 8 dias", aplicava a regra dos 7
+    dias da memória e mandava cobrar — desfazendo o parqueio todo dia. Era a
+    raiz do portão do Filito de 30/07.
+
+    A janela vem de `task_reconciler.ON_HOLD_WAIT_DAYS` de propósito: a regra
+    dos 7 dias existe UMA vez no código e este módulo a LÊ, nunca a recopia.
+    Espelha `_wait_deadline` (GREATEST(vencimento, parqueio) + janela), que é
+    o que o `sweep_on_hold` de fato usa pra reabrir."""
+    status = (t.get("status") or "").strip()
+
+    if status == "on_hold":
+        from services.task_reconciler import ON_HOLD_WAIT_DAYS, REASON_INDEFINIDO
+        if (t.get("on_hold_reason") or "") == REASON_INDEFINIDO:
+            return " [PARQUEADA — o Renato tirou do radar; NÃO cobrar, NÃO é portão]"
+        base = t.get("on_hold_since")
+        dv = t.get("data_vencimento")
+        if base and dv and dv > base:
+            base = dv
+        if base:
+            volta = (base + timedelta(days=ON_HOLD_WAIT_DAYS)).strftime("%d/%m")
+            return (f" [PARQUEADA aguardando terceiro até {volta} — dentro da janela "
+                    f"de espera; NÃO cobrar, NÃO é portão]")
+        return " [PARQUEADA aguardando terceiro — NÃO cobrar, NÃO é portão]"
+
+    if status == "in_progress":
+        return " [EM ANDAMENTO]"
+
+    if t.get("data_vencimento") and str(t["data_vencimento"])[:10] < today:
+        return " [ATRASADA]"
+    return ""
 
 
 def _fmt_gather(g: Dict[str, Any]) -> str:
@@ -349,10 +422,10 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
         parts.append("\nTAREFAS ABERTAS:")
         for t in g["tasks"]:
             venc = str(t["data_vencimento"])[:10] if t.get("data_vencimento") else "sem prazo"
-            atrasada = " [ATRASADA]" if t.get("data_vencimento") and str(t["data_vencimento"])[:10] < today else ""
+            marca = _task_marker(t, today)
             resp = f" resp:{t['responsavel']}" if t.get("responsavel") else ""
             desc = f" — {t['descricao'][:220]}" if t.get("descricao") else ""
-            parts.append(f"- [#{t['id']} prio{t.get('prioridade')}]{atrasada} {t['titulo']} (vence {venc}{resp}){desc}")
+            parts.append(f"- [#{t['id']} prio{t.get('prioridade')}]{marca} {t['titulo']} (vence {venc}{resp}){desc}")
 
     # #1 — decisões/fatos registrados nos memos duráveis. Vem ANTES das notas
     # de propósito: é a fonte de MAIOR autoridade (registro revisado e corrigido
@@ -568,7 +641,11 @@ async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
         frentes = _target_frentes(cur)
         if limit:
             frentes = frentes[:limit]
-        gathers = {f["id"]: _gather_frente(cur, f["id"]) for f in frentes}
+        # Resolve as fichas do dono UMA vez pro batch inteiro (eram 29 frentes
+        # × 2 queries se ficasse dentro do _gather_frente).
+        from services.contact_identity import owner_contact_ids
+        owner_ids = owner_contact_ids(cur)
+        gathers = {f["id"]: _gather_frente(cur, f["id"], owner_ids) for f in frentes}
 
     # Pula frentes sem nenhum sinal (casca vazia) — não gasta LLM.
     frentes = [f for f in frentes if _has_signal(gathers.get(f["id"], {}))]
