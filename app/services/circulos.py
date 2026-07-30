@@ -1129,10 +1129,16 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
         projetos_por_contato = {}
         try:
             # projects uses owner_contact_id, and project_members links contacts
+            # 'active' NUNCA existiu nesta tabela — o vocabulario e PT ('ativo').
+            # A consulta nao dava erro, so devolvia zero linhas, entao o fator
+            # "Projeto ativo" (+60 legacy / +10 cos) nunca pontuou NINGUEM desde
+            # que foi escrito. Medido em 30/07/2026: 48 contatos (9 owners + 45
+            # membros, com sobreposicao) deviam ter recebido. Um filtro que erra
+            # o vocabulario falha em silencio: nao ha excecao, so ausencia.
             cursor.execute("""
                 SELECT owner_contact_id as contact_id, COUNT(*) as count
                 FROM projects
-                WHERE status = 'active' AND owner_contact_id IS NOT NULL
+                WHERE status = 'ativo' AND owner_contact_id IS NOT NULL
                 GROUP BY owner_contact_id
             """)
             projetos_por_contato = {row["contact_id"]: row["count"] for row in cursor.fetchall()}
@@ -1142,7 +1148,7 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
                 SELECT pm.contact_id, COUNT(DISTINCT pm.project_id) as count
                 FROM project_members pm
                 JOIN projects p ON p.id = pm.project_id
-                WHERE p.status = 'active' AND pm.contact_id IS NOT NULL
+                WHERE p.status = 'ativo' AND pm.contact_id IS NOT NULL
                 GROUP BY pm.contact_id
             """)
             for row in cursor.fetchall():

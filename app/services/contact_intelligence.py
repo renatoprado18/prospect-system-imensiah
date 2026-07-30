@@ -75,11 +75,16 @@ async def gather_contact_context(contact_id: int, db_connection) -> Dict[str, An
     facts = [dict(row) for row in cursor.fetchall()]
 
     # Get projects
+    # 2a vitima do vocabulario partido (30/07/2026): 'active' nao existe em
+    # `projects` (o valor e 'ativo'), entao esta consulta devolvia SEMPRE lista
+    # vazia — o dossie do contato nunca mencionava as frentes das quais ele
+    # participa, justamente o contexto que a funcao existe pra montar. Filtro com
+    # vocabulario errado nao levanta erro, so entrega nada.
     cursor.execute("""
         SELECT p.nome, p.tipo, p.descricao, p.status, pm.papel
         FROM projects p
         JOIN project_members pm ON p.id = pm.project_id
-        WHERE pm.contact_id = %s AND p.status = 'active'
+        WHERE pm.contact_id = %s AND p.status = 'ativo'
     """, (contact_id,))
     projects = [dict(row) for row in cursor.fetchall()]
 

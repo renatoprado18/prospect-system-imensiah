@@ -26,7 +26,50 @@ PROJECT_STATUS = {
     'pausado': {'label': 'Pausado', 'color': '#f59e0b'},
     'concluido': {'label': 'Concluido', 'color': '#6b7280'},
     'cancelado': {'label': 'Cancelado', 'color': '#ef4444'},
+    # 'arquivado' nao existia no vocabulario, mas 5 projetos ja estavam nesse
+    # estado gravados como 'archived' (Blog SEO, Exposicao SP, o duplicado de
+    # Portugal, Governanca da Firma, Governanca APCE). Nao sao concluidos nem
+    # cancelados — foram tirados do radar. Mapear pra um dos outros mentiria
+    # sobre o desfecho; o certo e o vocabulario reconhecer o estado que existe.
+    'arquivado': {'label': 'Arquivado', 'color': '#94a3b8'},
 }
+
+# Status que NAO contam como trabalho vivo. Usado pelo filtro default de
+# list_projects: antes ele excluia apenas 'concluido', entao arquivado,
+# cancelado e encerrado passavam como se fossem projeto em andamento.
+STATUS_ENCERRADOS = ('concluido', 'cancelado', 'arquivado')
+
+# Sinonimos aceitos na ESCRITA. A tabela acumulou PT e EN misturados — medido em
+# 30/07/2026: ativo 29 · concluido 6 · archived 5 · pausado 4 · paused 1 ·
+# completed 1 · encerrado 1. Nenhum select da UI oferece os valores em ingles e
+# nenhum caminho de codigo atual os escreve, entao sao residuo historico (todos
+# de mar-jun/2026) — mas sem guarda na entrada o passivo se recria em silencio,
+# e o custo de um valor divergente e alto: `circulos.py` consultava
+# `status = 'active'`, valor que NUNCA existiu na tabela, e por isso o fator
+# "Projeto ativo" (+60) nunca pontuou ninguem — 48 contatos que deviam pegar.
+# Traduzir em vez de rejeitar mantem retrocompatibilidade com qualquer cliente
+# antigo em vez de trocar um dado errado por um 400.
+_STATUS_SINONIMOS = {
+    'active': 'ativo',
+    'paused': 'pausado',
+    'completed': 'concluido',
+    'archived': 'arquivado',
+    'cancelled': 'cancelado',
+    'canceled': 'cancelado',
+    # 'encerrado' descreve desfecho, nao arquivamento: o unico caso (#4,
+    # "Cobranca Emprestimo Andre Maia") e uma cobranca que terminou.
+    'encerrado': 'concluido',
+}
+
+
+def normalize_status(status: Optional[str]) -> Optional[str]:
+    """Canoniza o status de projeto na ESCRITA. Desconhecido passa intacto (o
+    chamador decide) — a funcao existe pra impedir que o vocabulario se parta de
+    novo, nao pra virar validador silencioso que engole valor novo."""
+    if not status:
+        return status
+    s = str(status).strip().lower()
+    return _STATUS_SINONIMOS.get(s, s)
 
 # Owner config - automatically added as participant to all projects
 OWNER_EMAIL = "renato@almeida-prado.com"
@@ -100,10 +143,14 @@ def list_projects(
 
         if status:
             query += " AND p.status = %s"
-            params.append(status)
+            params.append(normalize_status(status))
         elif not include_completed:
-            # By default exclude completed
-            query += " AND p.status != 'concluido'"
+            # Exclui TUDO que nao e trabalho vivo, nao so 'concluido'. Com a
+            # regra antiga, 6 projetos encerrados (5 arquivados + 1 encerrado)
+            # apareciam na lista como se estivessem em andamento. `pausado` fica
+            # de fora da exclusao de proposito: parado nao e terminado.
+            query += f" AND p.status NOT IN ({','.join(['%s'] * len(STATUS_ENCERRADOS))})"
+            params.extend(STATUS_ENCERRADOS)
 
         if search:
             query += " AND (p.nome ILIKE %s OR p.descricao ILIKE %s OR p.empresa_relacionada ILIKE %s)"
@@ -384,7 +431,7 @@ def create_project(data: Dict) -> Dict:
             data.get('nome'),
             data.get('descricao'),
             data.get('tipo', 'negocio'),
-            data.get('status', 'ativo'),
+            normalize_status(data.get('status')) or 'ativo',
             data.get('prioridade', 5),
             data.get('data_inicio'),
             data.get('data_previsao'),
@@ -430,6 +477,12 @@ def update_project(project_id: int, data: Dict) -> Optional[Dict]:
                 value = data[field]
                 if isinstance(value, (list, dict)):
                     value = json.dumps(value)
+                # Canoniza na porta de entrada: e aqui que o vocabulario se
+                # partiu em PT e EN, e um valor divergente some da regua sem
+                # erro nenhum (o `status='active'` do circulos.py nunca casou
+                # com linha alguma e ninguem percebeu por meses).
+                if field == "status":
+                    value = normalize_status(value)
                 updates.append(f"{field} = %s")
                 values.append(value)
 
