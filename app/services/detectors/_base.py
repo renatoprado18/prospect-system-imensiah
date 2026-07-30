@@ -163,7 +163,57 @@ EPHEMERAL_SIGNAL_TTL_HOURS: Dict[str, int] = {
     # current_hashes vem vazio (todas as manchetes suprimidas). Sem este TTL,
     # um cruzamento antigo fica 'open' pra sempre quando o detector zera. 7d.
     "cruzamento_noticia_contato": 168,
+    # 30/07 — os digests do CoS. Um digest e um RETRATO do dia; nascer 'open' e
+    # ficar assim e defeito. Medido: 28 abertos, o mais novo de 11/07, servidos
+    # ao vivo pelo get_cockpit como se fossem pendencia de hoje. 48h cobre o
+    # atraso de leitura sem virar passivo.
+    "morning_briefing": 48,
+    "evening_briefing": 48,
 }
+
+# Os 9 detectores que EXISTEM como modulo. `run_all_detectors` decide quais
+# estao LIGADOS; a diferenca entre os dois conjuntos e o que
+# `expire_disabled_detector_signals` varre. Manter em sincronia com os imports
+# de la (um detector novo entra aqui tambem, senao seus signals seriam
+# expirados como se o detector estivesse desligado).
+KNOWN_DETECTORS = (
+    "detector_conselhos", "detector_editorial", "detector_relacionamento",
+    "detector_operational", "detector_financial", "detector_governanca_pessoal",
+    "detector_delegacoes", "detector_inbox", "detector_cruzamentos",
+)
+
+
+def expire_disabled_detector_signals(conn, enabled: List[str]) -> int:
+    """Expira signals abertos de detector DESLIGADO. Fecha o furo que deixou
+    110 fosseis servidos ao vivo.
+
+    O buraco: signal de detector expira por AUSENCIA na run seguinte
+    (`expire_stale_signals`) — mecanismo que so roda quando o detector RODA.
+    Desligar os detectores em 20/07 nao expirou nada; congelou. Dez dias depois
+    o `get_cockpit` (CoPiloto, skills, /papel-cos) ainda servia 29 sinais de
+    relacionamento de um detector morto, e a CoS gastou a manha de 30/07
+    resolvendo fossil a mao (tio Antonio #89795 preso a contato ja mergeado,
+    2 RACI Vallen concluidos desde 05/07).
+
+    Deriva de `enabled` de proposito: religar um detector faz seus signals
+    PARAREM de ser varridos, sem tocar aqui. E restringe a `KNOWN_DETECTORS`
+    pra nunca alcancar signal que nao vem de detector (digest, briefing,
+    pre_meeting) — esses tem TTL proprio em EPHEMERAL_SIGNAL_TTL_HOURS.
+
+    Idempotente (so toca 'open'). Retorna quantas expiraram."""
+    alvo = [d for d in KNOWN_DETECTORS if d not in set(enabled or ())]
+    if not alvo:
+        return 0
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE signals
+        SET status = 'expired', resolved_at = NOW(), resolved_by = 'detector_disabled'
+        WHERE status = 'open' AND detector = ANY(%s)
+        """,
+        (alvo,),
+    )
+    return cur.rowcount
 
 
 def expire_aged_signals(conn) -> int:
@@ -236,6 +286,7 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     total = {"emitted": 0, "updated": 0, "skipped": 0, "expired": 0}
     aged_expired = 0
+    disabled_expired = 0
 
     with get_db() as conn:
         for name, fn in all_detectors:
@@ -268,11 +319,25 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
             conn.rollback()
             logger.exception("expire_aged_signals crashed")
 
+        # Signals orfaos de detector DESLIGADO. Sweep proprio pelo mesmo motivo:
+        # falha isolada nao derruba o resto. Roda de hora em hora junto do cron
+        # `detectors-run`, que hoje so faz isto (os 9 detectores estao off).
+        try:
+            disabled_expired = expire_disabled_detector_signals(
+                conn, [n for n, _ in all_detectors]
+            )
+            conn.commit()
+            total["expired"] += disabled_expired
+        except Exception:
+            conn.rollback()
+            logger.exception("expire_disabled_detector_signals crashed")
+
     return {
         "ok": True,
         "total_duration_ms": int((time.time() - started) * 1000),
         "detectors_run": len(results),
         "totals": total,
         "aged_expired": aged_expired,
+        "disabled_expired": disabled_expired,
         "details": results,
     }
