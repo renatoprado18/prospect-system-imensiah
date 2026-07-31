@@ -378,6 +378,7 @@ def main() -> int:
     ro_url = _env("COS_RO_URL")
     owner_url = _env("COS_OWNER_URL")
     t0 = time.monotonic()
+    motivos: dict = {}
 
     from datetime import timedelta
     agora = datetime.now(timezone.utc)
@@ -407,8 +408,15 @@ def main() -> int:
         # vivo de consumir o teto sozinha.
         ultimos = ultimo_julgamento_por_frente(anterior)
         alvo = []
+        # Por que cada frente NÃO foi julgada. Sem isto o PDCA não consegue
+        # separar "o debounce está apertado" de "não há movimento" de "o teto
+        # cortou" — e ajustar parâmetro sem saber qual deles mordeu é chute.
+        motivos = {"sem_movimento": 0, "debounce": 0, "movimento_ja_visto": 0,
+                   "cortada_pelo_teto": 0}
+        barradas_debounce = []
         for f in todas:
             if f["movimento"] <= 0:
+                motivos["sem_movimento"] += 1
                 continue
             ts = ultimos.get(f["id"])
             if ts:
@@ -417,13 +425,20 @@ def main() -> int:
                 except ValueError:
                     quando = None
                 if quando and (agora - quando) < timedelta(minutes=DEBOUNCE_MIN):
+                    motivos["debounce"] += 1
+                    barradas_debounce.append(f["id"])
                     continue          # julgada agora há pouco; deixa respirar
                 if quando and not _mexeu_depois(ro_url, f["id"], quando):
+                    motivos["movimento_ja_visto"] += 1
                     continue          # o movimento é o mesmo que ela já viu
             alvo.append(f)
         alvo = sorted(alvo, key=lambda f: -f["movimento"])
         resta = max(0, TETO_DIARIO - ja_hoje)
-        alvo = alvo[:min(a.limit or 3, resta)]
+        cabe = min(a.limit or 3, resta)
+        motivos["cortada_pelo_teto"] = max(0, len(alvo) - cabe)
+        alvo = alvo[:cabe]
+        motivos["_debounce_ids"] = barradas_debounce
+        motivos["_teto_usado"] = f"{ja_hoje}/{TETO_DIARIO}"
     else:
         alvo = [f for f in todas if f["movimento"] > 0]
         if a.limit:
@@ -454,7 +469,9 @@ def main() -> int:
     # Funde com a foto anterior: quem não se mexeu mantém o julgamento de ontem.
     # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).
     triagem = {"ativas": len(todas), "com_movimento": len(alvo),
-               "paradas": len(paradas), "falhas": len(ruim)}
+               "paradas": len(paradas), "falhas": len(ruim),
+               "modo": "horario" if a.horario else "lote",
+               "nao_julgadas": motivos}
     m = fundir(anterior, ok, triagem)   # `anterior` já foi lido no topo
 
     # O corte de ≤3 fica com o mesmo critério de sempre; ordenar por prioridade
