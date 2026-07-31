@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Camada CoS como agente — job do launchd na maquina do Renato.
+
+  Instalar:
+    cp scripts/cos_agent/com.almeidaprado.cos-agent.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.cos-agent.plist
+  Disparar a mao (teste):
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.cos-agent
+  Desligar:
+    launchctl bootout gui/$(id -u)/com.almeidaprado.cos-agent
+
+  `--limit 6` E UMA TRAVA DE ORCAMENTO, NAO UM DETALHE. Medido no 1o teste real:
+  UMA frente custou US$0,998 nocionais e 156s. As 14 frentes que a triagem
+  seleciona hoje dariam ~US$14/dia — contra ~US$1/dia da camada antiga inteira
+  (31 frentes, rasa). No Max isso NAO e cobranca, mas consome capacidade da
+  assinatura, a MESMA que o Renato usa pra trabalhar no terminal. Um julgamento
+  noturno que come a cota do dia seria um autogol.
+  Com 6, a rodada fica em ~10 min e ~US$6 nocionais, e a triagem ja ordena por
+  volume de movimento — as 6 que mais andaram. Subir o numero e um dial; subir
+  sem medir a cota do Max e como o teto de WhatsApp que nunca segurou nada.
+
+  HORARIO: 07:12 BRT. Nao 07:00 de proposito — o cron `cos-daily-review` do
+  Railway roda 10:00 UTC (07:00 BRT), e sobrepor os dois grava duas linhas em
+  `cos_daily_review` no mesmo minuto, com a ultima ganhando por acaso. 12 min de
+  folga deixa claro quem escreveu por ultimo enquanto os dois motores coexistem.
+
+  SONO DA MAQUINA. Medido em 31/07: na TOMADA o Mac tem `sleep 0` (nao dorme) e
+  `womp 1` (acorda pela rede) — o job dispara com confiabilidade de servico. NA
+  BATERIA ele dorme em 1 MINUTO e o job simplesmente nao acontece. O launchd nao
+  acorda a maquina sozinho; pra isso e preciso, alem deste plist:
+      sudo pmset repeat wakeorpoweron MTWRFSU 07:10:00
+  Sem esse comando, viajar com o laptop = dia sem julgamento.
+
+  COMO SE SABE QUE NAO RODOU. O runner bate ponto em `cron_heartbeats`
+  (job_id=cos-agent-local, source=mac-local) e o `monitor-cron-health` do
+  servidor, que ja roda de hora em hora, acusa a ausencia. A deteccao mora no
+  SERVIDOR, nao aqui — de proposito: um vigia que mora na maquina que caiu nao
+  vigia nada.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.cos-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>set -a; . "$HOME/.cos-agent/env"; set +a; exec /Users/rap/prospect-system/.venv/bin/python /Users/rap/prospect-system/scripts/cos_agent/run.py --limit 6</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>12</integer>
+  </dict>
+
+  <!-- Se a maquina estava dormindo na hora marcada, o launchd dispara assim que
+       ela acordar. Melhor um julgamento atrasado que nenhum — e o batimento
+       registra a hora REAL, entao o atraso fica visivel em vez de silencioso. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- `claude` vive em /usr/local/bin; o PATH do launchd e minimo. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system/scripts/cos_agent</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/run.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/run.err</string>
+
+  <!-- Um julgamento que trava nao pode segurar a maquina pra sempre. -->
+  <key>ExitTimeOut</key>
+  <integer>1800</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

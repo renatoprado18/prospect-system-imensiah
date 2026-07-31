@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""
+Camada CoS como AGENTE — executor local (31/07/2026).
+
+POR QUE EXISTE. Até aqui a camada era um prompt único sobre um pacote fixo de
+contexto: 7 janelas de tamanho arbitrário (21 dias de DM, 40 mensagens, 5
+memórias, 500 chars por nota...). Cada janela é um lugar onde a resposta pode
+estar uma linha depois do corte, e ninguém saberia. Medido em 30/07: a data de
+início das aulas da FAAP estava **40 caracteres depois** do corte de nota, e a
+camada relatou honestamente "dado incompleto, não posso afirmar" sobre uma
+informação que existia no mesmo campo. Um teste com três agentes de verdade
+(frentes #38, #52, #47) achou o dado, não repetiu uma alucinação que a versão
+fixa cometeu, e não regrediu no caso de controle.
+
+ARQUITETURA — quem pode o quê:
+  - O AGENTE (`claude -p`, subprocesso) recebe SÓ `COS_RO_URL`, a credencial
+    `cos_agent_ro`, que **não consegue escrever** (provado: UPDATE/INSERT/DELETE/
+    CREATE/DROP todos negados pelo Postgres, não por instrução no prompt).
+    Tools restritas a leitura; Write/Edit bloqueados.
+  - O RUNNER (este arquivo, determinístico) é quem escreve, e só sabe fazer
+    UMA coisa: gravar o payload em `cos_daily_review`. O agente nunca vê a
+    credencial de escrita.
+  Limite honesto: numa máquina de usuário único não há isolamento total — um
+  agente determinado poderia procurar credencial em disco. Isto protege contra
+  o modo de falha REAL (o agente "consertar" algo que achou), não contra um
+  agente hostil.
+
+TRIAGEM. Medido em 31/07: **14 das 31 frentes ativas não tiveram movimento
+nenhum em 24h**, e a camada antiga julgava todas com o mesmo custo. Aqui só
+quem se mexeu vai pro agente; o resto herda o estado da rodada anterior. É o
+que faz agente custar o mesmo que prompt único, gastando onde importa.
+
+BATIMENTO. Roda na máquina do Renato, que dorme fora da tomada. Sem sinal, uma
+rodada que não aconteceu é invisível — o portão de ontem fica de pé parecendo o
+de hoje. Por isso o runner registra `cron_heartbeats`, e o `monitor-cron-health`
+que já existe no servidor acusa a ausência. O servidor detecta a falta da
+máquina.
+
+Uso:
+  ./run.py                 # rodada normal (triagem + agentes)
+  ./run.py --dry-run       # mostra o plano, não chama agente nem escreve
+  ./run.py --limit 3       # teto de frentes nesta rodada
+  ./run.py --frente 38     # uma frente específica (teste)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+JOB_ID = "cos-agent-local"
+MAX_QUERIES = 20          # teto de consultas por frente, dito ao agente
+MAX_TURNS = 40            # teto duro do CLI — mata a toca de coelho
+AGENT_TIMEOUT_S = 420     # por frente
+PARALELO = 3              # frentes simultâneas
+
+
+def _env(name: str) -> str:
+    v = (os.getenv(name) or "").strip()
+    if not v:
+        sys.exit(f"[cos-agent] {name} ausente — veja {BASE}/env.example")
+    return v
+
+
+def _conn(url: str):
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    return psycopg2.connect(url, cursor_factory=RealDictCursor)
+
+
+# --------------------------------------------------------------------------
+# 1. Triagem — quem se mexeu desde a última rodada
+# --------------------------------------------------------------------------
+def triar(ro_url: str, desde_horas: int = 26) -> list[dict]:
+    """Frentes ativas COM movimento na janela. 26h e não 24 de propósito: a
+    rodada diária tem jitter, e uma janela justa perde o que aconteceu na borda
+    do dia anterior — perder movimento é pior que reprocessar uma frente.
+
+    ⚠️ `tasks.atualizado_em` NÃO É SINAL DE MOVIMENTO. O `daily-sync` carimba a
+    coluna em toda task que puxa do Google, a cada rodada. Medido em 31/07: o
+    sync das 11:37:32 deixou 14 tasks da Vallen com `atualizado_em` 11:37:36-37.
+    Contando assim, esta triagem via 75 "movimentos" de task nas frentes ativas
+    e **só 4 eram reais** — 95% de eco da máquina. Uma triagem que lê o próprio
+    sync como atividade manda tudo pro agente e a economia evapora, que é o
+    contrário do motivo dela existir.
+
+    O sinal honesto é `atualizado_em > last_synced_at`: mudança local mais nova
+    que a última sincronização. É a MESMA guarda que o `tasks_sync` usa pra
+    decidir que o local vence o Google — reusar em vez de inventar um critério
+    novo. `last_synced_at IS NULL` = task que nunca foi ao Google, logo qualquer
+    toque nela é local."""
+    sql = """
+        SELECT p.id, p.nome, p.prioridade,
+               (SELECT count(*) FROM tasks t
+                 WHERE t.project_id = p.id
+                   AND t.atualizado_em > NOW() - make_interval(hours => %(h)s)
+                   AND (t.last_synced_at IS NULL
+                        OR t.atualizado_em > t.last_synced_at)) AS n_tasks,
+               (SELECT count(*) FROM project_notes n
+                 WHERE n.project_id = p.id AND n.tipo <> 'estado_cos'
+                   AND n.criado_em > NOW() - make_interval(hours => %(h)s)) AS n_notas,
+               (SELECT count(*) FROM message_project_links l
+                  JOIN messages m ON m.id = l.message_id
+                 WHERE l.project_id = p.id
+                   AND COALESCE(m.enviado_em, m.recebido_em)
+                       > NOW() - make_interval(hours => %(h)s)) AS n_msgs,
+               (SELECT count(*) FROM project_whatsapp_groups g
+                  JOIN group_messages gm ON gm.group_jid = g.group_jid
+                 WHERE g.project_id = p.id AND g.ativo
+                   AND gm.timestamp > NOW() - make_interval(hours => %(h)s)) AS n_grupo
+        FROM projects p
+        WHERE p.status = 'ativo'
+        ORDER BY p.prioridade DESC NULLS LAST, p.id
+    """
+    with _conn(ro_url) as c, c.cursor() as cur:
+        cur.execute(sql, {"h": desde_horas})
+        linhas = [dict(r) for r in cur.fetchall()]
+    for f in linhas:
+        f["movimento"] = f["n_tasks"] + f["n_notas"] + f["n_msgs"] + f["n_grupo"]
+    return linhas
+
+
+# --------------------------------------------------------------------------
+# 2. O agente — um subprocesso por frente, sem credencial de escrita
+# --------------------------------------------------------------------------
+def julgar(frente: dict, ro_url: str) -> dict:
+    prompt = (BASE / "prompt_frente.md").read_text(encoding="utf-8")
+    prompt = (prompt
+              .replace("{PROJECT_ID}", str(frente["id"]))
+              .replace("{PROJECT_NAME}", frente["nome"] or "")
+              .replace("{HOJE}", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+              .replace("{MAX_QUERIES}", str(MAX_QUERIES)))
+
+    # SÓ a credencial de leitura entra no ambiente do agente. A de escrita
+    # existe apenas neste processo.
+    env = {k: v for k, v in os.environ.items() if k != "COS_OWNER_URL"}
+    env["COS_RO_URL"] = ro_url
+
+    cmd = [
+        "claude", "-p", prompt,
+        "--output-format", "json",
+        "--max-turns", str(MAX_TURNS),
+        "--allowedTools", "Bash", "Read", "Grep", "Glob",
+        "--disallowedTools", "Write", "Edit", "MultiEdit", "NotebookEdit",
+        "--add-dir", "/Users/rap/.claude/projects/-Users-rap-prospect-system/memory",
+    ]
+    t0 = time.monotonic()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=AGENT_TIMEOUT_S, env=env,
+                           cwd=str(BASE))
+    except subprocess.TimeoutExpired:
+        return {"project_id": frente["id"], "frente": frente["nome"],
+                "error": f"timeout > {AGENT_TIMEOUT_S}s"}
+    dur = int(time.monotonic() - t0)
+
+    if r.returncode != 0:
+        return {"project_id": frente["id"], "frente": frente["nome"],
+                "error": f"exit {r.returncode}: {(r.stderr or '')[:300]}"}
+
+    # O CLI devolve um envelope; o julgamento é o `result` dentro dele.
+    try:
+        env_json = json.loads(r.stdout)
+        texto = env_json.get("result") or ""
+        custo = env_json.get("total_cost_usd")
+    except json.JSONDecodeError:
+        texto, custo = r.stdout, None
+
+    ini, fim = texto.find("{"), texto.rfind("}") + 1
+    if ini < 0 or fim <= ini:
+        return {"project_id": frente["id"], "frente": frente["nome"],
+                "error": "resposta não-JSON", "raw": texto[:300]}
+    try:
+        d = json.loads(texto[ini:fim])
+    except json.JSONDecodeError as e:
+        return {"project_id": frente["id"], "frente": frente["nome"],
+                "error": f"JSON inválido: {e}"}
+
+    pdv = d.get("precisa_de_voce") or {}
+    return {
+        "project_id": frente["id"],
+        "frente": frente["nome"],
+        "estado": (d.get("estado") or "").strip(),
+        "movimento": (d.get("movimento") or "").strip(),
+        "trava": (d.get("trava") or "").strip(),
+        "precisa_de_voce": {"sim": bool(pdv.get("sim")),
+                            "o_que": (pdv.get("o_que") or "").strip()},
+        "vigilias": [v for v in (d.get("vigilias") or []) if v][:2],
+        "nota": (d.get("nota") or "").strip(),
+        # a trajetória É a auditoria — sem ela não dá pra saber de onde veio o
+        # julgamento, que é a pergunta que originou esta frente inteira
+        "trajetoria": d.get("trajetoria") or [],
+        "nao_consegui_saber": d.get("nao_consegui_saber") or [],
+        "_meta": {"duracao_s": dur, "custo_usd": custo, "motor": "agente_local"},
+    }
+
+
+# --------------------------------------------------------------------------
+# 3. Escrita — o único caminho de gravação, e ele só sabe fazer isto
+# --------------------------------------------------------------------------
+def herdar(ro_url: str) -> dict:
+    """Último payload gravado, de qualquer motor. É a base sobre a qual esta
+    rodada escreve.
+
+    POR QUE ISTO EXISTE. O agente julga só quem se mexeu — por desenho. Sem
+    herdar, cada rodada gravaria uma foto PARCIAL, e como todo consumidor
+    (tonIAH, `/cockpit`, o abridor do chat) lê `ORDER BY run_at DESC LIMIT 1`,
+    a foto parcial vira a oficial. Aconteceu no 1º teste: uma rodada de UMA
+    frente virou a linha mais recente e o cockpit do Renato ficou com 1 frente
+    e portão vazio. Não é artefato de teste — é o comportamento normal deste
+    motor, e sem a herança ele encolheria a visão todo dia."""
+    with _conn(ro_url) as c, c.cursor() as cur:
+        cur.execute("SELECT payload FROM cos_daily_review ORDER BY run_at DESC LIMIT 1")
+        row = cur.fetchone()
+    if not row or not row.get("payload"):
+        return {}
+    p = row["payload"]
+    return p if isinstance(p, dict) else json.loads(p)
+
+
+def fundir(anterior: dict, novos: list[dict], triagem: dict) -> dict:
+    """Estado anterior + o que esta rodada re-julgou. Frente não re-julgada
+    mantém o debriefing de ontem, MARCADO como herdado — para o consumidor (e o
+    Renato) distinguirem "julgado agora" de "estava assim e não se mexeu".
+    Silenciar essa diferença seria vender foto velha como atual."""
+    por_id = {}
+    for d in (anterior.get("frentes") or []):
+        d = dict(d)
+        meta = dict(d.get("_meta") or {})
+        meta["herdado"] = True
+        meta["herdado_de"] = anterior.get("run_at")
+        d["_meta"] = meta
+        por_id[d.get("project_id")] = d
+    for d in novos:                      # o julgamento fresco sobrescreve
+        por_id[d["project_id"]] = d
+
+    frentes = list(por_id.values())
+    precisa = [{"frente": d["frente"], "project_id": d["project_id"],
+                "o_que": (d.get("precisa_de_voce") or {}).get("o_que", "")}
+               for d in frentes if (d.get("precisa_de_voce") or {}).get("sim")]
+    vigilias = [{"frente": d["frente"], "project_id": d["project_id"], "item": v}
+                for d in frentes for v in (d.get("vigilias") or [])]
+    cobertas = [d["frente"] for d in frentes
+                if not (d.get("precisa_de_voce") or {}).get("sim")]
+    return {"frentes": frentes, "precisa": precisa,
+            "vigilias": vigilias, "cobertas": cobertas}
+
+
+def gravar(owner_url: str, payload: dict) -> int:
+    with _conn(owner_url) as c, c.cursor() as cur:
+        cur.execute(
+            """INSERT INTO cos_daily_review (run_date, n_frentes, n_precisa, payload)
+               VALUES ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date, %s, %s, %s)
+               RETURNING id""",
+            (payload["n_frentes"],
+             len(payload["placar"]["precisa_de_voce"]),
+             json.dumps(payload, ensure_ascii=False)),
+        )
+        rid = cur.fetchone()["id"]
+        c.commit()
+    return rid
+
+
+def bater_ponto(owner_url: str, status: int, dur_ms: int) -> None:
+    """Sem isto, uma rodada que NÃO aconteceu é invisível: o portão de ontem
+    fica de pé parecendo o de hoje. Com isto, o `monitor-cron-health` do
+    servidor acusa a ausência — o servidor detecta a falta da máquina."""
+    try:
+        with _conn(owner_url) as c, c.cursor() as cur:
+            # append-only: a tabela não tem unique em job_id, e o monitor lê o
+            # MAX(fired_at) por job. `source` distingue esta máquina do worker
+            # Railway — se um dia os dois baterem o mesmo job, dá pra separar.
+            cur.execute("""
+                INSERT INTO cron_heartbeats (job_id, fired_at, http_status, duration_ms, source)
+                VALUES (%s, NOW(), %s, %s, 'mac-local')
+            """, (JOB_ID, status, dur_ms))
+            c.commit()
+    except Exception as e:
+        print(f"[cos-agent] batimento falhou (não fatal): {e}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--limit", type=int, default=0, help="teto de frentes")
+    ap.add_argument("--frente", type=int, default=0, help="só esta frente")
+    a = ap.parse_args()
+
+    ro_url = _env("COS_RO_URL")
+    owner_url = _env("COS_OWNER_URL")
+    t0 = time.monotonic()
+
+    todas = triar(ro_url)
+    if a.frente:
+        alvo = [f for f in todas if f["id"] == a.frente]
+    else:
+        alvo = [f for f in todas if f["movimento"] > 0]
+        if a.limit:
+            alvo = sorted(alvo, key=lambda f: -f["movimento"])[:a.limit]
+    paradas = [f for f in todas if f["movimento"] == 0]
+
+    print(f"[cos-agent] {len(todas)} frentes ativas · {len(alvo)} pro agente · "
+          f"{len(paradas)} sem movimento (herdam o estado anterior)")
+    for f in alvo:
+        print(f"   #{f['id']:<4} {(f['nome'] or '')[:48]:48} "
+              f"tasks={f['n_tasks']} notas={f['n_notas']} msgs={f['n_msgs']} grupo={f['n_grupo']}")
+    if a.dry_run:
+        print("[cos-agent] dry-run — nada executado, nada gravado")
+        return 0
+    if not alvo:
+        print("[cos-agent] nada se mexeu; rodada encerrada sem gastar agente")
+        bater_ponto(owner_url, 200, int((time.monotonic() - t0) * 1000))
+        return 0
+
+    with ThreadPoolExecutor(max_workers=PARALELO) as ex:
+        debriefs = list(ex.map(lambda f: julgar(f, ro_url), alvo))
+
+    ok = [d for d in debriefs if not d.get("error")]
+    ruim = [d for d in debriefs if d.get("error")]
+    for d in ruim:
+        print(f"[cos-agent] #{d['project_id']} falhou: {d['error']}", file=sys.stderr)
+
+    # Funde com a foto anterior: quem não se mexeu mantém o julgamento de ontem.
+    # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).
+    triagem = {"ativas": len(todas), "com_movimento": len(alvo),
+               "paradas": len(paradas), "falhas": len(ruim)}
+    anterior = herdar(ro_url)
+    m = fundir(anterior, ok, triagem)
+
+    # O corte de ≤3 fica com o mesmo critério de sempre; ordenar por prioridade
+    # do projeto é determinístico e não gasta uma 2ª chamada de LLM.
+    prio = {f["id"]: (f["prioridade"] or 0) for f in todas}
+    hoje = sorted(m["precisa"], key=lambda p: -prio.get(p["project_id"], 0))[:3]
+    esta_semana = [p for p in m["precisa"] if p not in hoje]
+
+    custo = sum((d.get("_meta", {}).get("custo_usd") or 0) for d in ok)
+    payload = {
+        "run_at": datetime.now(timezone.utc).isoformat(),
+        "n_frentes": len(m["frentes"]),
+        "motor": "agente_local",
+        "triagem": {**triagem, "julgadas_agora": len(ok),
+                    "herdadas": len(m["frentes"]) - len(ok)},
+        "custo_usd": round(custo, 4) if custo else None,
+        "frentes": m["frentes"],
+        "placar": {"hoje": hoje, "esta_semana": esta_semana,
+                   "precisa_de_voce": m["precisa"], "vigilias": m["vigilias"],
+                   "cobertas": m["cobertas"]},
+    }
+    rid = gravar(owner_url, payload)
+    dur = int((time.monotonic() - t0) * 1000)
+    bater_ponto(owner_url, 200 if not ruim else 207, dur)
+    print(f"[cos-agent] gravado cos_daily_review id={rid} · "
+          f"{len(ok)} julgadas agora + {len(m['frentes']) - len(ok)} herdadas "
+          f"= {len(m['frentes'])} frentes · {len(hoje)} no portão · "
+          f"{dur/1000:.0f}s · US${custo:.3f} (nocional; no Max não é cobrança)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
