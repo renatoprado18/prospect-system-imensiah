@@ -41,6 +41,20 @@ CONTACTS_SCOPES = [
     "https://www.googleapis.com/auth/tasks",  # Full tasks access (read/write)
     "https://www.googleapis.com/auth/drive",  # Full Google Drive access
     "https://www.googleapis.com/auth/spreadsheets",  # Read/write Google Sheets
+    # 31/07/26 — pedido da sessao CoS: gerar Forms/Docs/Slides pela API (imediato:
+    # formulario de candidatura da vaga de recepcionista; recorrente: documentos e
+    # apresentacoes on-brand). O token ja tinha `drive` e `spreadsheets`, mas Drive
+    # so cria/le ARQUIVOS — editar o corpo de um Doc, montar um Form ou uma
+    # apresentacao exige a API propria de cada um.
+    # Os 4 sao escopos SENSIVEIS, nao restritos (os restritos — gmail.readonly,
+    # drive — ele ja concedeu), entao nao disparam reverificacao do app.
+    # ⚠️ So valem depois de o Renato RECONECTAR em /api/google/connect/professional:
+    # o token existente nao ganha escopo novo sozinho. O `prompt=consent` abaixo ja
+    # forca a tela nova. Conferir depois em google_accounts.scopes.
+    "https://www.googleapis.com/auth/forms.body",  # Criar/editar Google Forms
+    "https://www.googleapis.com/auth/forms.responses.readonly",  # Ler respostas
+    "https://www.googleapis.com/auth/documents",  # Editar corpo de Google Docs
+    "https://www.googleapis.com/auth/presentations",  # Criar/editar Slides
 ]
 
 

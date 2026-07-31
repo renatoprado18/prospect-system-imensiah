@@ -26,6 +26,16 @@ class GmailIntegration:
     GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 
     # OAuth scopes for Gmail + Calendar + Tasks
+    #
+    # ⚠️ ESTA LISTA NAO E A CANONICA E ESTE FLUXO DE AUTH ESTA MORTO (31/07/26).
+    # Quem conecta conta de verdade e `/api/google/connect/{account_type}` ->
+    # `google_contacts.get_connect_url` -> `CONTACTS_SCOPES`. O `get_auth_url`
+    # daqui nao esta ligado a rota nenhuma; a classe e usada so pra CHAMAR a API
+    # com token ja existente. A lista abaixo esta DEFASADA de proposito-nenhum:
+    # nao tem contacts, drive, forms, documents nem presentations.
+    # Se um dia religarem este caminho, ele concede MENOS escopo que o atual e a
+    # falha aparece longe daqui (chamada de API com 403 no meio de outra feature).
+    # Antes de usar: alinhar com CONTACTS_SCOPES ou apagar este bloco.
     SCOPES = [
         "openid",
         "email",
