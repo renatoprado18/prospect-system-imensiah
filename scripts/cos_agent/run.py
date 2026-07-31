@@ -61,6 +61,24 @@ MAX_TURNS = 40            # teto duro do CLI — mata a toca de coelho
 AGENT_TIMEOUT_S = 420     # por frente
 PARALELO = 3              # frentes simultâneas
 
+# --- Controles do modo horário (31/07) --------------------------------------
+# Sem eles, "rodar de hora em hora" é uma fábrica de custo:
+#
+# DEBOUNCE — uma conversa de WhatsApp ao vivo faz a frente "se mexer" a cada
+# rodada. Sem intervalo mínimo, uma tarde de troca com o Piccino re-julgaria a
+# Reorg 8 vezes pra dizer quase a mesma coisa. 90 min deixa a frente respirar
+# sem perder o dia.
+DEBOUNCE_MIN = 90
+# TETO DIÁRIO — o limite real não é dinheiro (no Max não é cobrança), é a
+# CAPACIDADE que o Renato usa pra trabalhar no terminal. Medido: US$1,18
+# nocionais por frente. 18 julgamentos/dia ≈ US$21 nocionais, que é o teto que
+# escolhi pra primeira semana justamente por ser mensurável. Estourou, a rodada
+# não julga e DIZ que não julgou — silenciar seria repetir o teto de WhatsApp
+# que nunca segurou nada.
+TETO_DIARIO = 18
+# JANELA — julgar às 3 da manhã não serve a ninguém e gasta igual.
+HORA_INICIO, HORA_FIM = 7, 21   # BRT
+
 
 def _env(name: str) -> str:
     v = (os.getenv(name) or "").strip()
@@ -184,9 +202,11 @@ def julgar(frente: dict, ro_url: str) -> dict:
                 "error": f"JSON inválido: {e}"}
 
     pdv = d.get("precisa_de_voce") or {}
+    agora = datetime.now(timezone.utc).isoformat()
     return {
         "project_id": frente["id"],
         "frente": frente["nome"],
+        "julgado_em": agora,
         "estado": (d.get("estado") or "").strip(),
         "movimento": (d.get("movimento") or "").strip(),
         "trava": (d.get("trava") or "").strip(),
@@ -198,13 +218,71 @@ def julgar(frente: dict, ro_url: str) -> dict:
         # julgamento, que é a pergunta que originou esta frente inteira
         "trajetoria": d.get("trajetoria") or [],
         "nao_consegui_saber": d.get("nao_consegui_saber") or [],
-        "_meta": {"duracao_s": dur, "custo_usd": custo, "motor": "agente_local"},
+        "_meta": {"duracao_s": dur, "custo_usd": custo, "motor": "agente_local",
+                  "julgado_em": agora},
     }
 
 
 # --------------------------------------------------------------------------
 # 3. Escrita — o único caminho de gravação, e ele só sabe fazer isto
 # --------------------------------------------------------------------------
+def _mexeu_depois(ro_url: str, project_id: int, quando) -> bool:
+    """Houve movimento nesta frente DEPOIS do instante `quando`?
+
+    A triagem geral responde "mexeu na janela"; esta responde "mexeu desde que
+    eu a julguei". Sem a segunda, uma frente que andou às 9h volta pro agente às
+    10h, 11h, 12h... dizendo a mesma coisa e gastando o teto. Espelha as mesmas
+    quatro fontes da triagem, inclusive a guarda contra o eco do `daily-sync`."""
+    with _conn(ro_url) as c, c.cursor() as cur:
+        cur.execute("""
+            SELECT
+              EXISTS (SELECT 1 FROM tasks t
+                       WHERE t.project_id = %(p)s AND t.atualizado_em > %(q)s
+                         AND (t.last_synced_at IS NULL OR t.atualizado_em > t.last_synced_at))
+              OR EXISTS (SELECT 1 FROM project_notes n
+                          WHERE n.project_id = %(p)s AND n.tipo <> 'estado_cos'
+                            AND n.criado_em > %(q)s)
+              OR EXISTS (SELECT 1 FROM message_project_links l
+                           JOIN messages m ON m.id = l.message_id
+                          WHERE l.project_id = %(p)s
+                            AND COALESCE(m.enviado_em, m.recebido_em) > %(q)s)
+              OR EXISTS (SELECT 1 FROM project_whatsapp_groups g
+                           JOIN group_messages gm ON gm.group_jid = g.group_jid
+                          WHERE g.project_id = %(p)s AND g.ativo AND gm.timestamp > %(q)s)
+              AS mexeu
+        """, {"p": project_id, "q": quando.replace(tzinfo=None)})
+        return bool(cur.fetchone()["mexeu"])
+
+
+def julgamentos_de_hoje(ro_url: str) -> int:
+    """Quantas frentes já foram julgadas pelo agente hoje (BRT). Alimenta o teto
+    diário. Conta pelo payload, não por linha: uma rodada pode julgar várias."""
+    with _conn(ro_url) as c, c.cursor() as cur:
+        cur.execute("""
+            SELECT COALESCE(SUM((payload->'triagem'->>'julgadas_agora')::int), 0) AS n
+            FROM cos_daily_review
+            WHERE payload->>'motor' = 'agente_local'
+              AND (run_at AT TIME ZONE 'America/Sao_Paulo')::date
+                  = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+        """)
+        return cur.fetchone()["n"] or 0
+
+
+def ultimo_julgamento_por_frente(anterior: dict) -> dict:
+    """project_id -> quando o AGENTE julgou aquela frente pela última vez.
+
+    É o que transforma "mexeu nas últimas 26h" em "mexeu desde que EU a julguei".
+    Sem isso, no modo horário a mesma frente que andou de manhã seria re-julgada
+    a cada hora até a meia-noite — 14 vezes pra dizer o mesmo. O timestamp
+    sobrevive à herança porque `fundir` preserva o `_meta` da frente herdada."""
+    out = {}
+    for f in (anterior.get("frentes") or []):
+        ts = (f.get("_meta") or {}).get("julgado_em")
+        if ts:
+            out[f.get("project_id")] = ts
+    return out
+
+
 def herdar(ro_url: str) -> dict:
     """Último payload gravado, de qualquer motor. É a base sobre a qual esta
     rodada escreve.
@@ -292,15 +370,60 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="teto de frentes")
     ap.add_argument("--frente", type=int, default=0, help="só esta frente")
+    ap.add_argument("--horario", action="store_true",
+                    help="modo horário: só quem mexeu DESDE o próprio julgamento, "
+                         "com debounce, teto diário e janela de horas")
     a = ap.parse_args()
 
     ro_url = _env("COS_RO_URL")
     owner_url = _env("COS_OWNER_URL")
     t0 = time.monotonic()
 
+    from datetime import timedelta
+    agora = datetime.now(timezone.utc)
+    hora_brt = (agora - timedelta(hours=3)).hour
+
+    if a.horario and not (HORA_INICIO <= hora_brt < HORA_FIM):
+        print(f"[cos-agent] {hora_brt}h BRT — fora da janela {HORA_INICIO}-{HORA_FIM}h; nada a fazer")
+        return 0
+
+    anterior = herdar(ro_url)
+    ja_hoje = julgamentos_de_hoje(ro_url) if a.horario else 0
+    if a.horario and ja_hoje >= TETO_DIARIO:
+        # Dizer alto. Um teto que corta em silêncio vira o teto de WhatsApp de
+        # 28/07: ligado, medindo errado, e ninguém sabia.
+        print(f"[cos-agent] TETO DIÁRIO atingido ({ja_hoje}/{TETO_DIARIO} julgamentos hoje) "
+              f"— nenhuma frente julgada nesta rodada. A foto anterior segue valendo.")
+        bater_ponto(owner_url, 200, int((time.monotonic() - t0) * 1000))
+        return 0
+
     todas = triar(ro_url)
     if a.frente:
         alvo = [f for f in todas if f["id"] == a.frente]
+    elif a.horario:
+        # O critério que faz o modo horário existir: movimento DESDE o último
+        # julgamento DAQUELA frente — não "nas últimas 26h", que re-julgaria a
+        # mesma coisa a cada hora. Mais o debounce, que impede uma conversa ao
+        # vivo de consumir o teto sozinha.
+        ultimos = ultimo_julgamento_por_frente(anterior)
+        alvo = []
+        for f in todas:
+            if f["movimento"] <= 0:
+                continue
+            ts = ultimos.get(f["id"])
+            if ts:
+                try:
+                    quando = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    quando = None
+                if quando and (agora - quando) < timedelta(minutes=DEBOUNCE_MIN):
+                    continue          # julgada agora há pouco; deixa respirar
+                if quando and not _mexeu_depois(ro_url, f["id"], quando):
+                    continue          # o movimento é o mesmo que ela já viu
+            alvo.append(f)
+        alvo = sorted(alvo, key=lambda f: -f["movimento"])
+        resta = max(0, TETO_DIARIO - ja_hoje)
+        alvo = alvo[:min(a.limit or 3, resta)]
     else:
         alvo = [f for f in todas if f["movimento"] > 0]
         if a.limit:
@@ -332,8 +455,7 @@ def main() -> int:
     # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).
     triagem = {"ativas": len(todas), "com_movimento": len(alvo),
                "paradas": len(paradas), "falhas": len(ruim)}
-    anterior = herdar(ro_url)
-    m = fundir(anterior, ok, triagem)
+    m = fundir(anterior, ok, triagem)   # `anterior` já foi lido no topo
 
     # O corte de ≤3 fica com o mesmo critério de sempre; ordenar por prioridade
     # do projeto é determinístico e não gasta uma 2ª chamada de LLM.

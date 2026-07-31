@@ -47,14 +47,26 @@
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>set -a; . "$HOME/.cos-agent/env"; set +a; exec /Users/rap/prospect-system/.venv/bin/python /Users/rap/prospect-system/scripts/cos_agent/run.py --limit 6</string>
+    <string>set -a; . "$HOME/.cos-agent/env"; set +a; exec /Users/rap/prospect-system/.venv/bin/python /Users/rap/prospect-system/scripts/cos_agent/run.py --horario</string>
   </array>
 
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>7</integer>
-    <key>Minute</key><integer>12</integer>
-  </dict>
+  <array>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>12</integer></dict>
+    <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>12</integer></dict>
+  </array>
 
   <!-- Se a maquina estava dormindo na hora marcada, o launchd dispara assim que
        ela acordar. Melhor um julgamento atrasado que nenhum — e o batimento
@@ -67,6 +79,12 @@
   <dict>
     <key>PATH</key>
     <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <!-- Sem isto o Python bufferiza a saida (nao ha TTY) e o run.log so aparece
+         no fim. Numa rodada de ~10 min isso significa 10 min sem saber se ela
+         esta progredindo ou travada — e um job que trava e exatamente o caso em
+         que se precisa do log. Descoberto na 1a execucao real. -->
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
   </dict>
 
   <key>WorkingDirectory</key>
