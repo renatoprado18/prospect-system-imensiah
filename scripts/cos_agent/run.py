@@ -70,12 +70,23 @@ PARALELO = 3              # frentes simultâneas
 # sem perder o dia.
 DEBOUNCE_MIN = 90
 # TETO DIÁRIO — o limite real não é dinheiro (no Max não é cobrança), é a
-# CAPACIDADE que o Renato usa pra trabalhar no terminal. Medido: US$1,18
-# nocionais por frente. 18 julgamentos/dia ≈ US$21 nocionais, que é o teto que
-# escolhi pra primeira semana justamente por ser mensurável. Estourou, a rodada
-# não julga e DIZ que não julgou — silenciar seria repetir o teto de WhatsApp
+# CAPACIDADE que o Renato usa pra trabalhar no terminal. Medido: US$1,10
+# nocionais por frente (18 julgamentos = US$19,73 em 31/07, primeiro dia).
+# 31/07 → 18→28: o PDCA do 1º dia mostrou o orçamento drenando às 18h com a
+# janela indo até 21h; as duas últimas rodadas do dia ficaram cegas. 28 cobre a
+# demanda medida (~18 em 7h de operação) com folga pro dia inteiro, que ainda
+# NÃO foi medido — o agente só entrou às 14h. Estourou, a rodada não julga e DIZ
+# quantas frentes ficaram de fora — silenciar seria repetir o teto de WhatsApp
 # que nunca segurou nada.
-TETO_DIARIO = 18
+TETO_DIARIO = 28
+# MÁXIMO POR RODADA — quantas frentes uma única rodada pode julgar. Era o
+# literal `3` espalhado pelo código, e em 31/07 ele foi o gargalo REAL: as
+# rodadas de 15h/16h/17h tinham 6, 6 e 5 frentes elegíveis e cortaram 3, 3 e 2 —
+# com o teto diário ainda em 6/18, 9/18 e 12/18. O corte era deste parâmetro e
+# vinha rotulado como "teto diário", mandando o PDCA acusar o número errado.
+# 3→5 porque nenhuma rodada do dia passou de 6 elegíveis: com 5 o atraso some
+# quase todo, e o que sobra a rodada seguinte pega 1h depois.
+MAX_POR_RODADA = 5
 # JANELA — julgar às 3 da manhã não serve a ninguém e gasta igual.
 HORA_INICIO, HORA_FIM = 7, 21   # BRT
 
@@ -390,13 +401,12 @@ def main() -> int:
 
     anterior = herdar(ro_url)
     ja_hoje = julgamentos_de_hoje(ro_url) if a.horario else 0
-    if a.horario and ja_hoje >= TETO_DIARIO:
-        # Dizer alto. Um teto que corta em silêncio vira o teto de WhatsApp de
-        # 28/07: ligado, medindo errado, e ninguém sabia.
-        print(f"[cos-agent] TETO DIÁRIO atingido ({ja_hoje}/{TETO_DIARIO} julgamentos hoje) "
-              f"— nenhuma frente julgada nesta rodada. A foto anterior segue valendo.")
-        bater_ponto(owner_url, 200, int((time.monotonic() - t0) * 1000))
-        return 0
+    # NÃO retornamos aqui quando o teto estourou. Até 31/07 retornávamos, e o
+    # efeito era um teto que corta CEGO: ele dizia que tinha batido, mas não
+    # dizia o que deixou passar — as rodadas das 19h e 20h daquele dia não
+    # registraram nada. A triagem é só SQL (não gasta agente), então rodamos
+    # sempre e deixamos o corte cair em `cabe`, que agora sabe distinguir quem
+    # barrou. Sem isso, "o teto custou N julgamentos" é indemonstrável.
 
     todas = triar(ro_url)
     if a.frente:
@@ -412,7 +422,7 @@ def main() -> int:
         # separar "o debounce está apertado" de "não há movimento" de "o teto
         # cortou" — e ajustar parâmetro sem saber qual deles mordeu é chute.
         motivos = {"sem_movimento": 0, "debounce": 0, "movimento_ja_visto": 0,
-                   "cortada_pelo_teto": 0}
+                   "cortada_pelo_teto": 0, "cortada_pelo_limite_rodada": 0}
         barradas_debounce = []
         for f in todas:
             if f["movimento"] <= 0:
@@ -433,12 +443,27 @@ def main() -> int:
                     continue          # o movimento é o mesmo que ela já viu
             alvo.append(f)
         alvo = sorted(alvo, key=lambda f: -f["movimento"])
+        # DOIS cortes distintos, contados separadamente. Até 31/07 os dois caíam
+        # em `cortada_pelo_teto`, e o PDCA acusava o teto diário quando o
+        # gargalo era o limite por rodada — subir o teto não teria mudado nada.
+        # Quem barra primeiro é quem leva a culpa: o orçamento do dia (`resta`)
+        # ou a fatia da rodada (`por_rodada`).
+        elegiveis = len(alvo)
         resta = max(0, TETO_DIARIO - ja_hoje)
-        cabe = min(a.limit or 3, resta)
-        motivos["cortada_pelo_teto"] = max(0, len(alvo) - cabe)
+        por_rodada = a.limit or MAX_POR_RODADA
+        cabe = min(por_rodada, resta)
+        excedente = max(0, elegiveis - cabe)
+        if resta < por_rodada:
+            # O orçamento do dia é mais apertado que a fatia da rodada: o teto
+            # diário é o culpado por tudo que passou de `resta`.
+            motivos["cortada_pelo_teto"] = excedente
+        else:
+            motivos["cortada_pelo_limite_rodada"] = excedente
         alvo = alvo[:cabe]
         motivos["_debounce_ids"] = barradas_debounce
         motivos["_teto_usado"] = f"{ja_hoje}/{TETO_DIARIO}"
+        motivos["_elegiveis"] = elegiveis
+        motivos["_max_por_rodada"] = por_rodada
     else:
         alvo = [f for f in todas if f["movimento"] > 0]
         if a.limit:
@@ -454,7 +479,43 @@ def main() -> int:
         print("[cos-agent] dry-run — nada executado, nada gravado")
         return 0
     if not alvo:
-        print("[cos-agent] nada se mexeu; rodada encerrada sem gastar agente")
+        barradas = motivos.get("cortada_pelo_teto", 0)
+        if not barradas:
+            # Rodada estéril de verdade: não havia trabalho. Barata (só SQL) e
+            # não merece linha no banco — gravar a foto herdada de novo só
+            # encheria `cos_daily_review` de cópias idênticas.
+            print("[cos-agent] nada se mexeu; rodada encerrada sem gastar agente")
+            bater_ponto(owner_url, 200, int((time.monotonic() - t0) * 1000))
+            return 0
+        # Aqui HAVIA trabalho e o teto do dia recusou. Isso é um evento que o
+        # PDCA precisa contar, então esta rodada grava (foto herdada + motivos)
+        # mesmo sem julgar nada. É a diferença entre "não tinha o que fazer" e
+        # "tinha, e o parâmetro impediu".
+        print(f"[cos-agent] TETO DIÁRIO atingido ({ja_hoje}/{TETO_DIARIO} julgamentos hoje) "
+              f"— {barradas} frente(s) com movimento novo ficaram SEM julgamento nesta "
+              f"rodada. A foto anterior segue valendo.")
+        triagem = {"ativas": len(todas), "com_movimento": 0,
+                   "paradas": len(paradas), "falhas": 0,
+                   "modo": "horario" if a.horario else "lote",
+                   "nao_julgadas": motivos}
+        m = fundir(anterior, [], triagem)
+        prio = {f["id"]: (f["prioridade"] or 0) for f in todas}
+        hoje = sorted(m["precisa"], key=lambda p: -prio.get(p["project_id"], 0))[:3]
+        rid = gravar(owner_url, {
+            "run_at": datetime.now(timezone.utc).isoformat(),
+            "n_frentes": len(m["frentes"]),
+            "motor": "agente_local",
+            "triagem": {**triagem, "julgadas_agora": 0,
+                        "herdadas": len(m["frentes"])},
+            "custo_usd": None,
+            "frentes": m["frentes"],
+            "placar": {"hoje": hoje,
+                       "esta_semana": [p for p in m["precisa"] if p not in hoje],
+                       "precisa_de_voce": m["precisa"], "vigilias": m["vigilias"],
+                       "cobertas": m["cobertas"]},
+        })
+        print(f"[cos-agent] gravado cos_daily_review id={rid} · 0 julgadas "
+              f"(teto) + {len(m['frentes'])} herdadas")
         bater_ponto(owner_url, 200, int((time.monotonic() - t0) * 1000))
         return 0
 

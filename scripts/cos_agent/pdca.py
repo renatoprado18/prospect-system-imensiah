@@ -32,7 +32,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from run import _conn, DEBOUNCE_MIN, TETO_DIARIO, HORA_INICIO, HORA_FIM  # noqa: E402
+from run import (_conn, DEBOUNCE_MIN, TETO_DIARIO, MAX_POR_RODADA,  # noqa: E402
+                 HORA_INICIO, HORA_FIM)
 
 VERDE, AMARELO, VERMELHO = "🟢", "🟡", "🔴"
 
@@ -100,22 +101,53 @@ def bloco_triagem(runs: list[dict]) -> None:
     vazias = sum(1 for r in hor if not (r["p"]["triagem"].get("julgadas_agora")))
     total = len(hor)
     mot: dict = {}
+    # Rodadas gravadas ANTES da correção de 31/07 à noite somavam os dois cortes
+    # em `cortada_pelo_teto`. Elas não têm `_elegiveis`, e é assim que as
+    # reconhecemos. Contá-las junto faria este bloco acusar o teto pelo que o
+    # limite por rodada fez — o erro que a correção existe pra impedir. A régua
+    # também é métrica: quando parte da janela não é comparável, diga.
+    legado = 0
     for r in hor:
-        for k, v in ((r["p"]["triagem"].get("nao_julgadas") or {})).items():
+        nj = r["p"]["triagem"].get("nao_julgadas") or {}
+        if "_elegiveis" not in nj:
+            legado += 1
+            continue
+        for k, v in nj.items():
             if not k.startswith("_") and isinstance(v, int):
                 mot[k] = mot.get(k, 0) + v
     print(f"   rodadas: {total} · sem nada a julgar: {vazias} ({100*vazias/total:.0f}%)")
+    if legado:
+        print(f"   ⚠️  {legado} de {total} rodadas são ANTERIORES à correção de 31/07 e não")
+        print("      separam 'teto diário' de 'limite por rodada' — ficaram FORA da soma")
+        print("      abaixo. O diagnóstico só cobre as rodadas comparáveis.")
+    if not mot:
+        print("   nenhuma rodada comparável ainda — volte depois da próxima rodada.")
+        return
     print("   por que as frentes NÃO foram julgadas (somado):")
     for k, v in sorted(mot.items(), key=lambda kv: -kv[1]):
         print(f"      {k:<22} {v}")
     print(f"\n   REGRA: rodada vazia é BARATA (só SQL) — vazio não é desperdício.")
+    # DOIS gargalos diferentes, DUAS decisões diferentes. Até 31/07 os dois
+    # vinham somados em `cortada_pelo_teto` e este bloco mandava "ver bloco 1"
+    # (teto diário) mesmo quando o que barrou foi a fatia da rodada — subir o
+    # teto não teria movido o número. Diagnóstico que aponta o parâmetro errado
+    # é pior que nenhum: dá a sensação de ter medido.
+    por_teto = mot.get("cortada_pelo_teto", 0)
+    por_rodada = mot.get("cortada_pelo_limite_rodada", 0)
     if total and vazias / total > 0.8:
         print(f"   {AMARELO} >80% vazias. Não custa, mas 14 disparos/dia pra 2 úteis sugere")
         print("      espaçar (de 2 em 2h) sem perder nada. Decisão de elegância, não de custo.")
-    elif mot.get("cortada_pelo_teto", 0) > 0:
-        print(f"   {VERMELHO} {mot['cortada_pelo_teto']} frente(s) ficaram de fora POR TETO —")
-        print("      isso é julgamento que deixou de acontecer. Ver bloco 1.")
-    else:
+    if por_teto:
+        print(f"   {VERMELHO} {por_teto} frente(s) ficaram de fora POR TETO DIÁRIO —")
+        print(f"      o orçamento do dia ({TETO_DIARIO}) acabou antes da janela. É julgamento")
+        print("      que não aconteceu no dia. AÇÃO: subir TETO_DIARIO. Ver bloco 1.")
+    if por_rodada:
+        print(f"   {AMARELO} {por_rodada} frente(s) esperaram a PRÓXIMA RODADA —")
+        print(f"      a fatia por rodada ({MAX_POR_RODADA}) encheu, mas o orçamento do dia tinha folga.")
+        print("      Não é julgamento perdido, é ADIADO ~1h: aparece como atraso no bloco 4,")
+        print("      não como buraco. AÇÃO (só se o bloco 4 estiver fora do alvo):")
+        print("      subir MAX_POR_RODADA — mexer no TETO_DIARIO aqui não muda nada.")
+    if not (por_teto or por_rodada) and not (total and vazias / total > 0.8):
         print(f"   {VERDE} a triagem está separando sinal de silêncio sem estourar nada.")
 
 
@@ -198,8 +230,10 @@ def bloco_divergencia(runs: list[dict]) -> None:
 def bloco_ajustes() -> None:
     _h("6. AJUSTES — o que faz disto um ciclo, e não um relatório")
     print(f"   Parâmetros hoje:  DEBOUNCE_MIN={DEBOUNCE_MIN} · TETO_DIARIO={TETO_DIARIO} · "
-          f"janela {HORA_INICIO}-{HORA_FIM}h BRT")
-    print("   Todos foram CHUTE fundamentado em 31/07, não medição.")
+          f"MAX_POR_RODADA={MAX_POR_RODADA} · janela {HORA_INICIO}-{HORA_FIM}h BRT")
+    print("   Histórico: os 3 primeiros nasceram CHUTE em 31/07. Na noite do mesmo dia,")
+    print("   TETO_DIARIO 18→28 e MAX_POR_RODADA 3→5 pelo 1º dia de dados (ver backlog).")
+    print("   DEBOUNCE_MIN=90 segue sendo o único nunca revisado por medição.")
     print("\n   Ao mexer em qualquer um, registre no `project_dev_backlog` em UMA linha:")
     print("      data · parâmetro · de → para · o número que motivou · o que se espera")
     print("   Sem isso não dá pra saber se o ajuste SEGUINTE melhorou ou piorou — foi")
