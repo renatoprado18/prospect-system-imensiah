@@ -50,7 +50,18 @@ _ESTADO_TIPO = "estado_cos"  # #4: nota de estado durável, UMA por projeto (UPS
 # PROCESSO fora da busca (ver _MEMORY_TITLE_DENYLIST) o custo por frente cai
 # mesmo subindo o corte.
 _MEM_CHARS = 2500
-_NOTE_CHARS = 500
+# 2500, era 500. Medido em 30/07: das 58 notas que a camada de fato lê (3 mais
+# recentes × frentes ativas), **42 eram cortadas em 500 — 72%**. Não é borda, é
+# a regra. O caso que provou: a nota #123 da FAAP tem 708 chars e a data de
+# início das aulas ("17/08") ficava 40 caracteres DEPOIS do corte; a camada
+# reportou honestamente "dado incompleto, não posso afirmar" sobre uma
+# informação que estava no mesmo campo, quatro palavras adiante.
+# Com 2500 sobram 12 cortadas (as notas-documento, de 4k a 19k chars — essas
+# são longas por natureza e truncar é correto). Alinhado com _MEM_CHARS pelo
+# mesmo raciocínio de 28/07. Custo medido: ~1,5k tokens a mais por frente,
+# ~US$0,13/dia no lote de 29 — o preço de a camada parar de decidir sobre 28%
+# de uma nota.
+_NOTE_CHARS = 2500
 
 # Documentos de PROCESSO da sessão, não fato sobre nenhuma frente. Eles casam
 # com qualquer termo (são o log de tudo) e por isso apareciam em TODA frente:
@@ -105,6 +116,7 @@ Para a frente, decida:
 - **nota**: honestidade — se uma task está alarmista/desatualizada, se há spam/ruído a ignorar, se algo está driftando. Vazio se nada.
 
 Regras duras:
+- **PARTICIPANTE COMPARTILHADO — não atribua a esta frente o assunto de outra.** Quem aparece marcado com "⚠️ TAMBÉM participa de" conversa com o Renato sobre VÁRIOS assuntos, e a DM dele chega aqui inteira. Uma mensagem dessa pessoa só é evidência DESTA frente se ela **menciona o objeto desta frente**. Se falar de dinheiro, prazo ou entrega de outro tema, **ignore e diga na `nota` que ignorou** — nunca registre como movimento daqui. Na dúvida sobre a qual frente uma mensagem pertence, ela NÃO é movimento desta.
 - **TAREFA PARQUEADA NÃO É PORTÃO.** Uma task marcada `[PARQUEADA]` foi tirada do radar deliberadamente pelo Renato (ou está na janela normal de espera por um terceiro). Ela **não conta como atrasada**, **não vira `precisa_de_voce`** e **não se cobra** — mesmo que a data de vencimento já tenha passado, que é o normal nesse estado. Só `[ATRASADA]` é atraso de verdade. Se o parqueio parecer errado (o terceiro já respondeu, o motivo caiu), diga isso na `nota` em vez de abrir portão.
 - **HIERARQUIA DAS FONTES.** Se o bloco "MEMÓRIA / DECISÕES REGISTRADAS" contradisser qualquer outra coisa (nota da frente, task, mensagem), **a MEMÓRIA vence** — ela é o registro durável, revisado e corrigido pelo Renato; nota e task são o rascunho do dia e envelhecem sem que ninguém volte pra consertar. Quando houver contradição, use o que diz a MEMÓRIA **e registre a divergência no campo `nota`**, nomeando o que contradiz (ex.: "a nota de 27/07 trata o Orestes como sócio; o memo diz que ele só financia — nota desatualizada").
 - Prioridade no INTEL: número MAIOR = mais importante (8-10 gate estratégico; 1-3 baixa).
@@ -238,10 +250,21 @@ def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int],
               AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
               AND (cv.contact_id = ANY(%s) OR l.project_id = %s)
               AND NOT (cv.contact_id = ANY(%s))
+              -- mesmo filtro anti-vazamento do bloco de DMs: outbound que o
+              -- roteador atribuiu EXCLUSIVAMENTE a outra frente não é prova de
+              -- ação NESTA. Sem isto, "já mandei o e-mail" de uma frente fecha
+              -- o portão de outra — e este bloco é justamente o que a REGRA DE
+              -- OUTBOUND usa pra decidir não cobrar.
+              AND (
+                    EXISTS (SELECT 1 FROM message_project_links le
+                             WHERE le.message_id = m.id AND le.project_id = %s)
+                 OR NOT EXISTS (SELECT 1 FROM message_project_links lo
+                                 WHERE lo.message_id = m.id AND lo.project_id > 0)
+              )
             ORDER BY ts DESC
             LIMIT %s
         """, (project_id, _OUTBOUND_DAYS, member_ids or [0], project_id,
-              owner_ids or [0], _OUTBOUND_LIMIT))
+              owner_ids or [0], project_id, _OUTBOUND_LIMIT))
         rows = [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         # message_project_links (053) pode não existir — degrada gracioso.
@@ -278,15 +301,45 @@ def _gather_frente(cursor, project_id: int,
     """, (project_id,))
     tasks = [dict(r) for r in cursor.fetchall()]
 
+    # `outras_frentes` existe pra o prompt AVISAR que o participante é compartilhado.
+    # Sem isso o modelo adivinha: em 30/07 ele separou certo na #20 ("as conversas
+    # Renato–Orestes são sobre Phisalia, não têm relação com esta frente") e errou
+    # na #38, com o MESMO contato. Não é falta de capacidade, é falta de rótulo.
     cursor.execute("""
-        SELECT pm.contact_id, c.nome, pm.papel
+        SELECT pm.contact_id, c.nome, pm.papel,
+               COALESCE((
+                   SELECT string_agg(p2.nome, ' · ' ORDER BY p2.nome)
+                   FROM project_members pm2
+                   JOIN projects p2 ON p2.id = pm2.project_id
+                   WHERE pm2.contact_id = pm.contact_id
+                     AND pm2.project_id <> %s
+                     AND p2.status = 'ativo'
+               ), '') AS outras_frentes
         FROM project_members pm JOIN contacts c ON c.id = pm.contact_id
         WHERE pm.project_id = %s
-    """, (project_id,))
+    """, (project_id, project_id))
     members = [dict(r) for r in cursor.fetchall()]
 
     # DMs recentes dos membros (fonte de sinal das frentes SEM grupo). Espelha
     # o smart_update: agrupa por contato, janela _DM_DAYS, corta mensagem curta.
+    #
+    # ⚠️ FILTRO ANTI-VAZAMENTO ENTRE FRENTES (30/07). Puxar TODA a conversa de
+    # cada membro faz quem participa de várias frentes carregar tudo o que disse
+    # para todas elas. Provado no mesmo dia: a nota que a camada escreveu no
+    # projeto #38 (FAAP) registrava como movimento da FAAP o pagamento de R$5.000
+    # do título do Paulistano do FILHO (projeto #49) — porque o Orestes é membro
+    # dos dois. Alcance medido: 15 das 31 frentes ativas têm membro compartilhado.
+    #
+    # O conserto NÃO adivinha: usa o rótulo que o roteador JÁ produziu. Duas das
+    # quatro mensagens vazadas (25826, 25827 — as que carregam "título do DAP" e
+    # os dados bancários) já estavam ligadas ao #49 em `message_project_links`, e
+    # a camada as exibiu no #38 mesmo assim, sem nunca consultar a etiqueta.
+    #
+    # Regra: mensagem entra se está ligada A ESTA frente, OU se não está ligada a
+    # frente nenhuma. Sai só quando o roteador a atribuiu EXCLUSIVAMENTE a outra —
+    # aí não é palpite meu, é uma decisão que já foi tomada e conferida por LLM.
+    # Mensagem sem link segue entrando (a maioria não tem link); para essas, quem
+    # protege é o aviso de participante compartilhado no prompt.
     dms: List[Dict[str, Any]] = []
     member_ids = [m["contact_id"] for m in members if m.get("contact_id")]
     if member_ids:
@@ -305,9 +358,15 @@ def _gather_frente(cursor, project_id: int,
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
               AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
               AND NOT (cv.contact_id = ANY(%s))
+              AND (
+                    EXISTS (SELECT 1 FROM message_project_links le
+                             WHERE le.message_id = m.id AND le.project_id = %s)
+                 OR NOT EXISTS (SELECT 1 FROM message_project_links lo
+                                 WHERE lo.message_id = m.id AND lo.project_id > 0)
+              )
             ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
             LIMIT 40
-        """, (member_ids, _DM_DAYS, owner_ids or [0]))
+        """, (member_ids, _DM_DAYS, owner_ids or [0], project_id))
         dms = [dict(r) for r in cursor.fetchall()]
 
     # Mensagens ROTEADAS por conteúdo (roteador B) — de QUALQUER um, membro ou não.
@@ -416,7 +475,16 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
     parts = [f"FRENTE: {p['nome']}", f"DESCRIÇÃO: {(p.get('descricao') or '')[:400]}", f"HOJE: {today}"]
 
     if g["members"]:
-        parts.append("PARTICIPANTES: " + ", ".join(f"{m['nome']} ({m.get('papel') or 'membro'})" for m in g["members"]))
+        # Participante compartilhado vem MARCADO. A DM dele traz assunto de todas
+        # as frentes em que ele está, e sem o aviso o modelo atribui a esta.
+        linhas = []
+        for m in g["members"]:
+            base = f"{m['nome']} ({m.get('papel') or 'membro'})"
+            outras = (m.get("outras_frentes") or "").strip()
+            if outras:
+                base += f"  ⚠️ TAMBÉM participa de: {outras}"
+            linhas.append(base)
+        parts.append("PARTICIPANTES:\n- " + "\n- ".join(linhas))
 
     if g["tasks"]:
         parts.append("\nTAREFAS ABERTAS:")

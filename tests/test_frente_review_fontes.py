@@ -111,10 +111,16 @@ def test_conteudo_cortado_avisa_que_foi_cortado():
 
 
 def test_nota_tambem_avisa_o_corte():
+    """A nota longa é cortada E o corte é ANUNCIADO ao modelo — a intenção
+    original deste teste. O valor mudou de 500 para 2500 em 30/07 (medido: 500
+    truncava 72% das notas lidas e escondeu a data das aulas da FAAP por 40
+    caracteres); a asserção passa a ler a constante em vez de fixá-la, pra
+    proteger o comportamento sem congelar o número."""
     txt = fr._fmt_gather(gather(
-        notes=[{"titulo": "n", "conteudo": "w" * 2000, "criado_em": "2026-07-28"}]))
+        notes=[{"titulo": "n", "conteudo": "w" * (fr._NOTE_CHARS + 500),
+                "criado_em": "2026-07-28"}]))
     assert "[…truncado]" in txt
-    assert txt.count("w") == fr._NOTE_CHARS == 500
+    assert txt.count("w") == fr._NOTE_CHARS
 
 
 # ==================== documentos de processo ====================
