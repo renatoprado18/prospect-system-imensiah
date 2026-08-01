@@ -2724,7 +2724,17 @@ async def fix_whatsapp_contact(request: Request):
     Body:
     - phone: Phone number (last 8 digits used for matching)
     - correct_contact_id: The correct contact ID to link messages to
+
+    Fechado em 31/07/2026. Era anonimo e faz UPDATE em lote do dono de
+    mensagem: com dois numeros no corpo do POST, qualquer um movia a conversa
+    de um contato pra outro em producao. Nasceu como ferramenta de ops (commit
+    36c1510, "Add fix-contact endpoint to reassign messages") e nunca ganhou
+    consumidor — grep em templates/static nao acha nenhum. Ficou em vez de ser
+    removido porque tem uso real a vista: as fichas #19214 e #18476 sao a mesma
+    Daniela e vao precisar exatamente disto no merge.
     """
+    require_scaffold_auth(request)
+
     body = await request.json()
     phone = body.get('phone', '')
     correct_contact_id = body.get('correct_contact_id')
@@ -16308,11 +16318,17 @@ async def test_tasks_sync(request: Request):
 
 
 @app.get("/api/tasks/test-list")
-async def test_list_tasks():
+async def test_list_tasks(request: Request):
     """
-    Endpoint para testar listagem de tasks (sem auth).
-    Mostra as tarefas do banco de dados.
+    Endpoint de teste pra listagem de tasks. Mostra as tarefas do banco.
+
+    Fechado em 31/07/2026. Ficou de fora da leva de 30/07 porque aquele escopo
+    era ESCRITA, e este so le — mas ler 30 tasks anonimamente entrega titulo,
+    projeto e prazo do usuario pra quem chamar a URL. Vizinho do
+    `/api/tasks/sync/test`, fechado no mesmo commit, e sem consumidor no repo.
     """
+    require_scaffold_auth(request)
+
     with get_db() as conn:
         cursor = conn.cursor()
 

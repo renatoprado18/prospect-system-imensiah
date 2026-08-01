@@ -43,6 +43,10 @@ ROTAS_FECHADAS = [
     ("POST", "/api/intel-chat/synthesize-now"),             # Anthropic + INSERT system_memories
     ("POST", "/api/veiculos/seed-prado"),                   # seed sem idempotencia
     ("POST", "/api/oficinas/seed"),                         # seed sem idempotencia
+    # 31/07/2026 — a leva de 30/07 fechou ESCRITA; estas duas ficaram de fora e
+    # nao deviam ter ficado.
+    ("GET", "/api/tasks/test-list"),                        # despejava 30 tasks anonimamente
+    ("POST", "/api/whatsapp/fix-contact"),                  # UPDATE em lote do dono da mensagem
 ]
 
 # Nomes que contam como verificacao de auth no corpo de um handler.
@@ -181,14 +185,17 @@ ANDAIME_ANONIMO_OK = {
     "/rap/contacts/cleanup",
 }
 
-# NAO e "ok" — e vazamento de leitura conhecido e fora do escopo do fix de
-# 30/07/2026, que fechou ESCRITA/disparo. Registrado aqui pra o guard medir a
-# classe certa sem fingir que o problema nao existe: `/api/tasks/test-list`
-# despeja 30 tasks (titulo, status, vencimento) pra qualquer um. Fechar exige
-# decidir junto o resto da superficie de leitura anonima do single-tenant.
-ANDAIME_LEITURA_EXPOSTA = {
-    "/api/tasks/test-list",
-}
+# Vazamento de LEITURA conhecido e ainda aberto. Fica separado do
+# ANDAIME_ANONIMO_OK de proposito: aquele diz "pode ser anonimo", este diz "nao
+# deveria, mas ainda e" — e o guard nao pode dar OK calado pra nenhum dos dois.
+#
+# 31/07/2026: esvaziado. `/api/tasks/test-list` (unico morador, despejava 30
+# tasks com titulo/status/vencimento pra qualquer um) foi fechado com
+# require_scaffold_auth e entrou em ROTAS_FECHADAS. Manter a rota aqui depois
+# de fechada faria a lista mentir na direcao mais perigosa: dizer que ha divida
+# onde nao ha mais, e reservar uma isencao pronta pra proxima rota que alguem
+# quisesse deixar aberta.
+ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 
 
 def _rotas_de_main():
