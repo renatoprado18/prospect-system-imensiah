@@ -162,6 +162,11 @@ _SCHEDULER_JOBS = [
     # (mídia Evolution expira → janela 3 dias). Endpoint roda no Vercel (token
     # Google). Ver services/wa_drive_archive.py.
     ("wa-drive-archive", "/api/cron/wa-drive-archive?limit=25", CronTrigger(minute="*/20")),
+    # 31/07/26 — retencao da telemetria. Medido naquele dia: 69% do banco (274
+    # de 397 MB) era webhook_audit + cron_runs + cron_heartbeats, sem nenhuma
+    # politica desde a criacao. 1x/dia as 4h UTC (madrugada BRT) porque a
+    # primeira passada apaga ~59k linhas e nao ha razao de competir com o dia.
+    ("prune-telemetry", "/api/cron/prune-telemetry", CronTrigger(hour=4, minute=40)),
     # 15/06/26 KILL SWITCH ARQUITETURA — TODOS jobs CoS proativos desligados.
     # Motivo: 11 agentes LLM rodando em cron geravam 8+ proposals/dia, conflito
     # de propostas, alucinacoes de tools, defesa em recuo. Em rebuild estrutural

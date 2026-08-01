@@ -28643,6 +28643,34 @@ async def cron_wa_catchup(request: Request, hours: int = 2):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/cron/prune-telemetry")
+@track_cron_run
+async def cron_prune_telemetry(request: Request, dias: int = 30, dry_run: bool = False):
+    """Retencao da telemetria: webhook_audit, cron_runs e cron_heartbeats.
+
+    Why (medido 31/07/2026): o banco tinha 397 MB e 69% disso era telemetria —
+    `webhook_audit` sozinha ocupava 218 MB (55% do banco), crescendo ~2.059
+    linhas/dia desde sempre sem nenhuma politica de retencao. O negocio inteiro
+    cabia em 65 MB.
+
+    A poda NAO e uniforme, e e esse o cuidado: `cron_runs` mantem as linhas
+    (14 jobs tinham a ultima execucao com sucesso ja alem de 30 dias, e o
+    monitor os declararia "nunca disparou") e `cron_heartbeats` preserva o
+    ultimo batimento de cada job. Ver services/telemetry_retention.py.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.telemetry_retention import podar
+
+    try:
+        result = podar(dias=dias, dry_run=dry_run)
+        return {"job": "prune-telemetry", **result}
+    except Exception as e:
+        logging.error(f"prune-telemetry failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/admin/scheduled-actions", response_class=HTMLResponse)
 async def admin_scheduled_actions_page(request: Request):
     """UI admin: timeline de acoes agendadas (pending/sent/failed/cancelled)."""
@@ -29007,6 +29035,12 @@ async def _editorial_metrics_reminder_impl():
 # do agendador) e cron_runs preenche o vazio. Nenhuma das duas tem purga.
 _CRON_NEVER_FIRED_GRACE_MIN = 60.0     # piso de folga (drift/reboot do worker)
 _CRON_NEVER_FIRED_GRACE_RATIO = 0.25   # folga proporcional ao intervalo
+# Taxa de erro que vira alerta (24h). 20% porque abaixo disso a maioria dos
+# jobs deste sistema vive em regime normal — medido em 31/07: o pior em 24h
+# era `wa-drive-archive` com 4%. Piso de execucoes pra nao alarmar por 1 erro
+# em 2 runs de um job raro.
+_CRON_ERROR_RATE_ALERT = 0.20
+_CRON_ERROR_MIN_RUNS = 5
 
 
 def _cron_as_utc(dt):
@@ -29215,6 +29249,37 @@ async def cron_monitor_cron_health(request: Request):
                 (runs_lookback_min,),
             )
             run_rows = cursor.fetchall()
+
+            # 31/07/26 — TAXA DE ERRO. Ate aqui este monitor so perguntava
+            # "rodou?", nunca "deu certo?". Um job podia errar indefinidamente
+            # sem que nada avisasse: `track_cron_run` ja marca status='error'
+            # quando o handler devolve 200 com erro embutido (cron_telemetry.py
+            # :283), e o `capability_registry` ate agrega a taxa — mas nada
+            # disso ALERTA, e a agregacao so aparece se alguem abrir a rota de
+            # dev. Medido em 31/07: `wa-catchup` acumulou 36 execucoes com erro
+            # em 7 dias (10,7%) sem nunca ter gerado um aviso.
+            #
+            # Janela de 24h com piso de 5 execucoes: o piso evita alarme por 1
+            # erro em 2 runs de job raro, e a janela curta e proposital porque
+            # estes erros vem em BURST (o mesmo wa-catchup estava em 0% nas 24h
+            # anteriores a esta medicao) — media de 7 dias diluiria o surto ate
+            # ele sumir.
+            cursor.execute(
+                """
+                SELECT regexp_replace(path, '^/api/cron/([^?]+).*$', '\\1') AS job_id,
+                       COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE status IN ('error','timeout')) AS ruins
+                FROM cron_runs
+                WHERE started_at > NOW() - INTERVAL '24 hours'
+                  AND path LIKE '/api/cron/%%'
+                GROUP BY 1
+                HAVING COUNT(*) >= %s
+                """,
+                (_CRON_ERROR_MIN_RUNS,),
+            )
+            error_rates = {
+                r["job_id"]: (r["ruins"], r["total"]) for r in cursor.fetchall()
+            }
     except Exception as e:
         logging.exception(f"monitor-cron-health: DB query failed: {e}")
         raise HTTPException(status_code=500, detail=f"db_error: {e}")
@@ -29294,6 +29359,22 @@ async def cron_monitor_cron_health(request: Request):
             entry["waiting_min"] = verdict.get("waiting_min")
             entry["window_min"] = verdict.get("window_min")
             entry["observed_since"] = verdict.get("observed_since")
+        # Taxa de erro entra no entry SEMPRE que ha volume, mesmo sem alerta —
+        # e o numero que responde "deu certo?", e ele so e util se estiver
+        # visivel antes de virar problema.
+        _ruins, _tot = error_rates.get(job_id, (0, 0))
+        if _tot:
+            entry["runs_24h"] = _tot
+            entry["error_rate_24h"] = round(_ruins / _tot, 3)
+            if _ruins and (_ruins / _tot) >= _CRON_ERROR_RATE_ALERT:
+                alerts.append({
+                    "job_id": job_id,
+                    "reason": "error_rate",
+                    "error_rate_24h": round(_ruins / _tot, 3),
+                    "runs_24h": _tot,
+                    "failed_24h": _ruins,
+                })
+
         jobs_status.append(entry)
 
         if status == "stale":
@@ -29361,6 +29442,14 @@ async def cron_monitor_cron_health(request: Request):
                 lines.append(
                     f"- {a['job_id']}: nunca disparou em {_wait} de observacao "
                     f"(esperado a cada {a['expected_interval_min']}min)"
+                )
+            elif a["reason"] == "error_rate":
+                # Precisa vir ANTES do else: o ramo de baixo assume as chaves de
+                # `gap_exceeds_2x` (gap_min/expected_interval_min), que este
+                # alerta nao tem — cair la seria KeyError dentro do notificador.
+                lines.append(
+                    f"- {a['job_id']}: {a['failed_24h']} de {a['runs_24h']} execucoes "
+                    f"falharam em 24h ({a['error_rate_24h']*100:.0f}%) — rodou, mas deu errado"
                 )
             else:
                 lines.append(
