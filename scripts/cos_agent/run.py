@@ -87,6 +87,14 @@ TETO_DIARIO = 28
 # 3→5 porque nenhuma rodada do dia passou de 6 elegíveis: com 5 o atraso some
 # quase todo, e o que sobra a rodada seguinte pega 1h depois.
 MAX_POR_RODADA = 5
+# RE-JULGAMENTO POR IDADE (01/08) — o 2º gatilho da triagem. Sem ele, frente
+# parada nunca voltava ao agente, e frente parada é a que gera portão de
+# cobrança. Só entra se sobrar espaço na rodada DEPOIS das com movimento: é
+# preenchimento de folga, não competição. Com o consumo em ~36% do teto, cabe.
+# Quem está no portão tem prazo menor porque o custo de errar é maior — cobrar
+# alguém que já respondeu gasta credibilidade com terceiro, não só tempo.
+REJULGA_APOS_H = 10        # frente comum: uma vez por dia útil de janela
+REJULGA_PORTAO_H = 4       # no portão: reconfere ~3x ao longo do dia
 # JANELA — julgar às 3 da manhã não serve a ninguém e gasta igual.
 HORA_INICIO, HORA_FIM = 7, 21   # BRT
 
@@ -460,6 +468,70 @@ def main() -> int:
         else:
             motivos["cortada_pelo_limite_rodada"] = excedente
         alvo = alvo[:cabe]
+
+        # --- 2º GATILHO: IDADE (01/08) ------------------------------------
+        # Até aqui só MOVIMENTO mandava frente ao agente, e isso deixava um
+        # buraco exatamente onde mais dói: a frente PARADA nunca era re-julgada.
+        # Só que portão de cobrança ("ninguém respondeu, cobre") nasce justamente
+        # de frente parada — então o julgamento mais arriscado do sistema era o
+        # único que envelhecia sem ninguém conferir.
+        #
+        # Caso que provou (01/08): a #50 pedia "mandar o FUP pro Amirilian
+        # agora". O FUP tinha sido enviado em 28/07 11:15, o Renato insistiu em
+        # 31/07 14:19, o Eduardo respondeu às 15:14 que NÃO levou ao conselho e
+        # o Renato encerrou às 17:42. Nada disso chegou ao portão: sem
+        # movimento contado, a frente nunca voltou ao agente e o julgamento
+        # velho seguiu sendo servido como se fosse de hoje.
+        #
+        # Quem está NO PORTÃO tem prazo menor de propósito: pedir algo ao
+        # Renato cria a obrigação de reconferir que o pedido ainda faz sentido.
+        if len(alvo) < cabe:
+            no_portao = {p.get("project_id")
+                         for p in ((anterior.get("placar") or {}).get("hoje") or [])}
+            ja_no_alvo = {f["id"] for f in alvo}
+            velhas = []
+            for f in todas:
+                if f["id"] in ja_no_alvo:
+                    continue
+                ts = ultimos.get(f["id"])
+                # Rank 0 = está NO PORTÃO. Vem antes de tudo, inclusive de
+                # frente nunca julgada com prioridade maior: o portão é o que o
+                # Renato lê e executa, então é onde um julgamento velho vira
+                # ação errada. (Primeira versão deste bloco empatava os dois
+                # ranks e a #44 — no portão, prioridade 7 — perdia lugar pra
+                # três frentes de prioridade 8 que ninguém estava lendo.)
+                if f["id"] in no_portao:
+                    idade = 1e9 if not ts else None
+                    if ts:
+                        try:
+                            idade = (agora - datetime.fromisoformat(
+                                ts.replace("Z", "+00:00"))).total_seconds() / 3600
+                        except ValueError:
+                            idade = 1e9
+                    if idade >= REJULGA_PORTAO_H:
+                        velhas.append((0, -(f["prioridade"] or 0), f, idade))
+                    continue
+                if not ts:
+                    # Nunca julgada por este motor (herdada da API): julgamento
+                    # sem dono, mas fora do portão ninguém age sobre ele agora.
+                    velhas.append((1, -(f["prioridade"] or 0), f, 1e9))
+                    continue
+                try:
+                    quando = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                horas = (agora - quando).total_seconds() / 3600
+                if horas >= REJULGA_APOS_H:
+                    velhas.append((2, -(f["prioridade"] or 0), f, horas))
+            # portão → nunca julgada → velha; dentro de cada, prioridade e idade
+            velhas.sort(key=lambda x: (x[0], x[1], -x[3]))
+            escolhidas = [v[2] for v in velhas[: cabe - len(alvo)]]
+            alvo += escolhidas
+            motivos["rejulgada_por_idade"] = len(escolhidas)
+            motivos["_idade_ids"] = [f["id"] for f in escolhidas]
+        else:
+            motivos["rejulgada_por_idade"] = 0
+
         motivos["_debounce_ids"] = barradas_debounce
         motivos["_teto_usado"] = f"{ja_hoje}/{TETO_DIARIO}"
         motivos["_elegiveis"] = elegiveis
