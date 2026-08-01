@@ -66,8 +66,11 @@ O banco local é cópia do remoto. Para atualizar: `./dev.sh sync`
 
 ## Deploy
 
-- **Automático**: `git push origin main` → Vercel detecta → deploy em ~2min
-- **Domínio**: intel.almeida-prado.com
+- **Plataforma: Railway**, não Vercel (corrigido 31/07/26 — esta seção dizia Vercel e induziu pelo menos uma análise a uma conclusão errada). `intel.almeida-prado.com` responde `server: railway-hikari`.
+- **Automático**: `git push origin main` → Railway deploya em ~30-45s (medido 3× em 31/07: rotas novas, endpoint novo e job novo no worker do scheduler).
+- **Serviços Railway** (projeto `intel`): `intel-api` (o app, `main.py`) · `prospect-system-imensiah` (Worker, dispara os 52 crons) · `tonia` (bot WhatsApp + cockpit) · `claude-code-delegator`.
+- **Sempre validar pelo EFEITO** — uma chave nova na resposta, um número que muda. Nunca por `/health` 200: ele responde do container antigo. Ver [[reference_railway_deploy_intel_api]].
+- **Domínio**: intel.almeida-prado.com · ConselhoOS é outro sistema (Vercel, `conselho.almeida-prado.com`, banco Neon separado em sa-east).
 
 ## Gotchas
 
