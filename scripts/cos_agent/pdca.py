@@ -36,6 +36,10 @@ from run import (_conn, DEBOUNCE_MIN, TETO_DIARIO, MAX_POR_RODADA,  # noqa: E402
                  HORA_INICIO, HORA_FIM)
 
 VERDE, AMARELO, VERMELHO = "🟢", "🟡", "🔴"
+# A janela do agente e definida em BRT (HORA_INICIO/HORA_FIM), entao "mesmo dia"
+# tem que ser medido em BRT — em UTC a virada cai as 21h locais e cortaria a
+# ultima rodada do dia pro lado errado.
+BRT = timezone(timedelta(hours=-3))
 
 
 def _h(titulo: str) -> None:
@@ -184,10 +188,27 @@ def bloco_frescor(runs: list[dict]) -> None:
             ts = (f.get("_meta") or {}).get("julgado_em")
             if ts and not (f.get("_meta") or {}).get("herdado"):
                 julg.setdefault(f["project_id"], set()).add(ts)
-    gaps = []
+    # Gap que ATRAVESSA a madrugada nao mede atraso do sistema, mede a janela
+    # 7-21h funcionando. Sem separar, o KPI ficava vermelho todo dia por
+    # construcao: em 01/08, 10 dos 14 intervalos cruzavam a noite e puxavam a
+    # mediana de 2,1h pra 18,0h — o mesmo numero que no dia anterior estava
+    # verde, so porque ali ainda nao havia virada de dia na amostra. Um KPI que
+    # piora sozinho as 21h manda mexer em parametro que nao tem culpa (foi
+    # exatamente o erro de rotulo que o bloco 2 passou a evitar em 31/07).
+    gaps, gaps_noite = [], []
     for pid, ts in julg.items():
         marcos = sorted(datetime.fromisoformat(t.replace("Z", "+00:00")) for t in ts)
-        gaps += [(b - a).total_seconds() / 3600 for a, b in zip(marcos, marcos[1:])]
+        for a, b in zip(marcos, marcos[1:]):
+            h = (b - a).total_seconds() / 3600
+            if a.astimezone(BRT).date() != b.astimezone(BRT).date():
+                gaps_noite.append(h)
+            else:
+                gaps.append(h)
+    if not gaps and gaps_noite:
+        print(f"\n   {len(gaps_noite)} intervalo(s) medidos, TODOS atravessando a madrugada")
+        print("   (janela 7-21h). Nao da pra falar de frescor com isso — volte depois")
+        print("   de duas rodadas do mesmo dia.")
+        return
     if not gaps:
         print("\n   ainda não há dois julgamentos da mesma frente pra comparar.")
         print("   BASELINE conhecido: 1×/dia = até 24h de idade. Em 31/07 a resposta")
@@ -195,7 +216,11 @@ def bloco_frescor(runs: list[dict]) -> None:
         return
     gaps.sort()
     med = gaps[len(gaps) // 2]
-    print(f"\n   intervalos medidos: {len(gaps)} · mediana {med:.1f}h · pior {max(gaps):.1f}h")
+    print(f"\n   intervalos DENTRO do mesmo dia: {len(gaps)} · mediana {med:.1f}h · pior {max(gaps):.1f}h")
+    if gaps_noite:
+        _n = sorted(gaps_noite)[len(gaps_noite) // 2]
+        print(f"   (+{len(gaps_noite)} atravessando a madrugada, mediana {_n:.1f}h — "
+              f"e a janela 7-21h, nao atraso; fora da conta)")
     print(f"   REGRA: alvo <2h (o portão acompanha o dia). Baseline diário era ~24h.")
     if med <= 2:
         print(f"   {VERDE} o portão está acompanhando o dia.")
