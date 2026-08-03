@@ -200,7 +200,12 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # ─────────────────────────────────────────────────────────────────────────────
 # TETO DE ROTAS MUTANTES SEM AUTH — o que impede a divida de crescer.
 #
-# Medido em 03/08/2026 com `_rotas_de_main` (que tambem reconhece comparacao
+# 03/08/2026 (2a leva): 193 -> 64. Fechadas 129 rotas SEM CONSUMIDOR no
+# repo, com `dependencies=[Depends(require_scaffold_auth)]` no decorator.
+# As 64 restantes tem consumidor (majoritariamente frontend, que ja carrega
+# o cookie de sessao) e serao fechadas bloco a bloco, validando a tela.
+#
+# Medicao original com `_rotas_de_main` (que tambem reconhece comparacao
 # manual de segredo, entao e mais preciso que um grep): **193** rotas
 # POST/PUT/PATCH/DELETE sem NENHUMA verificacao, de 368 mutantes. Em 30/07 o
 # board registrava ~184 — cresceu em quatro dias. Fechar as 193 sem barrar as
@@ -214,7 +219,7 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # e atualize aqui. **Baixar e obrigatorio** — se o teto ficar folgado, ele para
 # de proteger e vira decoracao (foi o que aconteceu com `ANDAIME_LEITURA_EXPOSTA`
 # antes de ser esvaziada). Subir exige decisao explicita e justificativa aqui.
-TETO_MUTANTES_SEM_AUTH = 193
+TETO_MUTANTES_SEM_AUTH = 64
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -241,6 +246,17 @@ def _rotas_de_main():
         if not rotas:
             continue
         tem_auth = False
+        # `dependencies=[Depends(auth)]` NO DECORATOR — forma idiomatica do
+        # FastAPI e a usada no fechamento em massa de 03/08 (129 rotas). Sem
+        # este ramo o teste nao enxergaria nenhuma delas e o teto continuaria
+        # marcando 193 com o trabalho feito: guarda que nao ve o progresso
+        # tambem nao ve a regressao.
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Call) and any(
+                kw.arg == "dependencies" and any(n in ast.dump(kw.value) for n in AUTH_CALLS)
+                for kw in dec.keywords
+            ):
+                tem_auth = True
         # Depends(require_admin) e cia na assinatura
         for default in list(node.args.defaults) + list(node.args.kw_defaults):
             if default is None:
