@@ -68,7 +68,12 @@ PARALELO = 3              # frentes simultâneas
 # rodada. Sem intervalo mínimo, uma tarde de troca com o Piccino re-julgaria a
 # Reorg 8 vezes pra dizer quase a mesma coisa. 90 min deixa a frente respirar
 # sem perder o dia.
-DEBOUNCE_MIN = 90
+# 03/08 — 90 → 60. Medido no 1º PDCA de 7 dias: a frente #5 foi barrada **6×**
+# (ficou quente o dia todo e o portão dela envelheceu justo quando mais andava).
+# 90 min protegia contra repetição, mas cegava a frente mais ativa. Decisão do
+# Renato. Alternativa que o PDCA sugeriu e ele NÃO escolheu: exceção pra
+# prioridade >=8 — fica pro próximo ciclo se 60 não bastar.
+DEBOUNCE_MIN = 60
 # TETO DIÁRIO — o limite real não é dinheiro (no Max não é cobrança), é a
 # CAPACIDADE que o Renato usa pra trabalhar no terminal. Medido: US$1,10
 # nocionais por frente (18 julgamentos = US$19,73 em 31/07, primeiro dia).
@@ -78,7 +83,11 @@ DEBOUNCE_MIN = 90
 # NÃO foi medido — o agente só entrou às 14h. Estourou, a rodada não julga e DIZ
 # quantas frentes ficaram de fora — silenciar seria repetir o teto de WhatsApp
 # que nunca segurou nada.
-TETO_DIARIO = 28
+# 03/08 — 28 → 36. Medido: 01/08 e 02/08 fecharam **100% (28/28)** e **12
+# frentes ficaram sem julgamento por teto**. O dia inteiro ainda não cabia — em
+# 31/07 eu tinha subido de 18 pra 28 sobre meio dia de dados, e o primeiro dia
+# completo mostrou que a folga era menor do que parecia. Decisão do Renato.
+TETO_DIARIO = 36
 # MÁXIMO POR RODADA — quantas frentes uma única rodada pode julgar. Era o
 # literal `3` espalhado pelo código, e em 31/07 ele foi o gargalo REAL: as
 # rodadas de 15h/16h/17h tinham 6, 6 e 5 frentes elegíveis e cortaram 3, 3 e 2 —
