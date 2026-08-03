@@ -23599,7 +23599,7 @@ async def api_editorial_today_clipping():
     }}
 
 
-@app.post("/api/editorial/clipping-reflection")
+@app.post("/api/editorial/clipping-reflection", dependencies=[Depends(require_api_auth)])
 async def api_editorial_clipping_reflection(request: Request):
     """Combina clipping do dia + reflexao do user -> hot_take draft em pending_approval.
 
@@ -23881,7 +23881,7 @@ async def api_editorial_dashboard_tasks():
     return result
 
 
-@app.post("/api/editorial/ai/analyze")
+@app.post("/api/editorial/ai/analyze", dependencies=[Depends(require_api_auth)])
 async def api_editorial_ai_analyze(request: Request):
     """
     Analisa artigos com IA.
@@ -24471,7 +24471,7 @@ class HypothesisCreate2(BaseModel):
     regras: Optional[List[Dict[str, Any]]] = None
 
 
-@app.post("/api/editorial/hypotheses")
+@app.post("/api/editorial/hypotheses", dependencies=[Depends(require_api_auth)])
 async def create_editorial_hypothesis(body: HypothesisCreate2):
     """Cria hipotese editorial ativa (Plan do PDCA)."""
     import json as _json
@@ -24496,7 +24496,7 @@ class HypothesisUpdate2(BaseModel):
     valor_final: Optional[float] = None
 
 
-@app.patch("/api/editorial/hypotheses/{hyp_id}")
+@app.patch("/api/editorial/hypotheses/{hyp_id}", dependencies=[Depends(require_api_auth)])
 async def update_editorial_hypothesis(hyp_id: int, body: HypothesisUpdate2):
     """Encerra/abandona hipotese e grava resultado (Act do PDCA)."""
     sets, params = [], []
@@ -24579,7 +24579,7 @@ async def api_editorial_get(post_id: int):
     return post
 
 
-@app.post("/api/editorial")
+@app.post("/api/editorial", dependencies=[Depends(require_api_auth)])
 async def api_editorial_create(request: Request):
     """Cria novo post editorial"""
     data = await request.json()
@@ -24590,7 +24590,7 @@ async def api_editorial_create(request: Request):
     return {"status": "success", "post": post}
 
 
-@app.put("/api/editorial/{post_id}")
+@app.put("/api/editorial/{post_id}", dependencies=[Depends(require_api_auth)])
 async def api_editorial_update(post_id: int, request: Request):
     """Atualiza post editorial"""
     data = await request.json()
@@ -24600,7 +24600,7 @@ async def api_editorial_update(post_id: int, request: Request):
     return {"status": "success", "post": post}
 
 
-@app.delete("/api/editorial/{post_id}")
+@app.delete("/api/editorial/{post_id}", dependencies=[Depends(require_api_auth)])
 async def api_editorial_delete(post_id: int):
     """Remove post editorial"""
     if delete_editorial_post(post_id):
@@ -24706,7 +24706,7 @@ async def api_auto_select_week(request: Request):
     }
 
 
-@app.post("/api/editorial/approve-week")
+@app.post("/api/editorial/approve-week", dependencies=[Depends(require_api_auth)])
 async def api_approve_week(request: Request):
     """Aprova e agenda os posts da semana selecionados."""
     from services.auto_publisher import schedule_selected_posts
@@ -24783,7 +24783,7 @@ async def api_publish_due():
     return await publish_due_posts()
 
 
-@app.post("/api/editorial/bulk-schedule")
+@app.post("/api/editorial/bulk-schedule", dependencies=[Depends(require_api_auth)])
 async def api_editorial_bulk_schedule(request: Request):
     """
     Agenda multiplos posts em lote com horarios ideais.
@@ -24829,7 +24829,7 @@ async def api_editorial_bulk_schedule(request: Request):
     return {"status": "success", **result}
 
 
-@app.post("/api/editorial/import")
+@app.post("/api/editorial/import", dependencies=[Depends(require_api_auth)])
 async def api_editorial_import(request: Request):
     """Importa artigos do site para o calendario editorial"""
     data = await request.json()

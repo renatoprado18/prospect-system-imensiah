@@ -219,7 +219,7 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # e atualize aqui. **Baixar e obrigatorio** — se o teto ficar folgado, ele para
 # de proteger e vira decoracao (foi o que aconteceu com `ANDAIME_LEITURA_EXPOSTA`
 # antes de ser esvaziada). Subir exige decisao explicita e justificativa aqui.
-TETO_MUTANTES_SEM_AUTH = 64
+TETO_MUTANTES_SEM_AUTH = 54
 # ─────────────────────────────────────────────────────────────────────────────
 
 
