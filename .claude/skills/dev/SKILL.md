@@ -48,9 +48,11 @@ Rodar em paralelo:
 
 ```bash
 cd /Users/rap/prospect-system && git status -sb && git log --oneline -5   # working tree limpo? branch? ultimos commits
+python3 /Users/rap/prospect-system/scripts/verifica_modelo.py --quiet      # o banco ainda bate com o contrato do modelo?
 ```
 
 - **Working tree:** limpo? Se houver mudancas nao-commitadas, investigar de quem sao (outra sessao? — `git diff` antes de qualquer `git add`, ver `feedback_parallel_sessions`).
+- **Conformidade do modelo:** o `verifica_modelo.py` compara o banco com o baseline declarado em `project_modelo_rede_entidades.md` (10 entidades, 3 grupos, 7 decisoes de 03/08). **Divergencia nao e erro — e sinal.** Tabela nova numa entidade, era morta recebendo escrita, total fora do registrado: ou foi decisao (e o memo precisa ser atualizado) ou alguem criou estrutura fora do modelo. **Levar pro bloco "Proximos passos" da Etapa 3.** Verde = seguir. Se o script FALHAR (memo mudou de formato), tratar como bloqueio: sem baseline nao ha verificacao, e um verificador calado certifica conformidade que nunca checou.
 - **Deploy/health:** se a frente tocar prod, checar deploy Railway + health endpoint antes de mexer. Gate Railway / status dos crons se relevante (`/scheduler-status`, cron_runs).
 - **Locks:** conferir no `session_locks.md` se git/deploy/neon estao livres. Se a CoS estiver com algum recurso, respeitar. Se um lock estiver idle >3h, pode retomar deixando nota no Log.
 
