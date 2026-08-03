@@ -297,7 +297,16 @@ Responda APENAS com JSON valido:
                 },
                 json={
                     "model": CLAUDE_MODEL,
-                    "max_tokens": 2000,
+                    # 03/08/26 — 2000 -> 8000. Com 2000 a resposta era CORTADA no
+                    # meio e o JSON nunca fechava. Os 5 contatos da rodada de hoje
+                    # falharam TODOS com "Unterminated string" nos chars 5883,
+                    # 6061, 6101 e 6285 — sempre por volta do limite de 2000
+                    # tokens. O prompt pede varios fatos, entao a saida cresce com
+                    # o historico da pessoa: quem tinha pouco passava, quem tinha
+                    # muito falhava sempre. Parecia aleatorio porque o motivo era
+                    # descartado pelo chamador (ver auto_enrich_priority_contacts).
+                    # So se paga pelos tokens gerados — teto maior nao custa por si.
+                    "max_tokens": 8000,
                     "messages": [
                         {"role": "user", "content": prompt}
                     ]
@@ -732,7 +741,16 @@ Responda APENAS com JSON valido:
                 },
                 json={
                     "model": CLAUDE_MODEL,
-                    "max_tokens": 2000,
+                    # 03/08/26 — 2000 -> 8000. Com 2000 a resposta era CORTADA no
+                    # meio e o JSON nunca fechava. Os 5 contatos da rodada de hoje
+                    # falharam TODOS com "Unterminated string" nos chars 5883,
+                    # 6061, 6101 e 6285 — sempre por volta do limite de 2000
+                    # tokens. O prompt pede varios fatos, entao a saida cresce com
+                    # o historico da pessoa: quem tinha pouco passava, quem tinha
+                    # muito falhava sempre. Parecia aleatorio porque o motivo era
+                    # descartado pelo chamador (ver auto_enrich_priority_contacts).
+                    # So se paga pelos tokens gerados — teto maior nao custa por si.
+                    "max_tokens": 8000,
                     "messages": [
                         {"role": "user", "content": prompt}
                     ]
