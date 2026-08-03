@@ -1194,12 +1194,29 @@ async def auto_enrich_priority_contacts(
     for contact in contacts:
         try:
             result = await enrich_with_context(contact['id'], db_connection)
-            results.append({
+            ok = result.get('status') == 'success'
+            # 03/08/26 — PROPAGAR O MOTIVO DO ERRO.
+            # `enrich_with_context` devolve `error` explicando a falha ("API error:
+            # 500", "Failed to parse AI response: ..."), e ate aqui so o booleano
+            # era guardado: o motivo morria uma linha depois de ser produzido.
+            # O campo `error` do bloco `except` abaixo so cobre EXCECAO — e o
+            # caminho comum e retorno controlado, sem excecao. Resultado medido:
+            # 4 de 5 contatos falhando todo dia desde pelo menos 21/07, sempre os
+            # mesmos, com `error: None` em cron_runs e nenhuma forma de saber por
+            # que. Livelock: quem falha nao atualiza `ultimo_enriquecimento`,
+            # volta ao topo da fila no dia seguinte e ocupa a vaga de novo, entao
+            # ninguem da posicao 6 em diante e alcancado.
+            entrada = {
                 "id": contact['id'],
                 "nome": contact['nome'],
                 "circulo": contact['circulo'],
-                "success": result.get('status') == 'success'
-            })
+                "success": ok,
+            }
+            if not ok:
+                entrada["error"] = result.get('error') or "sem motivo declarado"
+                if result.get('raw_response'):
+                    entrada["raw_response"] = str(result['raw_response'])[:300]
+            results.append(entrada)
         except Exception as e:
             results.append({
                 "id": contact['id'],
