@@ -51,7 +51,7 @@ ROTAS_FECHADAS = [
 
 # Nomes que contam como verificacao de auth no corpo de um handler.
 AUTH_CALLS = {
-    "require_scaffold_auth", "get_current_user", "require_auth", "require_admin",
+    "require_scaffold_auth", "require_api_auth", "get_current_user", "require_auth", "require_admin",
     "require_operador", "verify_cron_auth", "_empresas_require_auth",
     "verify_session_token",
 }

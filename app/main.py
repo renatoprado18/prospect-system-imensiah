@@ -158,6 +158,30 @@ def require_scaffold_auth(request: Request) -> Optional[dict]:
         return None
     return require_admin(request)
 
+
+def require_api_auth(request: Request) -> Optional[dict]:
+    """Fecha rota de PRODUTO: exige usuario logado (qualquer papel) OU maquina.
+
+    POR QUE NAO USAR `require_scaffold_auth` AQUI, e o erro que originou este
+    helper: aquele cai em `require_admin`, que exige `role == "admin"`. Faz
+    sentido pra andaime (seed, trigger manual, chamada por curl), e esta ERRADO
+    pra rota que a interface usa — porque ha DOIS usuarios no sistema:
+    renato@ (admin) e andressa@ (operador). Fechar 129 rotas de produto com o
+    helper de andaime deixaria a Andressa fora de tudo, inclusive de
+    `/api/user/{email}/complete-tutorial`, que o dashboard chama com o nome dela.
+
+    Regra: `require_auth` (sessao valida, qualquer papel) OU X-API-Key. Permissao
+    mais fina — quem pode o que — e assunto de cada rota, nao deste porteiro.
+    Aqui a pergunta e so uma: ha identidade?
+
+    401 e nao 403 sem credencial: sem cookie e sem key nao ha identidade.
+    """
+    api_key = (request.headers.get("X-API-Key", "") or "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if api_key and intel_api_key and api_key == intel_api_key:
+        return None
+    return require_auth(request)
+
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -573,7 +597,7 @@ async def linkedin_status():
     return {"connected": False}
 
 
-@app.post("/api/editorial/{post_id}/publish-linkedin", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/publish-linkedin", dependencies=[Depends(require_api_auth)])
 async def api_publish_to_linkedin(post_id: int):
     """Publish a post directly to LinkedIn"""
     from integrations.linkedin_posting import publish_post
@@ -1083,7 +1107,7 @@ async def get_user(email: str):
 
     return row_to_dict(user)
 
-@app.post("/api/user/{email}/complete-tutorial", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/user/{email}/complete-tutorial", dependencies=[Depends(require_api_auth)])
 async def complete_tutorial(email: str):
     """Marca tutorial como concluído"""
     conn = get_db()
@@ -1449,7 +1473,7 @@ async def list_interactions(prospect_id: int):
     return {"interactions": interactions}
 
 
-@app.post("/api/prospects/{prospect_id}/interactions", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/prospects/{prospect_id}/interactions", dependencies=[Depends(require_api_auth)])
 async def create_interaction(prospect_id: int, interaction: InteractionCreate):
     """Cria nova interação na timeline do prospect"""
     conn = get_db()
@@ -1500,7 +1524,7 @@ async def create_interaction(prospect_id: int, interaction: InteractionCreate):
     return {"id": interaction_id, "status": "created"}
 
 
-@app.put("/api/interactions/{interaction_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/interactions/{interaction_id}", dependencies=[Depends(require_api_auth)])
 async def update_interaction(interaction_id: int, update: InteractionUpdate):
     """Atualiza uma interação existente"""
     conn = get_db()
@@ -1536,7 +1560,7 @@ async def update_interaction(interaction_id: int, update: InteractionUpdate):
     return {"status": "updated"}
 
 
-@app.delete("/api/interactions/{interaction_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/interactions/{interaction_id}", dependencies=[Depends(require_api_auth)])
 async def delete_interaction(interaction_id: int):
     """Remove uma interação"""
     conn = get_db()
@@ -1554,7 +1578,7 @@ async def delete_interaction(interaction_id: int):
     return {"status": "deleted"}
 
 
-@app.post("/api/prospects/{prospect_id}/convert", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/prospects/{prospect_id}/convert", dependencies=[Depends(require_api_auth)])
 async def mark_converted(
     prospect_id: int,
     deal_value: float,
@@ -1785,7 +1809,7 @@ async def submit_feedback(feedback: FeedbackSubmit):
     }
 
 
-@app.post("/api/webhooks/fathom", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/webhooks/fathom", dependencies=[Depends(require_api_auth)])
 async def fathom_webhook(request: Request):
     """Webhook Fathom — event new-meeting-content-ready.
 
@@ -1949,7 +1973,7 @@ async def get_whatsapp_template(template_id: str):
     return template
 
 
-@app.post("/api/whatsapp/templates/{template_id}/preview", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/whatsapp/templates/{template_id}/preview", dependencies=[Depends(require_api_auth)])
 async def preview_template(template_id: str, request: Request):
     """Preview a rendered template without sending"""
     data = await request.json()
@@ -1961,7 +1985,7 @@ async def preview_template(template_id: str, request: Request):
     return {"template_id": template_id, "template_nome": template["nome"], "mensagem_renderizada": rendered}
 
 
-@app.post("/api/whatsapp/send-template", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/whatsapp/send-template", dependencies=[Depends(require_api_auth)])
 async def send_whatsapp_template(request: Request):
     """Send a WhatsApp message using a template"""
     data = await request.json()
@@ -2905,7 +2929,7 @@ async def get_whatsapp_chats():
     return {"chats": formatted, "total": len(formatted)}
 
 
-@app.post("/api/contacts/{contact_id}/extract-facts", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/extract-facts", dependencies=[Depends(require_api_auth)])
 async def extract_contact_facts(contact_id: int):
     """
     Use AI to extract relevant facts from a contact's messages.
@@ -3107,7 +3131,7 @@ async def delete_contact_fact(fact_id: int):
         conn.close()
 
 
-@app.post("/api/contacts/{contact_id}/facts", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/facts", dependencies=[Depends(require_api_auth)])
 async def add_contact_fact(contact_id: int, request: Request):
     """Add a new fact manually"""
     data = await request.json()
@@ -3180,7 +3204,7 @@ class FathomLinkRequest(BaseModel):
     data_interacao: Optional[datetime] = None
 
 
-@app.post("/api/prospects/{prospect_id}/fathom/link", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/prospects/{prospect_id}/fathom/link", dependencies=[Depends(require_api_auth)])
 async def link_fathom_meeting(prospect_id: int, request: FathomLinkRequest):
     """
     Vincula uma reunião do Fathom ao prospect e cria interação na timeline
@@ -3312,7 +3336,7 @@ class RelacionamentoUpdate(BaseModel):
     notas: Optional[str] = None
 
 
-@app.put("/api/prospects/{prospect_id}/linkedin", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/prospects/{prospect_id}/linkedin", dependencies=[Depends(require_api_auth)])
 async def update_prospect_linkedin(prospect_id: int, data: LinkedInUpdate):
     """Atualiza dados do LinkedIn do prospect"""
     conn = get_db()
@@ -3367,7 +3391,7 @@ async def update_prospect_linkedin(prospect_id: int, data: LinkedInUpdate):
     return {"status": "updated", "linkedin_data": linkedin_data}
 
 
-@app.post("/api/prospects/{prospect_id}/linkedin/posts", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/prospects/{prospect_id}/linkedin/posts", dependencies=[Depends(require_api_auth)])
 async def add_linkedin_post(prospect_id: int, post: LinkedInPostAdd):
     """Adiciona uma publicação relevante do LinkedIn"""
     conn = get_db()
@@ -3406,7 +3430,7 @@ async def add_linkedin_post(prospect_id: int, post: LinkedInPostAdd):
     return {"status": "added", "posts_count": len(linkedin_data.get("posts", []))}
 
 
-@app.put("/api/prospects/{prospect_id}/relacionamento", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/prospects/{prospect_id}/relacionamento", dependencies=[Depends(require_api_auth)])
 async def update_prospect_relacionamento(prospect_id: int, data: RelacionamentoUpdate):
     """Atualiza informações de relacionamento com o prospect"""
     conn = get_db()
@@ -6776,7 +6800,7 @@ async def backfill_linkedin_task_data(
     return summary
 
 
-@app.post("/api/admin/update-names", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/admin/update-names", dependencies=[Depends(require_api_auth)])
 async def update_prospect_names(data: BulkNameUpdate):
     """
     Atualiza nomes dos prospects em massa baseado no email
@@ -6817,7 +6841,7 @@ async def update_prospect_names(data: BulkNameUpdate):
         "not_found": not_found
     }
 
-@app.post("/api/import/bulk", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/import/bulk", dependencies=[Depends(require_api_auth)])
 async def import_bulk(data: BulkImportData):
     """
     Importa prospects via JSON
@@ -7117,7 +7141,7 @@ class SnoozeRequest(BaseModel):
     dias: int = 7
 
 
-@app.post("/api/contacts/{contact_id}/snooze", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/snooze", dependencies=[Depends(require_api_auth)])
 async def snooze_contact(contact_id: int, payload: SnoozeRequest):
     """Adiar contato por N dias com motivo opcional. Substitui snooze ativo se houver."""
     dias = max(1, min(int(payload.dias or 7), 365))
@@ -7174,7 +7198,7 @@ async def snooze_contact(contact_id: int, payload: SnoozeRequest):
     return {"status": "ok", "ate": ate.isoformat() if hasattr(ate, "isoformat") else str(ate)}
 
 
-@app.delete("/api/contacts/{contact_id}/snooze", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/contacts/{contact_id}/snooze", dependencies=[Depends(require_api_auth)])
 async def unsnooze_contact(contact_id: int):
     """Remove snooze ativo do contato."""
     with get_pg_db() as conn:
@@ -7230,7 +7254,7 @@ class MessageClassifyRequest(BaseModel):
     reasoning: Optional[str] = None
 
 
-@app.post("/api/messages/{message_id}/classify", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/messages/{message_id}/classify", dependencies=[Depends(require_api_auth)])
 async def classify_message_manual(message_id: int, payload: MessageClassifyRequest):
     """Override manual: usuario marca mensagem como precisa/nao precisa resposta.
 
@@ -8292,7 +8316,7 @@ async def linkedin_job_changes(days: int = 30, notified: bool = None):
     return {"job_changes": changes, "total": len(changes)}
 
 
-@app.post("/api/contacts/{contact_id}/linkedin/enrich", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/linkedin/enrich", dependencies=[Depends(require_api_auth)])
 async def enrich_contact_linkedin(contact_id: int, force: bool = False):
     """Enriquece um contato com dados do LinkedIn"""
     service = get_linkedin_enrichment_service()
@@ -8311,7 +8335,7 @@ async def enrich_contact_linkedin(contact_id: int, force: bool = False):
     return result
 
 
-@app.post("/api/contacts/{contact_id}/dossier-linkedin", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/dossier-linkedin", dependencies=[Depends(require_api_auth)])
 async def generate_contact_dossier_linkedin(contact_id: int, force: bool = False):
     """Gera dossie executivo (200 palavras via Claude) a partir de 4 endpoints LinkdAPI.
     Cache 30 dias salvo force=true. Custo: 4 LinkdAPI calls + 1 Claude call."""
@@ -8328,7 +8352,7 @@ async def generate_contact_dossier_linkedin(contact_id: int, force: bool = False
     return result
 
 
-@app.post("/api/linkedin/enrich/batch", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/linkedin/enrich/batch", dependencies=[Depends(require_api_auth)])
 async def enrich_linkedin_batch(
     limit: int = 50,
     circulo_max: int = 3,
@@ -8816,7 +8840,7 @@ class RelationshipUpdate(BaseModel):
     contact_id: Optional[int] = None
 
 
-@app.post("/api/contacts/{contact_id}/relationships", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/relationships", dependencies=[Depends(require_api_auth)])
 async def add_relationship(contact_id: int, relationship: RelationshipUpdate):
     """
     Adiciona um relacionamento bidirecional.
@@ -8919,7 +8943,7 @@ async def add_relationship(contact_id: int, relationship: RelationshipUpdate):
     }
 
 
-@app.delete("/api/contacts/{contact_id}/relationships/{related_contact_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/contacts/{contact_id}/relationships/{related_contact_id}", dependencies=[Depends(require_api_auth)])
 async def remove_relationship(contact_id: int, related_contact_id: int):
     """
     Remove um relacionamento de ambos os contatos (bidirecional).
@@ -9058,7 +9082,7 @@ def infer_relationship(rel1: str, rel2: str) -> str:
     return inference_matrix.get((rel1, rel2), 'desconhecido')
 
 
-@app.post("/api/contacts/import", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/import", dependencies=[Depends(require_api_auth)])
 async def import_contacts(data: ContactsImportData):
     """
     Importa contatos do Google Contacts CSV (formato JSON)
@@ -9323,7 +9347,7 @@ async def get_article_suggestions(contact_id: int, limit: int = 3):
     }
 
 
-@app.post("/api/contacts/{contact_id}/analyze-conversations", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/analyze-conversations", dependencies=[Depends(require_api_auth)])
 async def analyze_contact_conversations(contact_id: int):
     """Analisa conversas recentes com o contato e identifica tom, intencoes, pendencias"""
     import httpx as _hx
@@ -9922,7 +9946,7 @@ async def api_get_folder_contents(folder_id: str, account_type: str = 'professio
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/drive/folders/{folder_id}/link", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/drive/folders/{folder_id}/link", dependencies=[Depends(require_api_auth)])
 async def api_link_folder_to_entity(folder_id: str, request: Request):
     """Vincula uma pasta do Drive a um projeto ou contato"""
     body = await request.json()
@@ -9958,7 +9982,7 @@ async def api_link_folder_to_entity(folder_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/drive/folders/{folder_id}/index", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/drive/folders/{folder_id}/index", dependencies=[Depends(require_api_auth)])
 async def api_index_folder(folder_id: str, request: Request):
     """Indexa todos os documentos de uma pasta"""
     body = await request.json()
@@ -10076,7 +10100,7 @@ async def api_get_entity_documents(entidade_tipo: str, entidade_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/documentos/{documento_id}/link", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/documentos/{documento_id}/link", dependencies=[Depends(require_api_auth)])
 async def api_link_document(documento_id: int, request: Request):
     """Vincula um documento existente a uma entidade adicional"""
     body = await request.json()
@@ -10919,7 +10943,7 @@ async def api_agent_intents_dashboard():
     }
 
 
-@app.post("/api/agent-intents/{intent_id}/manage", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/agent-intents/{intent_id}/manage", dependencies=[Depends(require_api_auth)])
 async def api_agent_intents_manage(intent_id: int, body: dict = Body(...)):
     """Endpoint pra UI fazer manage_intent (botoes "Cancelar" / "Marcar concluido"
     no drill do dashboard).
@@ -11921,7 +11945,7 @@ async def cron_index_drive_documents(request: Request):
     }
 
 
-@app.post("/api/webhooks/google-drive", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/webhooks/google-drive", dependencies=[Depends(require_api_auth)])
 async def webhook_google_drive(request: Request):
     """
     Webhook: Receives Google Drive push notifications when files change.
@@ -11988,7 +12012,7 @@ async def webhook_google_drive(request: Request):
         return {"status": "error", "message": str(e)}
 
 
-@app.post("/api/drive/watch/{project_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/drive/watch/{project_id}", dependencies=[Depends(require_api_auth)])
 async def api_watch_project_folder(project_id: int, request: Request):
     """
     Set up Google Drive push notifications for a project's folder.
@@ -13668,7 +13692,7 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
     }
 
 
-@app.post("/api/v1/rodas/{roda_id}/complete", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/rodas/{roda_id}/complete", dependencies=[Depends(require_api_auth)])
 async def complete_roda(roda_id: int):
     """Marca uma roda como cumprida."""
     rodas_service = get_rodas_service()
@@ -13680,7 +13704,7 @@ async def complete_roda(roda_id: int):
     return {"status": "ok", "message": "Roda marcada como cumprida"}
 
 
-@app.post("/api/v1/rodas/{roda_id}/expire", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/rodas/{roda_id}/expire", dependencies=[Depends(require_api_auth)])
 async def expire_roda(roda_id: int):
     """Marca uma roda como expirada (não é mais relevante)."""
     rodas_service = get_rodas_service()
@@ -13692,7 +13716,7 @@ async def expire_roda(roda_id: int):
     return {"status": "ok", "message": "Roda marcada como expirada"}
 
 
-@app.post("/api/v1/contacts/{contact_id}/mark-contacted", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/contacts/{contact_id}/mark-contacted", dependencies=[Depends(require_api_auth)])
 async def mark_contact_as_contacted(contact_id: int):
     """
     Marca um contato como 'ja contatei hoje' manualmente.
@@ -13723,7 +13747,7 @@ async def mark_contact_as_contacted(contact_id: int):
     }
 
 
-@app.delete("/api/v1/contacts/{contact_id}/mark-contacted", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/v1/contacts/{contact_id}/mark-contacted", dependencies=[Depends(require_api_auth)])
 async def unmark_contact_as_contacted(contact_id: int):
     """Remove a marcacao manual de 'ja contatei hoje'."""
     from database import get_db
@@ -13758,7 +13782,7 @@ async def get_contact_rodas(contact_id: int, include_all: bool = False):
     }
 
 
-@app.post("/api/v1/rodas/expire-old", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/rodas/expire-old", dependencies=[Depends(require_api_auth)])
 async def expire_old_rodas(dias_promessa: int = 30, dias_outros: int = 90):
     """
     Expira automaticamente rodas antigas (para ser chamado por cron).
@@ -13908,7 +13932,7 @@ async def get_contact_circulo(contact_id: int):
         }
 
 
-@app.post("/api/contacts/{contact_id}/circulo", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/circulo", dependencies=[Depends(require_api_auth)])
 async def update_contact_circulo_legacy(contact_id: int, data: dict):
     """Atualiza circulo de um contato manualmente (legacy endpoint)"""
     circulo = data.get("circulo")
@@ -13936,14 +13960,14 @@ async def recalculate_circulos(force: bool = False, limit: int = None):
     return result
 
 
-@app.post("/api/contacts/{contact_id}/circulo/recalculate", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/circulo/recalculate", dependencies=[Depends(require_api_auth)])
 async def recalculate_contact_circulo(contact_id: int, force: bool = False):
     """Recalcula circulos (pessoal e profissional) de um contato"""
     result = recalcular_circulos_dual(contact_id, force=force)
     return result
 
 
-@app.put("/api/contatos/{contact_id}/circulo", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/contatos/{contact_id}/circulo", dependencies=[Depends(require_api_auth)])
 async def update_contact_circulo_dual(contact_id: int, data: dict):
     """Atualiza circulo e/ou contexto de um contato manualmente (dual circles)."""
     from database import get_db
@@ -14011,7 +14035,7 @@ async def update_contact_circulo_dual(contact_id: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.put("/api/contatos/{contact_id}/circulo-clear", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/contatos/{contact_id}/circulo-clear", dependencies=[Depends(require_api_auth)])
 async def clear_contact_circulo(contact_id: int, data: dict):
     """Remove o circulo de um contexto específico (define como NULL)."""
     from database import get_db
@@ -14062,7 +14086,7 @@ async def clear_contact_circulo(contact_id: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/circulos/sync-effective", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/circulos/sync-effective", dependencies=[Depends(require_api_auth)])
 async def sync_effective_circles():
     """
     Sincroniza o campo 'circulo' (efetivo) baseado em circulo_pessoal e circulo_profissional.
@@ -14116,7 +14140,7 @@ async def get_pending_briefings(limit: int = 10):
     return get_contacts_needing_briefing(limit=limit)
 
 
-@app.post("/api/contacts/{contact_id}/briefing", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/briefing", dependencies=[Depends(require_api_auth)])
 async def create_contact_briefing(contact_id: int, data: dict = None):
     """Gera briefing inteligente para um contato usando AI"""
     contexto = data.get("contexto") if data else None
@@ -14162,7 +14186,7 @@ async def get_contact_briefings_history(contact_id: int, limit: int = 5):
     }
 
 
-@app.post("/api/briefings/{briefing_id}/feedback", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/briefings/{briefing_id}/feedback", dependencies=[Depends(require_api_auth)])
 async def add_feedback_to_briefing(briefing_id: int, data: dict):
     """
     Adiciona feedback a um briefing (util para melhorar AI).
@@ -14320,7 +14344,7 @@ async def get_suggested_tags(contact_id: int):
     return result
 
 
-@app.post("/api/contacts/{contact_id}/apply-tags", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/apply-tags", dependencies=[Depends(require_api_auth)])
 async def apply_tags_to_contact(contact_id: int, data: dict = None):
     """
     Aplica tags sugeridas a um contato.
@@ -14343,7 +14367,7 @@ async def apply_tags_to_contact(contact_id: int, data: dict = None):
     return result
 
 
-@app.post("/api/contacts/apply-auto-tags", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/apply-auto-tags", dependencies=[Depends(require_api_auth)])
 async def apply_auto_tags_batch(
     batch_size: int = 100,
     offset: int = 0,
@@ -14490,7 +14514,7 @@ async def gmail_recalculate_after_sync(request: Request):
 from services.whatsapp_sync import get_whatsapp_sync_service
 
 
-@app.post("/api/whatsapp/webhook", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/whatsapp/webhook", dependencies=[Depends(require_api_auth)])
 async def whatsapp_webhook(request: Request):
     """
     Webhook do Evolution API para mensagens WhatsApp em tempo real.
@@ -14978,7 +15002,7 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
 
 from integrations.evolution_api import get_evolution_client, handle_evolution_webhook
 
-@app.post("/api/webhooks/contact-lookup", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/webhooks/contact-lookup", dependencies=[Depends(require_api_auth)])
 async def worker_contact_lookup(request: Request):
     """Lookup contacts by name for external workers (authenticated by secret)."""
     data = await request.json()
@@ -15027,7 +15051,7 @@ async def bot_message_endpoint(request: Request):
     return {"status": "success", "response": response or "", "wa_already_sent": already_sent}
 
 
-@app.post("/api/webhooks/whatsapp", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/webhooks/whatsapp", dependencies=[Depends(require_api_auth)])
 async def whatsapp_webhook(request: Request):
     """
     Webhook para receber eventos da Evolution API.
@@ -15042,7 +15066,7 @@ async def whatsapp_webhook(request: Request):
         return {"error": str(e)}
 
 
-@app.post("/api/webhooks/wa-ingest", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/webhooks/wa-ingest", dependencies=[Depends(require_api_auth)])
 async def wa_ingest_webhook(request: Request):
     """
     Ingestão persist-only de upserts da instância da Tonia (intel-bot-v2).
@@ -15400,7 +15424,7 @@ async def cron_raci_weekly_report(request: Request):
     return results
 
 
-@app.post("/api/raci/update-from-message", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/raci/update-from-message", dependencies=[Depends(require_api_auth)])
 async def raci_update_from_message(request: Request):
     """Process a WhatsApp group message that updates a RACI item."""
     data = await request.json()
@@ -15441,7 +15465,7 @@ async def raci_group_proposals_list(request: Request):
     return {"pending": list_pending_proposals()}
 
 
-@app.post("/api/raci/group-proposals/{proposal_id}/apply", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/raci/group-proposals/{proposal_id}/apply", dependencies=[Depends(require_api_auth)])
 async def raci_group_proposal_apply(proposal_id: int, request: Request):
     """Aplica UMA proposta shadow no RACI (apos aprovacao do Renato)."""
     from services.raci_group_shadow import apply_group_proposal
@@ -15496,7 +15520,7 @@ async def raci_reconcile_ata(request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/api/raci/group-proposals/{proposal_id}/dismiss", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/raci/group-proposals/{proposal_id}/dismiss", dependencies=[Depends(require_api_auth)])
 async def raci_group_proposal_dismiss(proposal_id: int, request: Request):
     """Descarta UMA proposta shadow (reversivel via reopen). Body opcional {reason}."""
     from services.raci_group_shadow import dismiss_group_proposal
@@ -15510,7 +15534,7 @@ async def raci_group_proposal_dismiss(proposal_id: int, request: Request):
     return result
 
 
-@app.post("/api/raci/group-proposals/{proposal_id}/reopen", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/raci/group-proposals/{proposal_id}/reopen", dependencies=[Depends(require_api_auth)])
 async def raci_group_proposal_reopen(proposal_id: int, request: Request):
     """Reabre UMA proposta descartada/em-erro (volta a pending_review)."""
     from services.raci_group_shadow import reopen_group_proposal
@@ -15528,7 +15552,7 @@ async def playbook_proposals_list(request: Request):
     return {"pending": playbook_rules.get_pending_proposals()}
 
 
-@app.post("/api/playbook/proposals/{note_id}/apply", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/playbook/proposals/{note_id}/apply", dependencies=[Depends(require_api_auth)])
 async def playbook_proposal_apply(note_id: int, request: Request):
     """Aprova: le o Doc, mescla as regras (tema+numeracao+dedup) e reescreve o Playbook."""
     from services import playbook_rules
@@ -15538,7 +15562,7 @@ async def playbook_proposal_apply(note_id: int, request: Request):
     return result
 
 
-@app.post("/api/playbook/proposals/{note_id}/dismiss", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/playbook/proposals/{note_id}/dismiss", dependencies=[Depends(require_api_auth)])
 async def playbook_proposal_dismiss(note_id: int, request: Request):
     """Descarta uma proposta de regra do Playbook (marca dismissed)."""
     from services import playbook_rules
@@ -15579,7 +15603,7 @@ async def cron_raci_unprocessed_monitor(request: Request):
 from services.conselhoos_briefing import generate_pre_meeting_briefing, check_and_generate_briefings_tomorrow
 
 
-@app.post("/api/conselhoos/briefing/pre-meeting", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/conselhoos/briefing/pre-meeting", dependencies=[Depends(require_api_auth)])
 async def conselhoos_pre_meeting_briefing(request: Request):
     """
     Generate an adaptive pre-meeting briefing combining ConselhoOS
@@ -16724,7 +16748,7 @@ class InteractionCreate(BaseModel):
     data_interacao: Optional[str] = None
 
 
-@app.post("/api/contacts/{contact_id}/interactions", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/contacts/{contact_id}/interactions", dependencies=[Depends(require_api_auth)])
 async def create_contact_interaction(contact_id: int, interaction: InteractionCreate):
     """Cria uma nova interação manual para o contato."""
     with get_db() as conn:
@@ -16805,7 +16829,7 @@ async def get_contact_interactions(contact_id: int, limit: int = 50):
         return {"interactions": interactions, "total": len(interactions)}
 
 
-@app.delete("/api/contacts/{contact_id}/interactions/{interaction_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/contacts/{contact_id}/interactions/{interaction_id}", dependencies=[Depends(require_api_auth)])
 async def delete_contact_interaction(contact_id: int, interaction_id: int):
     """Remove uma interação do contato."""
     with get_db() as conn:
@@ -22142,7 +22166,7 @@ async def api_delete_project(project_id: int):
 
 # ============== PROJECT MEMBERS ==============
 
-@app.post("/api/projects/{project_id}/members", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/members", dependencies=[Depends(require_api_auth)])
 async def api_add_project_member(project_id: int, request: Request):
     """Adiciona membro ao projeto."""
     data = await request.json()
@@ -22156,7 +22180,7 @@ async def api_add_project_member(project_id: int, request: Request):
     return {"status": "success", "member": member}
 
 
-@app.delete("/api/projects/{project_id}/members/{contact_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/projects/{project_id}/members/{contact_id}", dependencies=[Depends(require_api_auth)])
 async def api_remove_project_member(project_id: int, contact_id: int):
     """Remove membro do projeto."""
     if remove_project_member(project_id, contact_id):
@@ -22511,7 +22535,7 @@ async def api_available_projects():
 
 # ============== PROJECT MILESTONES ==============
 
-@app.post("/api/projects/{project_id}/milestones", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/milestones", dependencies=[Depends(require_api_auth)])
 async def api_add_milestone(project_id: int, request: Request):
     """Adiciona marco ao projeto."""
     data = await request.json()
@@ -22542,7 +22566,7 @@ async def api_delete_milestone(milestone_id: int):
 
 # ============== SMART PROJECT UPDATE ==============
 
-@app.post("/api/projects/{project_id}/smart-update", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/smart-update", dependencies=[Depends(require_api_auth)])
 async def api_smart_update(project_id: int):
     """Analisa emails/WhatsApp dos membros e sugere atualizacoes de tarefas"""
     from services.project_smart_update import analyze_project_updates
@@ -22552,7 +22576,7 @@ async def api_smart_update(project_id: int):
     return result
 
 
-@app.post("/api/projects/{project_id}/smart-update/apply", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/smart-update/apply", dependencies=[Depends(require_api_auth)])
 async def api_smart_update_apply(project_id: int, request: Request):
     """Aplica sugestoes: marca tarefas como concluidas"""
     from services.project_smart_update import apply_smart_updates
@@ -22567,7 +22591,7 @@ async def api_smart_update_apply(project_id: int, request: Request):
 
 # ============== PROJECT TASK RESEARCH ==============
 
-@app.post("/api/projects/{project_id}/save-article", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/save-article", dependencies=[Depends(require_api_auth)])
 async def api_save_article(project_id: int, request: Request):
     """Fetch, summarize and save an article URL to the project knowledge base."""
     from services.article_knowledge import save_article_to_project
@@ -22581,7 +22605,7 @@ async def api_save_article(project_id: int, request: Request):
     return result
 
 
-@app.post("/api/projects/{project_id}/research-task", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/research-task", dependencies=[Depends(require_api_auth)])
 async def api_research_task(project_id: int, request: Request):
     """Pesquisa com IA sobre o tema de uma tarefa e salva como nota do projeto."""
     import httpx
@@ -22674,7 +22698,7 @@ Instrucoes:
 
 # ============== PROJECT AI ANALYSIS ==============
 
-@app.post("/api/projects/{project_id}/chat", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/chat", dependencies=[Depends(require_api_auth)])
 async def api_project_chat(project_id: int, request: Request):
     """Chat com assistente IA dedicado ao projeto"""
     from services.project_assistant import chat
@@ -22695,7 +22719,7 @@ async def api_project_chat_history(project_id: int, limit: int = 20):
     return {"messages": _get_conversation_history(project_id, limit)}
 
 
-@app.post("/api/projects/{project_id}/ai-analysis", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/ai-analysis", dependencies=[Depends(require_api_auth)])
 async def api_project_ai_analysis(project_id: int, request: Request):
     """Gera parecer IA sobre o projeto cruzando mensagens, grupos, docs e tarefas"""
     from services.project_smart_update import generate_project_analysis
@@ -22712,7 +22736,7 @@ async def api_project_ai_analysis(project_id: int, request: Request):
 
 # ============== CONDENSE PARECERES ==============
 
-@app.post("/api/projects/{project_id}/condense-analyses", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/condense-analyses", dependencies=[Depends(require_api_auth)])
 async def api_condense_analyses(project_id: int):
     """Condensa multiplos pareceres IA em um resumo executivo acumulativo"""
     import httpx as _hx
@@ -22814,7 +22838,7 @@ INSTRUCOES:
 
 # ============== DOWNLOAD GROUP DOCUMENTS ==============
 
-@app.post("/api/projects/{project_id}/download-group-docs", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/download-group-docs", dependencies=[Depends(require_api_auth)])
 async def api_download_group_docs(project_id: int):
     """Baixa documentos dos grupos WhatsApp vinculados e salva no Google Drive"""
     from services.project_smart_update import download_group_documents
@@ -22826,7 +22850,7 @@ async def api_download_group_docs(project_id: int):
 
 # ============== SHARE PROJECT ANALYSIS ==============
 
-@app.post("/api/projects/{project_id}/adapt-analysis", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/adapt-analysis", dependencies=[Depends(require_api_auth)])
 async def api_adapt_analysis(project_id: int, request: Request):
     """Adapta o parecer para um destinatario especifico e canal"""
     import httpx as _hx
@@ -22877,7 +22901,7 @@ PARECER ORIGINAL (projeto: {project_name}):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/projects/{project_id}/send-analysis", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/send-analysis", dependencies=[Depends(require_api_auth)])
 async def api_send_analysis(project_id: int, request: Request):
     """Envia mensagem adaptada do parecer via WhatsApp ou Email"""
     data = await request.json()
@@ -22997,7 +23021,7 @@ async def api_social_groups_introductions(limit: int = 10):
     return {"introductions": suggest_introductions(limit=limit)}
 
 
-@app.post("/api/social-groups/sync-messages", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/social-groups/sync-messages", dependencies=[Depends(require_api_auth)])
 async def api_sync_group_messages():
     """Sincroniza mensagens dos grupos marcados"""
     from services.group_message_sync import sync_group_messages
@@ -23082,7 +23106,7 @@ async def api_project_raci(project_id: int, status: Optional[str] = None):
     return result
 
 
-@app.post("/api/projects/{project_id}/raci", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/raci", dependencies=[Depends(require_api_auth)])
 async def api_create_project_raci_item(project_id: int, request: Request):
     """Cria item de RACI no lado INTEL."""
     from services.raci_matrix import create_item
@@ -23147,7 +23171,7 @@ async def api_raci_whatsapp_preview(project_id: int, incluir_concluidos: bool = 
             "grupos": grupos, "project": matrix.get("project")}
 
 
-@app.post("/api/projects/{project_id}/raci/send-to-group", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/raci/send-to-group", dependencies=[Depends(require_api_auth)])
 async def api_raci_send_to_group(project_id: int, request: Request):
     """Manda o texto do RACI num grupo WhatsApp vinculado ao projeto.
 
@@ -23253,7 +23277,7 @@ async def api_list_project_groups(project_id: int):
         return [dict(r) for r in cursor.fetchall()]
 
 
-@app.post("/api/projects/{project_id}/whatsapp-groups", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/whatsapp-groups", dependencies=[Depends(require_api_auth)])
 async def api_add_project_group(project_id: int, request: Request):
     """Vincula um grupo WhatsApp ao projeto"""
     data = await request.json()
@@ -23290,7 +23314,7 @@ async def api_add_project_group(project_id: int, request: Request):
     return {"status": "success", "id": link_id, "wired": wired}
 
 
-@app.delete("/api/projects/{project_id}/whatsapp-groups/{group_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/projects/{project_id}/whatsapp-groups/{group_id}", dependencies=[Depends(require_api_auth)])
 async def api_remove_project_group(project_id: int, group_id: int):
     """Remove vinculo de grupo WhatsApp do projeto"""
     with get_db() as conn:
@@ -23302,7 +23326,7 @@ async def api_remove_project_group(project_id: int, group_id: int):
 
 # ============== PAYMENT CYCLE ==============
 
-@app.post("/api/projects/{project_id}/payment-cycle/preview", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/payment-cycle/preview", dependencies=[Depends(require_api_auth)])
 async def api_payment_cycle_preview(project_id: int, request: Request):
     """Preview do email de cobranca"""
     from services.payment_cycle import generate_payment_email
@@ -23318,7 +23342,7 @@ async def api_payment_cycle_preview(project_id: int, request: Request):
     return result
 
 
-@app.post("/api/projects/{project_id}/payment-cycle/send", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/payment-cycle/send", dependencies=[Depends(require_api_auth)])
 async def api_payment_cycle_send(project_id: int, request: Request):
     """Envia email de cobranca e cria milestone"""
     from services.payment_cycle import send_payment_email
@@ -23334,7 +23358,7 @@ async def api_payment_cycle_send(project_id: int, request: Request):
     return result
 
 
-@app.post("/api/projects/{project_id}/payment-cycle/register-history", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/payment-cycle/register-history", dependencies=[Depends(require_api_auth)])
 async def api_payment_cycle_register_history(project_id: int, request: Request):
     """
     Registra as despesas do ciclo na planilha Google Sheets 'Historico'.
@@ -23370,7 +23394,7 @@ async def api_payment_cycle_register_history(project_id: int, request: Request):
 
 # ============== PROJECT NOTES ==============
 
-@app.post("/api/projects/{project_id}/notes", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/notes", dependencies=[Depends(require_api_auth)])
 async def api_add_project_note(project_id: int, request: Request):
     """Adiciona nota ao projeto."""
     data = await request.json()
@@ -23389,7 +23413,7 @@ async def api_project_timeline(project_id: int, limit: int = 50):
 
 # ============== PROJECT TASKS ==============
 
-@app.post("/api/projects/{project_id}/tasks", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/projects/{project_id}/tasks", dependencies=[Depends(require_api_auth)])
 async def api_add_project_task(project_id: int, request: Request):
     """
     Cria tarefa vinculada ao projeto.
@@ -24140,7 +24164,7 @@ def _validate_post_publishable(row: dict) -> Optional[str]:
     return None
 
 
-@app.post("/api/editorial/{post_id}/approve", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/approve", dependencies=[Depends(require_api_auth)])
 async def api_editorial_approve(post_id: int):
     """User aprova proposta da IA: pending_approval -> scheduled.
     Promove data_publicacao_planejada para data_publicacao.
@@ -24228,7 +24252,7 @@ async def api_editorial_approve(post_id: int):
     }
 
 
-@app.post("/api/editorial/{post_id}/dismiss", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/dismiss", dependencies=[Depends(require_api_auth)])
 async def api_editorial_dismiss(post_id: int, request: Request):
     """User descarta proposta da IA: pending_approval -> dismissed.
     Dispara substituicao automatica: IA seleciona proximo melhor candidate
@@ -24584,7 +24608,7 @@ async def api_editorial_delete(post_id: int):
     raise HTTPException(status_code=404, detail="Post nao encontrado")
 
 
-@app.post("/api/editorial/{post_id}/schedule", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/schedule", dependencies=[Depends(require_api_auth)])
 async def api_editorial_schedule(post_id: int, request: Request):
     """Agenda post para publicacao"""
     data = await request.json()
@@ -24626,7 +24650,7 @@ async def api_editorial_schedule(post_id: int, request: Request):
     return {"status": "success", "post": post}
 
 
-@app.post("/api/editorial/{post_id}/publish", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/publish", dependencies=[Depends(require_api_auth)])
 async def api_editorial_publish(post_id: int, request: Request):
     """Marca post como publicado"""
     data = await request.json()
@@ -24640,7 +24664,7 @@ async def api_editorial_publish(post_id: int, request: Request):
     return {"status": "success", "post": post}
 
 
-@app.post("/api/editorial/auto-select-week", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/auto-select-week", dependencies=[Depends(require_api_auth)])
 async def api_auto_select_week(request: Request):
     """IA seleciona os melhores posts para a semana"""
     from services.auto_publisher import select_weekly_posts, schedule_selected_posts
@@ -24752,7 +24776,7 @@ async def api_approve_week(request: Request):
     return result
 
 
-@app.post("/api/editorial/publish-due", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/publish-due", dependencies=[Depends(require_api_auth)])
 async def api_publish_due():
     """Publica posts agendados cuja hora ja chegou"""
     from services.auto_publisher import publish_due_posts
@@ -24954,7 +24978,7 @@ async def cron_editorial_weekly_briefing(request: Request):
 
 # ============== EDITORIAL METRICS API ==============
 
-@app.post("/api/editorial/{post_id}/metrics", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/{post_id}/metrics", dependencies=[Depends(require_api_auth)])
 async def api_editorial_post_metrics(post_id: int, request: Request):
     """Save metrics for an editorial post (manual or from xlsx upload)"""
     global _editorial_action_items_cache
@@ -25095,7 +25119,7 @@ async def api_editorial_metrics_snapshot_get(post_id: int, dias_apos_publicacao:
     }
 
 
-@app.post("/api/editorial/posts/{post_id}/metrics-snapshot", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/posts/{post_id}/metrics-snapshot", dependencies=[Depends(require_api_auth)])
 async def api_editorial_metrics_snapshot_save(post_id: int, request: Request):
     """Registra snapshot de metricas pra janela especifica em editorial_metrics_history.
     Atomico: DELETE existente da mesma (post_id, dias_apos_publicacao) + INSERT novo.
@@ -25174,7 +25198,7 @@ async def api_editorial_metrics_snapshot_save(post_id: int, request: Request):
     }
 
 
-@app.post("/api/editorial/metrics/upload", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/editorial/metrics/upload", dependencies=[Depends(require_api_auth)])
 async def api_editorial_metrics_upload(request: Request):
     """Accept parsed xlsx data and auto-match post by URL ou data de publicacao."""
     data = await request.json()
@@ -25440,7 +25464,7 @@ async def api_hot_take_get(hot_take_id: int):
     raise HTTPException(status_code=404, detail="Hot take nao encontrado")
 
 
-@app.post("/api/hot-takes/{hot_take_id}/quick-schedule", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/hot-takes/{hot_take_id}/quick-schedule", dependencies=[Depends(require_api_auth)])
 async def api_hot_take_quick_schedule(hot_take_id: int):
     """Quick approve: schedule hot-take for next available slot, create editorial_post."""
     from services.hot_takes import schedule_hot_take
@@ -25472,7 +25496,7 @@ async def api_hot_take_quick_schedule(hot_take_id: int):
     return result
 
 
-@app.post("/api/hot-takes/{hot_take_id}/schedule", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/hot-takes/{hot_take_id}/schedule", dependencies=[Depends(require_api_auth)])
 async def api_hot_take_schedule(hot_take_id: int, request: Request):
     """Agenda hot take para publicacao e cria entrada no calendario editorial"""
     from services.hot_takes import schedule_hot_take
@@ -25484,7 +25508,7 @@ async def api_hot_take_schedule(hot_take_id: int, request: Request):
     return result
 
 
-@app.post("/api/hot-takes/{hot_take_id}/publish", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/hot-takes/{hot_take_id}/publish", dependencies=[Depends(require_api_auth)])
 async def api_hot_take_publish(hot_take_id: int, request: Request):
     """Marca hot take como publicado"""
     from services.hot_takes import mark_hot_take_published
@@ -25495,7 +25519,7 @@ async def api_hot_take_publish(hot_take_id: int, request: Request):
     return result
 
 
-@app.post("/api/hot-takes/{hot_take_id}/metrics", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/hot-takes/{hot_take_id}/metrics", dependencies=[Depends(require_api_auth)])
 async def api_hot_take_metrics(hot_take_id: int, request: Request):
     """Atualiza metricas de engajamento do hot take"""
     from services.hot_takes import update_hot_take_metrics
@@ -25638,7 +25662,7 @@ async def api_daily_clipping():
     return _filter_clipping_by_interactions(result)
 
 
-@app.post("/api/news/clipping/refresh", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/news/clipping/refresh", dependencies=[Depends(require_api_auth)])
 async def api_refresh_clipping():
     """Forca geracao de novo clipping (uso admin/debug — UI nao chama mais)."""
     from services.news_hub import generate_daily_clipping
@@ -26114,7 +26138,7 @@ async def api_suggest_contacts_for_news(titulo: str = "", categoria: str = ""):
     return {"contacts": contacts}
 
 
-@app.post("/api/news/{news_id}/feedback", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/news/{news_id}/feedback", dependencies=[Depends(require_api_auth)])
 async def api_news_feedback(news_id: int, request: Request):
     """Registra feedback sobre noticia (liked/disliked/shared/hot_take)"""
     from services.news_hub import record_clipping_feedback
@@ -26170,7 +26194,7 @@ async def api_news_details(news_id: int):
     return result
 
 
-@app.post("/api/news/{news_id}/summary", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/news/{news_id}/summary", dependencies=[Depends(require_api_auth)])
 async def api_news_summary(news_id: int):
     """Gera resumo inteligente da notícia usando Haiku"""
     from services.news_hub import generate_smart_summary
@@ -26180,7 +26204,7 @@ async def api_news_summary(news_id: int):
     return {"summary": summary}
 
 
-@app.post("/api/news/{news_id}/connect-article/{article_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/news/{news_id}/connect-article/{article_id}", dependencies=[Depends(require_api_auth)])
 async def api_news_connect_article(news_id: int, article_id: int):
     """Gera conexão inteligente entre notícia e artigo do blog"""
     from services.news_hub import generate_article_connection
@@ -26388,7 +26412,7 @@ async def api_artigos_stats():
     return stats
 
 
-@app.post("/api/artigos/{artigo_id}/schedule", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/artigos/{artigo_id}/schedule", dependencies=[Depends(require_api_auth)])
 async def api_artigo_schedule(artigo_id: int, request: Request):
     """Agenda um artigo para publicacao"""
     data = await request.json()
@@ -26625,7 +26649,7 @@ async def api_criar_veiculo(request: Request):
     return veiculo
 
 
-@app.put("/api/veiculos/{veiculo_id}/km", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/veiculos/{veiculo_id}/km", dependencies=[Depends(require_api_auth)])
 async def api_atualizar_km(veiculo_id: int, request: Request):
     """Atualiza quilometragem do veiculo"""
     data = await request.json()
@@ -26645,7 +26669,7 @@ async def api_itens_manutencao(veiculo_id: int):
     return get_itens_manutencao(veiculo_id)
 
 
-@app.post("/api/veiculos/{veiculo_id}/itens", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/itens", dependencies=[Depends(require_api_auth)])
 async def api_criar_item(veiculo_id: int, request: Request):
     """Cria item no plano de manutencao"""
     data = await request.json()
@@ -26659,7 +26683,7 @@ async def api_historico_manutencoes(veiculo_id: int, limit: int = 50):
     return get_historico_manutencoes(veiculo_id, limit)
 
 
-@app.post("/api/veiculos/{veiculo_id}/manutencao", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/manutencao", dependencies=[Depends(require_api_auth)])
 async def api_registrar_manutencao(veiculo_id: int, request: Request):
     """Registra uma manutencao realizada"""
     data = await request.json()
@@ -26668,7 +26692,7 @@ async def api_registrar_manutencao(veiculo_id: int, request: Request):
     return manutencao
 
 
-@app.post("/api/veiculos/{veiculo_id}/revisao-completa", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/revisao-completa", dependencies=[Depends(require_api_auth)])
 async def api_registrar_revisao_completa(veiculo_id: int, request: Request):
     """
     Registra uma revisao completa em lote.
@@ -26708,7 +26732,7 @@ async def api_listar_ordens(veiculo_id: int, status: str = None):
     return listar_ordens_servico(veiculo_id=veiculo_id, status=status)
 
 
-@app.post("/api/veiculos/{veiculo_id}/ordens", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/ordens", dependencies=[Depends(require_api_auth)])
 async def api_criar_ordem(veiculo_id: int, request: Request):
     """Cria uma ordem de servico"""
     data = await request.json()
@@ -26741,7 +26765,7 @@ async def api_get_ordem(os_id: int):
     return os
 
 
-@app.put("/api/ordens/{os_id}/finalizar", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/ordens/{os_id}/finalizar", dependencies=[Depends(require_api_auth)])
 async def api_finalizar_ordem(os_id: int, request: Request):
     """Finaliza uma ordem de servico e registra as manutencoes"""
     data = await request.json()
@@ -26754,7 +26778,7 @@ async def api_finalizar_ordem(os_id: int, request: Request):
     return resultado
 
 
-@app.post("/api/veiculos/ordens-servico/{os_id}/iniciar", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/ordens-servico/{os_id}/iniciar", dependencies=[Depends(require_api_auth)])
 async def api_iniciar_ordem(os_id: int):
     """
     Transiciona OS de 'pendente' pra 'em_andamento' (usuario levou pra oficina).
@@ -26809,7 +26833,7 @@ async def api_atualizar_ordem(os_id: int, request: Request):
     return resultado
 
 
-@app.put("/api/ordens/{os_id}/editar-itens", dependencies=[Depends(require_scaffold_auth)])
+@app.put("/api/ordens/{os_id}/editar-itens", dependencies=[Depends(require_api_auth)])
 async def api_editar_itens_os(os_id: int, request: Request):
     """Edita descricoes dos itens de uma OS (inclusive concluida)"""
     import json as json_module
@@ -26891,7 +26915,7 @@ async def api_seed_prado(request: Request):
     return {"status": "success", "veiculo": veiculo}
 
 
-@app.post("/api/veiculos/{veiculo_id}/atualizar-notas-fabricante", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/atualizar-notas-fabricante", dependencies=[Depends(require_api_auth)])
 async def api_atualizar_notas_fabricante(veiculo_id: int):
     """Atualiza os itens de manutencao com as notas/especificacoes do fabricante"""
     count = atualizar_notas_fabricante_prado(veiculo_id)
@@ -26900,7 +26924,7 @@ async def api_atualizar_notas_fabricante(veiculo_id: int):
 
 # ==================== UPLOAD OS VIA FOTO ====================
 
-@app.post("/api/veiculos/{veiculo_id}/upload-os", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/upload-os", dependencies=[Depends(require_api_auth)])
 async def api_upload_os_foto(veiculo_id: int, file: UploadFile = File(...)):
     """Upload de foto de OS/NF com extracao automatica de dados via IA"""
     import asyncio
@@ -26943,7 +26967,7 @@ async def api_upload_os_foto(veiculo_id: int, file: UploadFile = File(...)):
     }
 
 
-@app.post("/api/veiculos/{veiculo_id}/confirmar-os-foto", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/veiculos/{veiculo_id}/confirmar-os-foto", dependencies=[Depends(require_api_auth)])
 async def api_confirmar_os_foto(veiculo_id: int, request: Request):
     """Confirma e registra OS a partir dos dados extraidos da foto"""
     from services.veiculos import criar_ordem_servico, finalizar_ordem_servico
@@ -27175,7 +27199,7 @@ def api_delete_campaign(campaign_id: int):
     return {"status": "deleted"}
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/activate", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/activate", dependencies=[Depends(require_api_auth)])
 def api_activate_campaign(campaign_id: int):
     """Ativa uma campanha e enrolla contatos baseado nos filtros."""
     result = _campaign_service.activate_campaign(campaign_id)
@@ -27184,7 +27208,7 @@ def api_activate_campaign(campaign_id: int):
     return result
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/pause", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/pause", dependencies=[Depends(require_api_auth)])
 def api_pause_campaign(campaign_id: int):
     """Pausa uma campanha ativa."""
     success = _campaign_service.pause_campaign(campaign_id)
@@ -27193,7 +27217,7 @@ def api_pause_campaign(campaign_id: int):
     return {"status": "paused"}
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/resume", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/resume", dependencies=[Depends(require_api_auth)])
 def api_resume_campaign(campaign_id: int):
     """Retoma uma campanha pausada."""
     success = _campaign_service.resume_campaign(campaign_id)
@@ -27202,7 +27226,7 @@ def api_resume_campaign(campaign_id: int):
     return {"status": "resumed"}
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/complete", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/complete", dependencies=[Depends(require_api_auth)])
 def api_complete_campaign(campaign_id: int):
     """Finaliza uma campanha e retorna métricas."""
     result = _campaign_service.complete_campaign(campaign_id)
@@ -27225,7 +27249,7 @@ def api_list_enrollments(
     )
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/enroll", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/enroll", dependencies=[Depends(require_api_auth)])
 async def api_enroll_contact(campaign_id: int, request: Request):
     """Enrolla um contato específico em uma campanha."""
     data = await request.json()
@@ -27239,7 +27263,7 @@ async def api_enroll_contact(campaign_id: int, request: Request):
     return {"status": "enrolled"}
 
 
-@app.delete("/api/v1/campaigns/{campaign_id}/enrollments/{contact_id}", dependencies=[Depends(require_scaffold_auth)])
+@app.delete("/api/v1/campaigns/{campaign_id}/enrollments/{contact_id}", dependencies=[Depends(require_api_auth)])
 def api_remove_enrollment(campaign_id: int, contact_id: int, motivo: Optional[str] = None):
     """Remove um contato de uma campanha."""
     success = _campaign_service.remove_from_campaign(campaign_id, contact_id, motivo)
@@ -27254,7 +27278,7 @@ def api_campaign_funnel(campaign_id: int):
     return _campaign_service.get_campaign_funnel(campaign_id)
 
 
-@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/pause", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/pause", dependencies=[Depends(require_api_auth)])
 def api_pause_enrollment(enrollment_id: int):
     """Pausa um enrollment específico."""
     success = _campaign_service.pause_enrollment(enrollment_id)
@@ -27263,7 +27287,7 @@ def api_pause_enrollment(enrollment_id: int):
     return {"status": "paused"}
 
 
-@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/resume", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/resume", dependencies=[Depends(require_api_auth)])
 def api_resume_enrollment(enrollment_id: int):
     """Retoma um enrollment pausado."""
     success = _campaign_service.resume_enrollment(enrollment_id)
@@ -27272,7 +27296,7 @@ def api_resume_enrollment(enrollment_id: int):
     return {"status": "resumed"}
 
 
-@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/convert", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/convert", dependencies=[Depends(require_api_auth)])
 def api_mark_converted(enrollment_id: int, data: EnrollmentConvert):
     """Marca um enrollment como convertido."""
     success = _campaign_service.mark_converted(enrollment_id, data.notes)
@@ -27295,7 +27319,7 @@ from services.campaign_executor import CampaignExecutor
 _campaign_executor = CampaignExecutor()
 
 
-@app.post("/api/v1/campaigns/process-pending", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/process-pending", dependencies=[Depends(require_api_auth)])
 def api_process_pending_steps():
     """
     Processa steps pendentes de todas as campanhas ativas.
@@ -27305,7 +27329,7 @@ def api_process_pending_steps():
     return result
 
 
-@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/execute", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/execute", dependencies=[Depends(require_api_auth)])
 def api_execute_enrollment_step(enrollment_id: int):
     """Executa o próximo step de um enrollment específico."""
     result = _campaign_executor.execute_single_enrollment(enrollment_id)
@@ -27323,7 +27347,7 @@ def api_campaign_linkedin_stats(campaign_id: int):
     return get_enrichment_stats(campaign_id)
 
 
-@app.post("/api/v1/campaigns/{campaign_id}/enrich-linkedin", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/{campaign_id}/enrich-linkedin", dependencies=[Depends(require_api_auth)])
 def api_enrich_campaign_linkedin(campaign_id: int, limit: int = 50):
     """
     Enrich campaign contacts with LinkedIn posts data.
@@ -27334,7 +27358,7 @@ def api_enrich_campaign_linkedin(campaign_id: int, limit: int = 50):
     return enrich_campaign_contacts(campaign_id, limit)
 
 
-@app.post("/api/v1/campaigns/enrich-linkedin-tasks", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/campaigns/enrich-linkedin-tasks", dependencies=[Depends(require_api_auth)])
 async def api_enrich_linkedin_tasks(limit: int = 20):
     """
     Enrich pending LinkedIn tasks with actual post links via LinkdAPI.
@@ -27455,7 +27479,7 @@ async def api_enrich_linkedin_tasks(limit: int = 20):
     return stats
 
 
-@app.post("/api/v1/contacts/{contact_id}/enrich-linkedin", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/v1/contacts/{contact_id}/enrich-linkedin", dependencies=[Depends(require_api_auth)])
 def api_enrich_contact_linkedin(contact_id: int):
     """Enrich a single contact with LinkedIn data."""
     import os
@@ -27497,7 +27521,7 @@ class AtaDocxRequest(BaseModel):
     template: Optional[str] = None  # None = default template. Future: "vallen", "alba", etc.
 
 
-@app.post("/api/ata/generate", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/ata/generate", dependencies=[Depends(require_api_auth)])
 async def generate_ata_from_transcription(request: Request, background_tasks: BackgroundTasks):
     """
     Generate ata from transcription using Claude — runs in BACKGROUND.
@@ -27647,7 +27671,7 @@ Retorne APENAS o JSON válido."""
         logger.error(f"Background ata generation error: {e}")
 
 
-@app.post("/api/ata/generate-docx", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/ata/generate-docx", dependencies=[Depends(require_api_auth)])
 async def generate_ata_docx_endpoint(req: AtaDocxRequest):
     """
     Generate a professionally formatted DOCX from ata markdown.
@@ -27816,7 +27840,7 @@ class AtaSendEmailRequest(BaseModel):
     contact_ids: Optional[List[int]] = None
 
 
-@app.post("/api/ata/send-email", dependencies=[Depends(require_scaffold_auth)])
+@app.post("/api/ata/send-email", dependencies=[Depends(require_api_auth)])
 async def send_ata_email(req: AtaSendEmailRequest):
     """
     Share ata (and optionally RACI sheet) with recipients via Google Drive
