@@ -197,6 +197,26 @@ ANDAIME_ANONIMO_OK = {
 # quisesse deixar aberta.
 ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TETO DE ROTAS MUTANTES SEM AUTH — o que impede a divida de crescer.
+#
+# Medido em 03/08/2026 com `_rotas_de_main` (que tambem reconhece comparacao
+# manual de segredo, entao e mais preciso que um grep): **193** rotas
+# POST/PUT/PATCH/DELETE sem NENHUMA verificacao, de 368 mutantes. Em 30/07 o
+# board registrava ~184 — cresceu em quatro dias. Fechar as 193 sem barrar as
+# novas e enxugar gelo, e por isso este teto vem ANTES do fechamento por modulo.
+#
+# Confirmado exposto, nao teorico: `POST /api/contacts/99999999/snooze` responde
+# `404 "Contato nao encontrado"` a curl anonimo — o handler e alcancado. O unico
+# middleware e CORS, que nao protege contra curl.
+#
+# COMO BAIXAR ESTE NUMERO: ao fechar um modulo, rode o teste, veja o numero novo
+# e atualize aqui. **Baixar e obrigatorio** — se o teto ficar folgado, ele para
+# de proteger e vira decoracao (foi o que aconteceu com `ANDAIME_LEITURA_EXPOSTA`
+# antes de ser esvaziada). Subir exige decisao explicita e justificativa aqui.
+TETO_MUTANTES_SEM_AUTH = 193
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _rotas_de_main():
     """[(lineno, metodo, path, tem_auth, nome_da_funcao)] de app/main.py."""
@@ -292,3 +312,43 @@ class TestClasseAndaime:
         finally:
             MAIN_PY = original
             os.unlink(tmp)
+
+
+class TestTetoDeRotasMutantes:
+    """A CLASSE MAIOR — nao deixar a divida crescer enquanto ela nao e paga.
+
+    As rotas de andaime (testes acima) sao a divida NOMEADA. Esta classe cuida da
+    divida de MASSA: 193 rotas POST/PUT/PATCH/DELETE sem verificacao nenhuma.
+
+    Por que teto e nao zero: exigir zero reprovaria o repo inteiro hoje e o teste
+    viraria `skip` na primeira semana — que e como guarda morre. Teto congela o
+    numero e obriga a decisao consciente pra cada rota nova.
+    """
+
+    def _mutantes_sem_auth(self):
+        return [(m, p) for _, m, p, tem_auth, _ in _rotas_de_main()
+                if m in ("POST", "PUT", "PATCH", "DELETE") and not tem_auth]
+
+    def test_divida_nao_cresce(self):
+        atuais = self._mutantes_sem_auth()
+        assert len(atuais) <= TETO_MUTANTES_SEM_AUTH, (
+            f"rotas mutantes sem auth: {len(atuais)} — o teto e "
+            f"{TETO_MUTANTES_SEM_AUTH}. Uma rota nova que escreve sem verificar "
+            f"credencial foi adicionada.\n"
+            f"Ou voce poe auth nela (`require_scaffold_auth` aceita sessao OU "
+            f"X-API-Key), ou sobe o teto AQUI com justificativa escrita.\n"
+            f"Contexto: `POST /api/contacts/{{id}}/snooze` responde 404 a curl "
+            f"anonimo em producao — estas rotas sao alcancaveis de verdade."
+        )
+
+    def test_teto_nao_fica_folgado(self):
+        """Guarda contra o teto virar decoracao. Se o numero real caiu (modulo
+        fechado) e ninguem baixou o teto, ele para de proteger: uma rota nova
+        passaria despercebida usando a folga. Baixar e obrigatorio."""
+        atuais = self._mutantes_sem_auth()
+        folga = TETO_MUTANTES_SEM_AUTH - len(atuais)
+        assert folga <= 5, (
+            f"o teto ({TETO_MUTANTES_SEM_AUTH}) esta {folga} acima do real "
+            f"({len(atuais)}). Baixe TETO_MUTANTES_SEM_AUTH para {len(atuais)} — "
+            f"teto folgado deixa entrar rota nova sem ninguem ver."
+        )
