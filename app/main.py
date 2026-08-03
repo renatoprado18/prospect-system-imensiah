@@ -11040,8 +11040,15 @@ async def cron_run_auto_enrich(request: Request):
 
     try:
         async def _run():
+            # 03/08/26 — lote 5 -> 3. Ao subir `max_tokens` de 2000 pra 8000 (o
+            # teto baixo truncava a resposta e quebrava o JSON), cada contato
+            # passou a demorar mais e 5 sequenciais estouraram os 240s: a rodada
+            # das 14:18 morreu inteira por timeout, sem enriquecer ninguem.
+            # Lote menor cabe na janela. A fila anda mais devagar por rodada, mas
+            # ANDA — antes o livelock fazia os mesmos 5 falharem todo dia e
+            # ninguem da posicao 6 em diante era alcancado.
             with get_db() as conn:
-                return await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
+                return await auto_enrich_priority_contacts(conn, circulo_max=2, limit=3)
 
         result = await _aio.wait_for(_run(), timeout=240.0)
         return {"status": "ok", "job": "run-auto-enrich", "result": result}
