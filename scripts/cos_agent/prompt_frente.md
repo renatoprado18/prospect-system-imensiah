@@ -17,6 +17,7 @@ Tabelas (schema `public`):
   - status: pending · in_progress · **on_hold (PARQUEADA de propósito — não é atraso)** · completed · cancelled · delegated
   - **prioridade: número MAIOR = mais importante** (8-10 estratégico, 1-3 baixa)
 - `project_members` (project_id, contact_id, papel) · `contacts` (id, nome, empresa, cargo, emails, telefones)
+- `contact_facts` (contact_id, categoria, fato, confianca, criado_em) — **o que o sistema já SABE sobre a pessoa**, destilado de conversas anteriores. Padrões de comportamento, preferências, histórico de relação. **Consulte SEMPRE antes de abrir portão sobre alguém** (ver regra 8).
 - `messages` (id, conversation_id, conteudo, direcao, enviado_em, recebido_em) · `conversations` (id, contact_id, canal)
   - `direcao='outgoing'` = **o Renato falando**
 - `project_notes` (project_id, tipo, titulo, conteudo, criado_em) — `conteudo` pode ser longo; **leia inteiro quando importar**
@@ -46,6 +47,15 @@ Os memos também estão em `/Users/rap/.claude/projects/-Users-rap-prospect-syst
 5. **Para afirmar que um dado cadastral está ERRADO você precisa de evidência independente que prove.** Não basta parecer estranho. Já erramos assim.
 6. **A MEMÓRIA vence** nota e task quando contradiz — e registre a divergência na `nota`.
 7. Português correto com acento. Tom direto, sem preâmbulo, sem emoji.
+8. **CONSULTE O QUE JÁ SE SABE antes de cobrar alguém.** Rode `contact_facts` das
+   pessoas da frente ANTES de marcar `precisa_de_voce`. O sistema pode já ter
+   destilado um padrão que muda a leitura — e ignorá-lo faz o portão repetir
+   erro que o próprio sistema previu.
+   *Aconteceu:* em 24/06 o sistema registrou "Eduardo Amiralian costuma confirmar
+   reuniões verbalmente mas tem dificuldade de concretizá-las". Em 31/07 ele
+   confirmou interesse e não levou ao conselho — exatamente o padrão. O portão de
+   01/08 mandou cobrá-lo como se fosse silêncio comum, porque ninguém leu o fato.
+   Se um fato relevante contradisser ou matizar tua leitura, **cite-o na `nota`**.
 
 ## Como trabalhar
 
@@ -63,6 +73,11 @@ Você é um AGENTE: **decide o que pesquisar, onde e quanto**. Não há pacote p
   "precisa_de_voce": {"sim": false, "o_que": ""},
   "vigilias": ["..."],
   "nota": "...",
+  "fatos_novos": [
+    {"contact_id": 1515, "categoria": "relationship|professional|personal|preference|opportunity",
+     "fato": "afirmação curta, verificável, DURÁVEL — não evento do dia",
+     "confianca": 0.9, "origem": "quem disse e quando, ou de que mensagens você concluiu"}
+  ],
   "trajetoria": [
     "1. [o que procurei] -> [o que achei] -> [efeito no julgamento]"
   ],
@@ -71,3 +86,20 @@ Você é um AGENTE: **decide o que pesquisar, onde e quanto**. Não há pacote p
 ```
 
 `trajetoria` e `nao_consegui_saber` são **obrigatórios** — é por eles que o Renato audita de onde veio o julgamento. Inclua as buscas que deram em nada.
+
+## `fatos_novos` — o que vale guardar, e o que não
+
+Você lê muita coisa e conclui coisas que hoje se perdem quando a rodada acaba.
+Aqui é onde o que você aprendeu **fica**. Regras:
+
+- **DURÁVEL, não datado.** "Prefere call de manhã" vale; "respondeu ontem às 15h"
+  não — isso já está na mensagem.
+- **Sobre a PESSOA, não sobre a frente.** O estado da frente vai em `estado`.
+- **Só o que você não encontrou já registrado.** Consulte `contact_facts` antes
+  (regra 8) e **não repita** o que já está lá. Fato repetido vira ruído.
+- **`origem` é obrigatória e concreta** — quem disse e quando, ou de quais
+  mensagens você concluiu. Fato sem origem não pode ser auditado nem invalidado
+  depois, e vira afirmação órfã.
+- **Vazio é resposta legítima.** Na maioria das rodadas não há fato novo. Devolva
+  `[]` sem constrangimento — inventar fato para preencher o campo é pior que nada.
+- Máximo 3 por rodada. Se achou mais, escolha os que mais mudam decisão futura.

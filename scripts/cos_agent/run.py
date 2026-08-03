@@ -246,6 +246,14 @@ def julgar(frente: dict, ro_url: str) -> dict:
         # julgamento, que é a pergunta que originou esta frente inteira
         "trajetoria": d.get("trajetoria") or [],
         "nao_consegui_saber": d.get("nao_consegui_saber") or [],
+        # 03/08 — sem esta linha o campo morria AQUI. Este dict é montado com
+        # chaves fixas, então o que o agente devolve e não está listado some em
+        # silêncio. Foi o que aconteceu na 1ª rodada com `fatos_novos`: o prompt
+        # pedia, o `persistir_fatos` esperava, e no meio a fronteira descartava.
+        # É a MESMA classe do defeito investigado nesta manhã, em que o motivo do
+        # erro do enriquecimento morria uma linha depois de ser produzido. Toda
+        # fronteira entre funções é um lugar onde dado some sem avisar.
+        "fatos_novos": d.get("fatos_novos") or [],
         "_meta": {"duracao_s": dur, "custo_usd": custo, "motor": "agente_local",
                   "julgado_em": agora},
     }
@@ -357,6 +365,66 @@ def fundir(anterior: dict, novos: list[dict], triagem: dict) -> dict:
                 if not (d.get("precisa_de_voce") or {}).get("sim")]
     return {"frentes": frentes, "precisa": precisa,
             "vigilias": vigilias, "cobertas": cobertas}
+
+
+def persistir_fatos(owner_url: str, ro_url: str, debriefs: list[dict]) -> int:
+    """Grava o que o agente aprendeu. Devolve quantos fatos entraram.
+
+    POR QUE AQUI E NÃO NO AGENTE. A credencial dele (`cos_agent_ro`) nega
+    escrita no Postgres — não por instrução no prompt, por permissão. Essa é a
+    garantia central do desenho e não se abre mão pra ganhar comodidade. Então o
+    agente DECLARA o que aprendeu no JSON e o runner é quem escreve.
+
+    O QUE ESTA FUNÇÃO RECUSA, e é o mais importante:
+    - fato sem `contact_id` ou sem texto — não dá pra ligar a ninguém
+    - fato sem `origem` — vira afirmação órfã, que não se audita nem se invalida
+      depois. Foi assim que o fato de 24/06 sobre o Eduardo ficou com a
+      procedência escrita em PROSA ("padrão repetido em dez/2025, abr e mai") em
+      vez de vínculo, e precisou de leitura manual de 20 mensagens pra conferir.
+    - fato repetido — comparação por texto normalizado contra o que a pessoa já
+      tem. Sem isso, cada rodada regravaria as mesmas conclusões e em um mês
+      `contact_facts` viraria o que `system_memories` virou: um saco.
+    - categoria fora do enum — o campo já tem lixo em dois idiomas
+      (`professional` 493 / `profissional` 7) justamente por nunca ter sido
+      fechado.
+    """
+    CATEGORIAS = {"relationship", "professional", "personal", "preference", "opportunity"}
+    candidatos = []
+    for d in debriefs:
+        for f in (d.get("fatos_novos") or [])[:3]:   # teto por frente, igual ao prompt
+            cid, texto = f.get("contact_id"), (f.get("fato") or "").strip()
+            origem = (f.get("origem") or "").strip()
+            cat = (f.get("categoria") or "").strip().lower()
+            if not cid or len(texto) < 15 or not origem:
+                continue
+            if cat not in CATEGORIAS:
+                cat = "professional"
+            candidatos.append((int(cid), cat, texto, float(f.get("confianca") or 0.8),
+                               origem, d.get("project_id")))
+    if not candidatos:
+        return 0
+
+    def _norm(s: str) -> str:
+        return " ".join(s.lower().split())[:120]
+
+    gravados = 0
+    with _conn(owner_url) as c, c.cursor() as cur:
+        for cid, cat, texto, conf, origem, pid in candidatos:
+            cur.execute("SELECT fato FROM contact_facts WHERE contact_id = %s", (cid,))
+            existentes = {_norm(r["fato"] or "") for r in cur.fetchall()}
+            if _norm(texto) in existentes:
+                continue
+            cur.execute(
+                """INSERT INTO contact_facts
+                       (contact_id, categoria, fato, fonte, confianca, verificado,
+                        valido_desde, criado_em)
+                   VALUES (%s, %s, %s, %s, %s, false, NOW(), NOW())""",
+                (cid, cat, f"{texto} [origem: {origem}]"[:1000],
+                 f"cos_agent:frente_{pid}", conf),
+            )
+            gravados += 1
+        c.commit()
+    return gravados
 
 
 def gravar(owner_url: str, payload: dict) -> int:
@@ -607,6 +675,18 @@ def main() -> int:
     ruim = [d for d in debriefs if d.get("error")]
     for d in ruim:
         print(f"[cos-agent] #{d['project_id']} falhou: {d['error']}", file=sys.stderr)
+
+    # O que o agente APRENDEU fica. Até 03/08 ele lia tudo, concluía, e o que
+    # concluiu morria quando a rodada acabava — o conhecimento era reconstruído
+    # do zero a cada vez. O caso que provou: em 24/06 o sistema já sabia que o
+    # Eduardo "confirma verbalmente mas não concretiza"; em 31/07 o padrão se
+    # repetiu pela quarta vez e nada foi atualizado.
+    # Quem grava é o RUNNER, não o agente — a credencial dele nega escrita por
+    # construção, e essa garantia não se abre mão. O agente devolve `fatos_novos`
+    # no JSON; aqui eles viram linha em `contact_facts` com origem registrada.
+    n_fatos = persistir_fatos(owner_url, ro_url, ok)
+    if n_fatos:
+        print(f"[cos-agent] {n_fatos} fato(s) novo(s) gravados em contact_facts")
 
     # Funde com a foto anterior: quem não se mexeu mantém o julgamento de ontem.
     # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).
