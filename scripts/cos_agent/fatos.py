@@ -218,20 +218,40 @@ def main() -> int:
 
 
 def gravar(url: str, texto: str) -> int:
-    """Aplica o veredito. Formato: '#id — CONFIRMA|CORRIGE|DESCARTA'."""
+    """Aplica o veredito. Formato: '#id — CONFIRMA|DESCARTA' ou '#id — CORRIGE: texto'.
+
+    POR QUE EXISTE O TERCEIRO ESTADO. Nasceu com dois botões e o Renato achou o
+    caso que nenhum dos dois cobria, na primeira sentada: "Renato possui uma
+    pessoa próxima chamada 'Rico' (possivelmente filho) que treina judô".
+    Confirmar seria gravar que Rico é filho dele — falso. Descartar jogaria fora
+    a parte verdadeira: Rico existe e treina judô com ele. A resposta real era
+    "'Rico' é apelido de Ricardo Lindenbojm, colega de judô".
+
+    Fato parcialmente certo é o caso COMUM de uma extração que erra — binário
+    confirma/descarta força a escolher entre gravar mentira e perder verdade.
+    O texto que ele escreve VIRA o fato: a correção humana é a melhor fonte que
+    este banco tem.
+    """
     linhas = [l.strip() for l in texto.splitlines() if l.strip().startswith("#")]
     if not linhas:
         sys.exit("nada reconhecido — esperado '#id — VEREDITO'")
     ok = 0
     with _conn(url) as conn, conn.cursor() as cur:
         for l in linhas:
-            m = re.match(r"#(\d+)\s*—\s*([A-ZÀ-Ú]+)", l)
+            m = re.match(r"#(\d+)\s*—\s*([A-ZÀ-Ú]+)\s*(?::\s*(.+))?$", l)
             if not m:
                 print(f"  ? {l[:50]}"); continue
-            fid, v = int(m.group(1)), m.group(2)
+            fid, v, corrigido = int(m.group(1)), m.group(2), (m.group(3) or "").strip()
             if v == "CONFIRMA":
                 cur.execute("""UPDATE contact_facts SET confianca=%s, verificado=TRUE,
                                atualizado_em=NOW() WHERE id=%s""", (CONF_CONFIRMADO, fid))
+            elif v == "CORRIGE":
+                if not corrigido:
+                    print(f"  ? #{fid}: CORRIGE sem texto — ignorado"); continue
+                # 0.95, acima do CONF_CONFIRMADO: veio do Renato, não do modelo.
+                cur.execute("""UPDATE contact_facts SET fato=%s, confianca=0.95,
+                               verificado=TRUE, atualizado_em=NOW() WHERE id=%s""",
+                            (corrigido, fid))
             elif v == "DESCARTA":
                 # `valido_ate` em vez de DELETE: o fato errado é evidência de que
                 # o extrator erra, e apagar some com essa evidência.

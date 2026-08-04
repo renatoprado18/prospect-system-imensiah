@@ -82,8 +82,11 @@ const salvo=JSON.parse(localStorage.getItem(CHAVE)||"{}");
 function pintar(){
   let n=0;
   document.querySelectorAll(".portao").forEach(p=>{
-    const v=salvo[p.dataset.uid];
+    const e=salvo[p.dataset.uid], v=e&&e.v;
     p.dataset.done=v?"1":"";
+    p.dataset.v=v||"";
+    const inp=p.querySelector(".fix");
+    if(inp&&e&&e.txt!==undefined&&inp.value!==e.txt) inp.value=e.txt;
     p.querySelectorAll(".veredito button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.v===v)));
     if(v)n++;
   });
@@ -91,9 +94,20 @@ function pintar(){
 }
 document.querySelectorAll(".veredito button").forEach(b=>{
   b.addEventListener("click",()=>{
-    const uid=b.closest(".portao").dataset.uid;
-    if(salvo[uid]===b.dataset.v) delete salvo[uid]; else salvo[uid]=b.dataset.v;
+    const card=b.closest(".portao"), uid=card.dataset.uid;
+    const atual=salvo[uid];
+    if(atual&&atual.v===b.dataset.v) delete salvo[uid];
+    else salvo[uid]={v:b.dataset.v, txt:(atual&&atual.txt)||""};
     localStorage.setItem(CHAVE,JSON.stringify(salvo)); pintar();
+    if(salvo[uid]&&salvo[uid].v==="corrige") card.querySelector(".fix").focus();
+  });
+});
+document.querySelectorAll(".fix").forEach(inp=>{
+  inp.addEventListener("input",()=>{
+    const uid=inp.closest(".portao").dataset.uid;
+    if(!salvo[uid]) salvo[uid]={v:"corrige",txt:""};
+    salvo[uid].txt=inp.value;
+    localStorage.setItem(CHAVE,JSON.stringify(salvo));
   });
 });
 document.getElementById("limpar").addEventListener("click",()=>{
@@ -104,8 +118,10 @@ document.getElementById("limpar").addEventListener("click",()=>{
 document.getElementById("copiar").addEventListener("click",async()=>{
   const L=[]; let c=0;
   document.querySelectorAll(".portao").forEach(p=>{
-    const v=salvo[p.dataset.uid]; if(!v) return; c++;
-    L.push("#"+p.dataset.uid+" — "+v.toUpperCase());
+    const e=salvo[p.dataset.uid]; if(!e||!e.v) return;
+    if(e.v==="corrige"&&!(e.txt||"").trim()) return;   // correção sem texto não vale
+    c++;
+    L.push("#"+p.dataset.uid+" — "+e.v.toUpperCase()+(e.v==="corrige"?": "+e.txt.trim():""));
   });
   const txt=L.join("\n"), btn=document.getElementById("copiar"), out=document.getElementById("saida");
   out.value=txt; out.style.display="block";
@@ -140,8 +156,11 @@ def render(itens: list) -> str:
             f'<p>{_esc(f["fato"])}</p>{ev}'
             f'<div class="veredito">'
             f'<button type="button" data-v="confirma">Confirma</button>'
+            f'<button type="button" data-v="corrige">Corrige</button>'
             f'<button type="button" data-v="descarta">Descarta</button>'
-            f'</div></article>')
+            f'</div>'
+            f'<input class="fix" type="text" placeholder="como é de verdade — vira o fato novo">'
+            f'</article>')
 
     n = len(itens)
     return f"""<!doctype html>
@@ -155,6 +174,11 @@ def render(itens: list) -> str:
 .ctx ul {{ margin:.35rem 0 0; padding-left:1.1rem; font-size:.82rem; color:var(--ink-soft); }}
 .ctx li {{ margin-bottom:.2rem; }}
 .ctx .nada {{ margin:.3rem 0 0; font-size:.82rem; color:var(--ink-faint); font-style:italic; }}
+.fix {{ display:none; width:100%; margin-top:.5rem; padding:.42rem .6rem; font:inherit;
+  font-size:.84rem; border:1px solid var(--brass-soft); border-radius:2px;
+  background:var(--paper); color:var(--ink); }}
+.fix:focus-visible {{ outline:2px solid var(--brass); outline-offset:1px; }}
+.portao[data-v="corrige"] .fix {{ display:block; }}
 </style></head><body>
 <div class="wrap">
   <p class="eyebrow">Enriquecimento · hipóteses não resolvidas</p>

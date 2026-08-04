@@ -88,3 +88,33 @@ def test_pagina_tem_o_que_o_script_procura(nome):
         assert f'id="{ident}"' in html, f"{nome}: falta #{ident}"
     assert "data-uid=" in html
     assert 'data-v="' in html
+
+
+# ------------------------------------------------- o terceiro estado --
+
+def test_fila_de_fatos_tem_corrige_com_campo():
+    """Nasceu com Confirma/Descarta e o Renato achou o caso que nenhum cobria na
+    primeira sentada: "'Rico' (possivelmente filho) que treina judô" — confirmar
+    gravaria mentira (não é filho), descartar perderia a verdade (Rico existe e
+    treina judô). A resposta era corrigir: "apelido de Ricardo Lindenbojm".
+    """
+    import fatos_html
+
+    html = fatos_html.render([{
+        "id": 1, "contato": "X", "categoria": "personal", "fato": "f",
+        "confianca": 0.45, "evidencia": [],
+    }])
+    assert 'data-v="corrige"' in html
+    assert 'class="fix"' in html, "sem campo de texto, CORRIGE não tem o que gravar"
+
+
+def test_parser_aceita_correcao_com_texto():
+    import importlib.util
+    import pathlib
+
+    p = pathlib.Path(_ROOT) / "scripts" / "cos_agent" / "fatos.py"
+    fonte = p.read_text()
+    # o regex tem que capturar o texto depois de ':' — sem isso a correção
+    # entraria como veredito vazio e o fato ficaria como estava
+    assert r'([A-ZÀ-Ú]+)\s*(?::\s*(.+))?$' in fonte
+    assert "CORRIGE sem texto" in fonte, "correção vazia tem que ser recusada, não gravada"
