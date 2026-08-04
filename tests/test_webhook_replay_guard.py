@@ -171,3 +171,40 @@ def test_catchup_marca_payload_como_replay():
 
     handler = inspect.getsource(evolution_api.handle_evolution_webhook)
     assert 'payload.get("_catchup")' in handler
+
+
+# ------------------------------------------- hora da mensagem x hora da gravacao --
+
+def test_dm_grava_hora_da_mensagem_nao_hora_da_gravacao():
+    """O INSERT de DM tem que datar pela mensagem, nao por `now()`.
+
+    Era `timestamp = datetime.now()`. Ao vivo a diferenca e de segundos e passa
+    despercebida; em replay a mensagem entra datada de HOJE. No backfill de
+    04/08 o fio do Marcelo Domenico (ontem 17:11 BRT) foi gravado como 12:56 de
+    hoje -- quem le por recencia ve conversa velha como quente.
+
+    Le o fonte porque o INSERT exige DB; o que importa aqui e que a linha
+    `datetime.now()` nao volte num refactor.
+    """
+    import inspect
+    from integrations import evolution_api as ev
+
+    src = inspect.getsource(ev.process_incoming_message)
+    assert "timestamp = datetime.now()" not in src, (
+        "DM voltou a datar pela hora da gravacao -- replay/catchup vao mentir a data"
+    )
+    assert 'data.get("messageTimestamp")' in src
+
+
+def test_grupo_ja_datava_pela_mensagem():
+    """Guarda o caminho que ja estava certo, pra simetria nao se perder.
+
+    `persist_group_message_realtime` sempre datou pelo `messageTimestamp` -- foi
+    a comparacao com ele que revelou que a DM nao fazia o mesmo.
+    """
+    import inspect
+    from integrations import evolution_api as ev
+
+    src = inspect.getsource(ev.persist_group_message_realtime)
+    assert "messageTimestamp" in src, "o caminho de grupo perdeu o messageTimestamp"
+    assert "datetime.now()" not in src

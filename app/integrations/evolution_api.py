@@ -1065,7 +1065,24 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
 
         # Inserir mensagem
         direction = "outgoing" if from_me else "incoming"
-        timestamp = datetime.now()
+
+        # Hora da MENSAGEM, nao hora da gravacao. Era `datetime.now()`: ao vivo a
+        # diferenca e de segundos e ninguem via, mas em replay (catchup /30min,
+        # backfill de gap) a mensagem entrava datada de HOJE. No backfill de 04/08
+        # o fio do Marcelo Domenico -- de ontem 17:11 BRT -- foi gravado como
+        # 12:56 de hoje. Quem le por recencia (CoS, portao do dia) passa a ver
+        # conversa velha como quente, e a ordem do dialogo inverte.
+        # `datetime.now()` ainda era naive no fuso do server (CLAUDE.md proibe);
+        # o caminho de grupo (linha ~700) ja fazia certo -- so a DM nao fazia.
+        raw_ts = data.get("messageTimestamp") or 0
+        try:
+            ts_int = int(raw_ts)
+        except (TypeError, ValueError):
+            ts_int = 0
+        if ts_int > 0:
+            timestamp = datetime.fromtimestamp(ts_int, tz=UTC).replace(tzinfo=None)
+        else:
+            timestamp = now_utc().replace(tzinfo=None)
 
         cursor.execute("""
             INSERT INTO messages
