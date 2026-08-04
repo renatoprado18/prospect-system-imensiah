@@ -69,7 +69,7 @@ async def get_contact_context(contact_id: int, db_connection) -> Dict[str, Any]:
     # Get contact info
     cursor.execute("""
         SELECT id, nome, apelido, empresa, cargo, emails, telefones,
-               linkedin, linkedin_headline, contexto, resumo_ai,
+               linkedin, linkedin_headline, contexto, resumo_ai, relacionamentos,
                ultimo_contato, total_interacoes
         FROM contacts WHERE id = %s
     """, (contact_id,))
@@ -117,6 +117,39 @@ async def get_contact_context(contact_id: int, db_connection) -> Dict[str, Any]:
         "email_messages": email_messages,
         "existing_facts": existing_facts
     }
+
+
+
+def _bloco_parentesco(contact: dict) -> str:
+    """Laco familiar CONFIRMADO desta pessoa com o Renato, pro prompt.
+
+    POR QUE (04/08/2026): o extrator inventava parentesco a partir de sinal
+    fraco. "Rico (possivelmente filho) que treina judo" era colega de judo;
+    "Monforte e filho de ou tem relacao proxima" era colega do PAI dele no
+    Citibank, decadas atras. Nos dois o modelo viu proximidade e concluiu
+    familia — e nenhum dos dois erros o Renato tinha como prever, porque
+    parentesco nao esta na conversa, esta na arvore.
+
+    A arvore agora existe: 30 fichas com laco vindo do GEDCOM do MyHeritage
+    (191 individuos, 57 familias). Este bloco poe a resposta na frente do
+    modelo, pra ele nao precisar adivinhar.
+    """
+    rels = contact.get("relacionamentos")
+    if isinstance(rels, str):
+        try:
+            rels = json.loads(rels)
+        except Exception:
+            rels = None
+    if not rels:
+        # AUSENCIA NAO E LICENCA. A arvore cobre 30 de 12.008 fichas; nao ter
+        # laco registrado significa "nao sei", nunca "nao ha".
+        return ("Nenhum parentesco registrado para esta pessoa.\n"
+                "ISSO NAO AUTORIZA INFERIR: a arvore cobre so parte dos contatos. "
+                "Sem laco aqui e sem a propria conversa dizer o grau, NAO afirme "
+                "parentesco — nem como hipotese.")
+    linhas = [f"- {r.get('tipo')} do Renato" for r in rels if r.get("tipo")]
+    return ("\n".join(linhas) + "\nEste laco e CONFIRMADO (arvore genealogica). "
+            "Use exatamente este grau; nao invente outro nem o contradiga.")
 
 
 def format_messages_for_ai(messages: List[Dict], contact_name: str, source: str) -> str:
@@ -228,6 +261,10 @@ LinkedIn Headline: {contact.get('linkedin_headline') or 'N/A'}
 Contexto: {contact.get('contexto') or 'N/A'}
 Total de interacoes: {contact.get('total_interacoes') or 0}
 Ultimo contato: {contact.get('ultimo_contato') or 'N/A'}
+
+## PARENTESCO (arvore genealogica — fonte de verdade)
+
+{_bloco_parentesco(contact)}
 
 ## FATOS JA CONHECIDOS
 
@@ -653,7 +690,7 @@ async def enrich_with_context(
     # Buscar dados atualizados do contato
     cursor.execute("""
         SELECT id, nome, apelido, empresa, cargo, emails, telefones,
-               linkedin, linkedin_headline, contexto, resumo_ai,
+               linkedin, linkedin_headline, contexto, resumo_ai, relacionamentos,
                ultimo_contato, total_interacoes, relationship_context,
                company_website, manual_notes, circulo
         FROM contacts WHERE id = %s
@@ -737,6 +774,10 @@ Ultimo contato: {contact.get('ultimo_contato') or 'N/A'}
 ## NOTAS MANUAIS
 
 {contact.get('manual_notes') or 'Nenhuma nota adicional.'}
+
+## PARENTESCO (arvore genealogica — fonte de verdade)
+
+{_bloco_parentesco(contact)}
 
 ## FATOS JA CONHECIDOS
 

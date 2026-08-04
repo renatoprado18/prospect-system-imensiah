@@ -125,3 +125,37 @@ def test_afirmacao_incerta_nao_e_resolvivel_por_busca(texto):
     """Hipótese sobre um FATO não se resolve achando ficha parecida — vai pra
     fila humana com o contexto, que é o que o Renato pediu."""
     assert _candidatos(texto) == []
+
+
+# --------------------------------------- parentesco vem da árvore, não do palpite --
+
+def test_laco_confirmado_entra_no_prompt():
+    """O erro que motivou tudo: "Rico (possivelmente filho)" era colega de judô;
+    "Monforte é filho de ou tem relação próxima" era colega do PAI dele no
+    Citibank. Parentesco não está na conversa — está na árvore. Agora está no
+    prompt."""
+    from services.contact_enrichment import _bloco_parentesco
+
+    txt = _bloco_parentesco({"relacionamentos": [{"tipo": "tio", "nome": "Renato"}]})
+    assert "tio do Renato" in txt
+    assert "CONFIRMADO" in txt
+
+
+def test_ausencia_de_laco_nao_autoriza_inferir():
+    """A árvore cobre 30 de 12.008 fichas. Se "sem laço" fosse lido como "não é
+    parente", o modelo voltaria a inventar — com aval do prompt."""
+    from services.contact_enrichment import _bloco_parentesco
+
+    txt = _bloco_parentesco({"relacionamentos": None})
+    assert "NAO AUTORIZA INFERIR" in txt
+    assert "NAO afirme" in txt
+
+
+def test_relacionamentos_chega_ao_prompt():
+    """Bloco perfeito com dado que nunca é carregado seria decoração."""
+    import inspect
+    from services import contact_enrichment as ce
+
+    fonte = inspect.getsource(ce)
+    assert fonte.count("resumo_ai, relacionamentos") == 2, "os 2 SELECTs têm que trazer"
+    assert fonte.count("_bloco_parentesco(contact)") == 2, "os 2 prompts têm que usar"
