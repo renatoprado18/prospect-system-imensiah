@@ -335,9 +335,30 @@ class AIAgentService:
         return saved
 
     async def run_daily_generation(self) -> Dict:
-        """Executa geracao diaria de todas as sugestoes + enriquecimento"""
+        """Geracao diaria: sugestoes (DESLIGADAS por padrao) + enriquecimento.
+
+        POR QUE AS SUGESTOES ESTAO DESLIGADAS (04/08/2026, decisao do Renato).
+        O verificador do modelo acusou `ai_suggestions` recebendo escrita numa
+        tabela que o contrato declara morta. Medido: **6.897 sugestoes
+        acumuladas, 100% `pending`, ZERO acao humana** — `aceita_em` e
+        `descartada_em` NULL em toda a historia da tabela, 2.517 so nos ultimos
+        30 dias. Ha leitor no `main.py`, mas ninguem decide nada com elas.
+        Produtor rodando /dia contra consumidor que nao existe.
+
+        O QUE NAO FOI DESLIGADO: o passo 5, `auto_enrich_priority_contacts`.
+        Ele nao tem relacao com sugestao — enriquece contato C1-C2 e o resultado
+        e usado de verdade. Matar o cron inteiro (o caminho obvio) levaria ele
+        junto. Por isso a flag governa so os passos 1-4.
+
+        COMO RELIGAR: `AI_SUGGESTIONS_ENABLED=true` no ambiente. Nada foi
+        removido — geradores, tabela, dados e leitor seguem intactos
+        ([[feedback_no_demolition_learn_by_use]]). Se um dia houver superficie
+        onde o Renato de fato aceite/descarte, e so ligar de volta.
+        """
+        suggestions_on = (os.getenv("AI_SUGGESTIONS_ENABLED", "") or "").strip().lower() in ("1", "true", "yes")
+
         print("=" * 60)
-        print("AI AGENT - GERACAO DIARIA DE SUGESTOES")
+        print("AI AGENT - GERACAO DIARIA" + ("" if suggestions_on else " (sugestoes OFF)"))
         print("=" * 60)
         print(f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print()
@@ -345,36 +366,41 @@ class AIAgentService:
         results = {
             "started_at": datetime.now().isoformat(),
             "suggestions": {},
+            "suggestions_enabled": suggestions_on,
             "enrichment": {}
         }
 
-        # 1. Reconnect suggestions
-        print("[1/5] Gerando sugestoes de reconexao...", flush=True)
-        reconnect = self.generate_reconnect_suggestions(limit=30)
-        saved = self.save_suggestions(reconnect)
-        results["suggestions"]["reconnect"] = {"generated": len(reconnect), "saved": saved}
-        print(f"  -> {saved} sugestoes salvas", flush=True)
+        if suggestions_on:
+            # 1. Reconnect suggestions
+            print("[1/5] Gerando sugestoes de reconexao...", flush=True)
+            reconnect = self.generate_reconnect_suggestions(limit=30)
+            saved = self.save_suggestions(reconnect)
+            results["suggestions"]["reconnect"] = {"generated": len(reconnect), "saved": saved}
+            print(f"  -> {saved} sugestoes salvas", flush=True)
 
-        # 2. Birthday suggestions
-        print("[2/5] Gerando lembretes de aniversario...", flush=True)
-        birthday = self.generate_birthday_suggestions(days_ahead=7)
-        saved = self.save_suggestions(birthday)
-        results["suggestions"]["birthday"] = {"generated": len(birthday), "saved": saved}
-        print(f"  -> {saved} sugestoes salvas", flush=True)
+            # 2. Birthday suggestions
+            print("[2/5] Gerando lembretes de aniversario...", flush=True)
+            birthday = self.generate_birthday_suggestions(days_ahead=7)
+            saved = self.save_suggestions(birthday)
+            results["suggestions"]["birthday"] = {"generated": len(birthday), "saved": saved}
+            print(f"  -> {saved} sugestoes salvas", flush=True)
 
-        # 3. Followup suggestions
-        print("[3/5] Gerando sugestoes de follow-up...", flush=True)
-        followup = self.generate_followup_suggestions(limit=30)
-        saved = self.save_suggestions(followup)
-        results["suggestions"]["followup"] = {"generated": len(followup), "saved": saved}
-        print(f"  -> {saved} sugestoes salvas", flush=True)
+            # 3. Followup suggestions
+            print("[3/5] Gerando sugestoes de follow-up...", flush=True)
+            followup = self.generate_followup_suggestions(limit=30)
+            saved = self.save_suggestions(followup)
+            results["suggestions"]["followup"] = {"generated": len(followup), "saved": saved}
+            print(f"  -> {saved} sugestoes salvas", flush=True)
 
-        # 4. Health alert suggestions
-        print("[4/5] Gerando alertas de health...", flush=True)
-        health = self.generate_health_alert_suggestions(threshold=30, limit=20)
-        saved = self.save_suggestions(health)
-        results["suggestions"]["health_alert"] = {"generated": len(health), "saved": saved}
-        print(f"  -> {saved} sugestoes salvas", flush=True)
+            # 4. Health alert suggestions
+            print("[4/5] Gerando alertas de health...", flush=True)
+            health = self.generate_health_alert_suggestions(threshold=30, limit=20)
+            saved = self.save_suggestions(health)
+            results["suggestions"]["health_alert"] = {"generated": len(health), "saved": saved}
+            print(f"  -> {saved} sugestoes salvas", flush=True)
+        else:
+            print("[1-4/5] Sugestoes DESLIGADAS (AI_SUGGESTIONS_ENABLED != true)", flush=True)
+            print("        6.897 acumuladas, 100% pending, zero acao humana.", flush=True)
 
         # 5. Auto-enrich priority contacts (C1-C2)
         print("[5/5] Enriquecendo contatos prioritarios (C1-C2)...", flush=True)
