@@ -26,7 +26,29 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = llm.BALANCED
 
 import logging
+import re
 logger = logging.getLogger(__name__)
+
+# Marcadores de HIPOTESE dentro do campo `fato`. Ver a nota longa em
+# save_enrichment_results — o resumo e: fato que hesita no texto nao pode entrar
+# com confianca de fato afirmado.
+#
+# LIMITE CONHECIDO, registrado pra ninguem confiar demais: isto pega hedge
+# EXPLICITO. Uma inferencia afirmada com conviccao sobre algo que a conversa nao
+# sustenta passa igual — nao ha regex pra isso, e por isso a fila de revisao
+# existe.
+_HEDGE = re.compile(
+    r"\b(possivelmente|provavelmente|talvez|aparentemente|presumivelmente|"
+    r"parece que|parece ser|sugere que|sugerindo|indicando que|indica que|"
+    r"pode ser que|deve ser|imagino|suponho|acredito que|"
+    r"ou tem |ou e |ou é )",
+    re.IGNORECASE,
+)
+_CONF_HEDGE = 0.45
+
+
+def _tem_hedge(texto: str) -> bool:
+    return bool(texto) and bool(_HEDGE.search(texto))
 
 
 async def get_contact_context(contact_id: int, db_connection) -> Dict[str, Any]:
@@ -231,8 +253,22 @@ Analise PROFUNDAMENTE as conversas e gere insights ACIONAVEIS:
 
 2. **NOVOS FATOS** (lista): Extraia informacoes valiosas:
    - categoria: "professional", "personal", "preference", "relationship", "opportunity"
-   - fato: informacao especifica e util
-   - confianca: 0.5 a 1.0
+   - fato: informacao especifica e util, AFIRMADA COM CERTEZA
+   - confianca: 0.3 a 1.0
+
+   NAO ESCREVA HIPOTESE COMO SE FOSSE FATO. Se a conversa nao permite afirmar,
+   ha duas saidas legitimas — e "chutar com hedge" NAO e uma delas:
+     (a) OMITA o fato; ou
+     (b) escreva so o que voce REALMENTE viu, com confianca <= 0.5.
+
+   PROIBIDO dentro do campo `fato`: "possivelmente", "provavelmente", "talvez",
+   "aparentemente", "parece que", "sugere que", "X ou Y".
+     ERRADO: "relacionamento com Nizan (possivelmente Nizan Guanaes)"   conf 0.84
+     CERTO:  "mencionou um 'Nizan', sem sobrenome na conversa"          conf 0.45
+
+   O piso 0.5 antigo IMPEDIA voce de sinalizar duvida: sobrava empacotar a
+   incerteza no texto e manter o numero alto. Agora da pra ser honesto no
+   numero — use 0.3-0.5 pra o que viu mas nao consegue afirmar.
 
 3. **INSIGHTS** (objeto JSON):
    - forca_relacionamento: "forte", "medio", "fraco"
@@ -412,15 +448,42 @@ async def save_enrichment_results(
 
         # Insert new facts
         for fato in enrichment.get("fatos", []):
+            texto = fato.get("fato", "")
+            try:
+                conf = float(fato.get("confianca", 0.8) or 0.8)
+            except (TypeError, ValueError):
+                conf = 0.8
+
+            # REDE CONTRA HIPOTESE VESTIDA DE FATO. O prompt acima PEDE que nao
+            # aconteca, mas pedido nao e contrato — o modelo pode ignorar, e
+            # regra que so vive no prompt nao tem quem a faca valer.
+            #
+            # Medido no backfill de 04/08/2026: 22 de 167 fatos (13%) traziam
+            # hedge no texto com confianca media 0.84. "Monforte E FILHO DE OU
+            # TEM RELACAO PROXIMA com o circulo do Orestes"; "Nizan
+            # (POSSIVELMENTE Nizan Guanaes)". O texto hesitava e o numero nao —
+            # e quem le depois (inclusive a camada, que passou a consultar
+            # `contact_facts` antes de abrir portao) tratava palpite como
+            # estabelecido.
+            #
+            # REBAIXA, NAO RECUSA — mesma escolha do portao: "mencionou um
+            # Nizan" ainda vale alguma coisa; o que nao pode e entrar com cara
+            # de certeza. Com conf <= 0.45 ele some das leituras que exigem
+            # solidez e entra na fila de revisao (`fatos.py --revisar`), onde o
+            # Renato confirma ou descarta.
+            if _tem_hedge(texto):
+                conf = min(conf, _CONF_HEDGE)
+                stats["facts_hedge"] = stats.get("facts_hedge", 0) + 1
+
             cursor.execute("""
                 INSERT INTO contact_facts (contact_id, categoria, fato, fonte, confianca)
                 VALUES (%s, %s, %s, %s, %s)
             """, (
                 contact_id,
                 fato.get("categoria", "professional"),
-                fato.get("fato", ""),
+                texto,
                 "ai_enrichment",
-                fato.get("confianca", 0.8)
+                conf
             ))
             stats["facts_added"] += 1
 
@@ -702,8 +765,22 @@ Se Renato disse que conhece a pessoa de algum lugar especifico, use isso!
 
 2. **NOVOS FATOS** (lista): Extraia informacoes valiosas:
    - categoria: "professional", "personal", "preference", "relationship", "opportunity"
-   - fato: informacao especifica e util
-   - confianca: 0.5 a 1.0
+   - fato: informacao especifica e util, AFIRMADA COM CERTEZA
+   - confianca: 0.3 a 1.0
+
+   NAO ESCREVA HIPOTESE COMO SE FOSSE FATO. Se a conversa nao permite afirmar,
+   ha duas saidas legitimas — e "chutar com hedge" NAO e uma delas:
+     (a) OMITA o fato; ou
+     (b) escreva so o que voce REALMENTE viu, com confianca <= 0.5.
+
+   PROIBIDO dentro do campo `fato`: "possivelmente", "provavelmente", "talvez",
+   "aparentemente", "parece que", "sugere que", "X ou Y".
+     ERRADO: "relacionamento com Nizan (possivelmente Nizan Guanaes)"   conf 0.84
+     CERTO:  "mencionou um 'Nizan', sem sobrenome na conversa"          conf 0.45
+
+   O piso 0.5 antigo IMPEDIA voce de sinalizar duvida: sobrava empacotar a
+   incerteza no texto e manter o numero alto. Agora da pra ser honesto no
+   numero — use 0.3-0.5 pra o que viu mas nao consegue afirmar.
 
 3. **INSIGHTS** (objeto JSON):
    - forca_relacionamento: "forte", "medio", "fraco"
