@@ -90,3 +90,38 @@ def test_prompt_tambem_proibe():
     # os DOIS prompts (enrich_contact_with_ai e enrich_with_context)
     assert fonte.count("NAO ESCREVA HIPOTESE COMO SE FOSSE FATO") == 2
     assert "confianca: 0.3 a 1.0" in fonte, "o piso 0.5 impedia sinalizar dúvida"
+
+
+# ------------------------------------------ resolver antes de perguntar --
+
+def _candidatos(texto):
+    import importlib.util, pathlib
+    p = pathlib.Path(_ROOT) / "scripts" / "cos_agent" / "fatos.py"
+    spec = importlib.util.spec_from_file_location("_fatos", p)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_fatos"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        pytest.skip("fatos.py exige env do agente")
+    return mod.candidatos(texto)
+
+
+def test_resolve_so_duvida_de_identidade():
+    """Buscar ficha só responde dúvida de IDENTIDADE. Isso custou três rodadas
+    de falso positivo em 04/08 antes de ficar claro — a versão anterior dava
+    "Luis Cláudio é PROVAVELMENTE advogado" por confirmado porque existe uma
+    ficha "Luis Cláudio", que não diz nada sobre a profissão."""
+    assert _candidatos("relacionamento com Nizan (possivelmente Nizan Guanaes)") == ["Nizan Guanaes"]
+
+
+@pytest.mark.parametrize("texto", [
+    "Luis Cláudio é provavelmente advogado tributarista",
+    "hábito de ir ao 'charuto' (provavelmente espaço de charutaria)",
+    "Michele compartilhou links do Google (possivelmente material)",
+    "é filho de ou tem relação próxima com o círculo do Orestes Prado",
+])
+def test_afirmacao_incerta_nao_e_resolvivel_por_busca(texto):
+    """Hipótese sobre um FATO não se resolve achando ficha parecida — vai pra
+    fila humana com o contexto, que é o que o Renato pediu."""
+    assert _candidatos(texto) == []
