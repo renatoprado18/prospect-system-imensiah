@@ -80,7 +80,7 @@ h1 { font-family:var(--serif); font-weight:400; font-size:clamp(1.6rem,4vw,2.2re
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 """
 
-JS = """
+JS = r"""
 const CHAVE="placar-cos-"+document.body.dataset.chave;
 const salvo=JSON.parse(localStorage.getItem(CHAVE)||"{}");
 function pintar(){
