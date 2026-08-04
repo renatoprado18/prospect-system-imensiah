@@ -73,7 +73,21 @@ PARALELO = 3              # frentes simultâneas
 # 90 min protegia contra repetição, mas cegava a frente mais ativa. Decisão do
 # Renato. Alternativa que o PDCA sugeriu e ele NÃO escolheu: exceção pra
 # prioridade >=8 — fica pro próximo ciclo se 60 não bastar.
-DEBOUNCE_MIN = 60
+#
+# 04/08 — 60 → 90, REVERTIDO. O 1º placar de qualidade (16 portões, 30/07-04/08,
+# preenchido pelo Renato) mostrou a precisão caindo de **70% (7/10) antes da
+# calibração para 33% (2/6) depois** — e 04/08 fechou **0 de 3**. Julgar mais
+# cedo estava produzindo portão ANTES de haver o que cobrar.
+#
+# A lição não é sobre o número, é sobre o que o PDCA media: ele otimizava
+# VOLUME (frente barrada, teto estourado) porque era o que sabia medir. Nada
+# media se o portão estava CERTO. Otimizamos o observável e pioramos o que
+# importa. Por isso o placar agora persiste (`cos_portao_veredito`) e o PDCA lê
+# precisão — ver bloco 5 do pdca.py.
+#
+# TETO_DIARIO fica em 36 de propósito: mexer nos dois ao mesmo tempo tornaria
+# impossível saber qual dos dois moveu o resultado.
+DEBOUNCE_MIN = 90
 # TETO DIÁRIO — o limite real não é dinheiro (no Max não é cobrança), é a
 # CAPACIDADE que o Renato usa pra trabalhar no terminal. Medido: US$1,10
 # nocionais por frente (18 julgamentos = US$19,73 em 31/07, primeiro dia).

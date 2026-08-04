@@ -246,10 +246,82 @@ def bloco_divergencia(runs: list[dict]) -> None:
         print("      Vallen: a API às 11:49 (Glaucia tinha acabado de pedir ligação) e o")
         print("      agente às 14:11 (o Renato já tinha respondido). Eram 2h22 de relógio.")
         print("      Antes de culpar um motor, comparar os HORÁRIOS das duas rodadas.")
-    print("\n   REGRA: qualidade não sai de query. O placar é manual e só o Renato preenche:")
-    print("      acertou · cobrou à toa · deixou passar")
-    print("   Parcial registrado em 30/07: 2 certas, 1 errada (a acusação sobre o")
-    print("   cadastro da Dra. Wanelise, que estava correto).")
+    bloco_precisao(runs)
+
+
+def bloco_precisao(runs: list[dict]) -> None:
+    """Precisão medida do portão, por parâmetro vigente.
+
+    Até 04/08/2026 este PDCA só media VOLUME — frente barrada, teto estourado —
+    porque era o que saía de query. A calibração de 03/08 foi decidida assim, e
+    o 1º placar de qualidade mostrou a precisão caindo de 70% pra 33%.
+    Otimizamos o observável e pioramos o que importa. Agora o veredito persiste
+    em `cos_portao_veredito` e entra aqui ao lado do volume.
+
+    A REGRA DE DECISÃO abaixo foi escrita ANTES de olhar a próxima medição —
+    senão vira alvo desenhado em volta do tiro.
+    """
+    _h("5b. PRECISÃO — dos portões abertos, quantos prestavam?")
+    ro = (os.getenv("COS_RO_URL") or "").strip()
+    try:
+        with _conn(ro) as c, c.cursor() as cur:
+            cur.execute("""
+                SELECT debounce_min, teto_diario, count(*) AS n,
+                       count(*) FILTER (WHERE veredito = 'certa')  AS certas,
+                       count(*) FILTER (WHERE veredito = 'errada') AS erradas,
+                       count(*) FILTER (WHERE veredito = 'passou') AS passou,
+                       min(run_date) AS de, max(run_date) AS ate
+                FROM cos_portao_veredito
+                GROUP BY 1, 2 ORDER BY max(run_date) DESC
+            """)
+            linhas = cur.fetchall()
+            cur.execute("""
+                SELECT frente, count(*) AS n,
+                       count(*) FILTER (WHERE veredito = 'errada') AS erradas
+                FROM cos_portao_veredito GROUP BY 1
+                HAVING count(*) FILTER (WHERE veredito = 'errada') >= 2
+                ORDER BY 3 DESC, 2 DESC
+            """)
+            reincidentes = cur.fetchall()
+    except Exception as e:
+        print(f"   (sem leitura da tabela: {e})")
+        return
+
+    if not linhas:
+        print("   Nenhum veredito ainda. O placar é HTML em ~/cockpit/placar.html —")
+        print("   o Renato marca, copia e a sessão grava. Sem isto, este PDCA volta a")
+        print("   otimizar só volume, que foi como a precisão caiu sem ninguém ver.")
+        return
+
+    # `_conn` usa RealDictCursor — as linhas são dicts, não tuplas. Desempacotar
+    # posicionalmente aqui devolvia as CHAVES e estourava no primeiro cálculo.
+    print("   deb/teto   portões  certas  erradas  passou  precisão   janela")
+    for r in linhas:
+        n, certas = r["n"], r["certas"]
+        pct = 100.0 * certas / n if n else 0
+        cor = VERDE if pct >= 70 else (AMARELO if pct >= 55 else VERMELHO)
+        print(f"   {r['debounce_min']:3d}/{r['teto_diario']:<3d}    {n:5d}   {certas:5d}"
+              f"  {r['erradas']:6d}  {r['passou']:5d}"
+              f"   {cor} {pct:3.0f}%   {r['de']:%d/%m}-{r['ate']:%d/%m}")
+
+    if reincidentes:
+        print("\n   FRENTES QUE ERRARAM 2+ VEZES (candidatas a debounce próprio ou saída da fila):")
+        for r in reincidentes:
+            print(f"      {r['frente'][:44]:46s} {r['erradas']} erro(s) em {r['n']}")
+
+    print("\n   REGRA DE DECISÃO (escrita antes da próxima medição):")
+    print("      precisão < 55% em ≥8 portões  → REVERTER o último ajuste de parâmetro.")
+    print("      55-70%                        → manter e medir mais uma semana.")
+    print("      ≥70% em ≥15 portões           → é o piso do caminho A; abre o gate.")
+    print("      frente com 2+ erros           → debounce próprio ou tirar da fila.")
+    print("\n   ⚠️ 'passou' (falso negativo) é SUB-CONTADO por construção: o Renato julga")
+    print("      a lista que a camada mostrou, e o que ela não mostrou não aparece pra")
+    print("      ser julgado. Ler como 'dos portões abertos, quantos prestavam' — nunca")
+    print("      como 'a camada viu tudo que importava'.")
+    print("   ⚠️ NÃO automatizar este veredito. Medido em 04/08: o proxy 'houve movimento")
+    print("      na frente?' não prediz (certa 5 × errada 2 com movimento; certa 4 ×")
+    print("      errada 5 sem). 4 portões certos não tiveram ação — estavam certos e o")
+    print("      Renato só não agiu ainda.")
 
 
 def bloco_ajustes() -> None:
@@ -258,7 +330,15 @@ def bloco_ajustes() -> None:
           f"MAX_POR_RODADA={MAX_POR_RODADA} · janela {HORA_INICIO}-{HORA_FIM}h BRT")
     print("   Histórico: os 3 primeiros nasceram CHUTE em 31/07. Na noite do mesmo dia,")
     print("   TETO_DIARIO 18→28 e MAX_POR_RODADA 3→5 pelo 1º dia de dados (ver backlog).")
-    print("   DEBOUNCE_MIN=90 segue sendo o único nunca revisado por medição.")
+    print("   03/08: teto 28→36 e debounce 90→60, por VOLUME.")
+    print("   04/08: debounce 60→90 REVERTIDO — o 1º placar mostrou precisão 70%→33%")
+    print("          (04/08 fechou 0/3). Teto mantido em 36 de propósito: mexer nos dois")
+    print("          ao mesmo tempo torna impossível saber qual moveu o resultado.")
+    print("\n   A LIÇÃO que fecha o ciclo: até 04/08 este PDCA só media volume, e foi por")
+    print("   volume que a calibração de 03/08 foi decidida. Ajuste guiado só pelo que")
+    print("   é fácil medir anda para o lado errado com confiança. Agora todo ajuste de")
+    print("   parâmetro tem que olhar o bloco 5b junto — volume diz se CABE, precisão")
+    print("   diz se PRESTA.")
     print("\n   Ao mexer em qualquer um, registre no `project_dev_backlog` em UMA linha:")
     print("      data · parâmetro · de → para · o número que motivou · o que se espera")
     print("   Sem isso não dá pra saber se o ajuste SEGUINTE melhorou ou piorou — foi")
