@@ -537,6 +537,19 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     instance = payload.get("instance")
     data = payload.get("data", {})
 
+    # REPLAY: mensagem que a Evolution ja entregou uma vez e estamos reprocessando
+    # (catchup / backfill de gap). O caminho de GRAVACAO e o mesmo -- e esse o
+    # ponto do replay. O que NAO pode repetir e efeito de SAIDA: `process_renato_reply`
+    # dispara acao sobre proposta e responde no WhatsApp. Reexecutar isso sobre uma
+    # mensagem antiga age no mundo pela segunda vez, com o estado de hoje.
+    #
+    # Motivo (04/08/2026): o gap de 3h do webhook (rotas fechadas por engano em
+    # `a7654f4`) deixou 93 mensagens de fora, 8 delas `fromMe`. Sem esta guarda, o
+    # backfill dispararia `process_renato_reply` pra cada "aprovo"/"ok" que o Renato
+    # escreveu naquela janela. O `wa_catchup` ja mandava `_catchup: True` desde
+    # sempre -- ninguem lia. Rodava /30min fazendo replay pelo caminho completo.
+    replay = bool(payload.get("_catchup"))
+
     # Best-effort key extraction pra telemetria entry-point
     _key = (data or {}).get("key", {}) if isinstance(data, dict) else {}
     audit_ctx = {
@@ -570,7 +583,7 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     try:
         if event == "messages.upsert":
             # Nova mensagem recebida
-            result = await process_incoming_message(data, audit_ctx=audit_ctx, started=started)
+            result = await process_incoming_message(data, audit_ctx=audit_ctx, started=started, replay=replay)
 
         elif event == "connection.update":
             # Status da conexão mudou
@@ -597,7 +610,7 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
 
         elif event == "send.message":
             # Mensagem enviada
-            result = await process_sent_message(data)
+            result = await process_sent_message(data, replay=replay)
             _record_webhook_audit(
                 **audit_ctx,
                 decision="processed" if result.get("processed") else "skipped",
@@ -724,8 +737,12 @@ def persist_group_message_realtime(data: Dict, key: Dict, remote_jid: str,
         return False
 
 
-async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: datetime = None) -> Dict:
-    """Processa mensagem recebida e analisa com IA"""
+async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: datetime = None, replay: bool = False) -> Dict:
+    """Processa mensagem recebida e analisa com IA.
+
+    `replay=True` quando a mensagem esta sendo reprocessada (catchup/backfill):
+    grava igual, mas nao dispara efeito de saida. Ver handle_evolution_webhook.
+    """
     from database import get_db
     import asyncio
 
@@ -967,6 +984,12 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     # Verificar se e uma resposta do Renato a uma proposta de acao
     # fromMe = True significa que a mensagem foi enviada do celular conectado (Renato)
     if from_me and is_proposal_response(content):
+        if replay:
+            # Nao re-age sobre a proposta: ela ja foi tratada quando a mensagem
+            # chegou ao vivo, ou entao o gate humano decidiu por outro caminho.
+            # Razao propria no audit pra o replay ser auditavel, nao invisivel.
+            _audit("skipped", "proposal_response_replay")
+            return {"processed": False, "reason": "proposal_response_replay", "content": content}
         asyncio.create_task(process_renato_reply(content, phone))
         _audit("processed", "proposal_response")
         return {"processed": True, "reason": "proposal_response", "content": content}
@@ -1267,8 +1290,11 @@ async def _transcribe_audio_inline(
         logger.warning(f"inline-audio: unexpected error msg={db_message_id}: {e}")
 
 
-async def process_sent_message(data: Dict) -> Dict:
-    """Processa confirmação de mensagem enviada - tambem verifica respostas a propostas"""
+async def process_sent_message(data: Dict, replay: bool = False) -> Dict:
+    """Processa confirmação de mensagem enviada - tambem verifica respostas a propostas.
+
+    `replay=True` suprime o disparo sobre proposta. Ver handle_evolution_webhook.
+    """
     import asyncio
 
     key = data.get("key", {})
@@ -1294,6 +1320,9 @@ async def process_sent_message(data: Dict) -> Dict:
             phone = remote_jid_alt.replace("@s.whatsapp.net", "")
         else:
             phone = remote_jid.replace("@s.whatsapp.net", "")
+        if replay:
+            logger.info(f"Replay: proposal response NAO redisparada: {content[:60]}")
+            return {"processed": False, "reason": "proposal_response_replay", "content": content}
         logger.info(f"Detected proposal response in send.message: {content}")
         asyncio.create_task(process_renato_reply(content, phone))
         return {"processed": True, "reason": "proposal_response", "content": content}

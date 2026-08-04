@@ -139,6 +139,10 @@ _TERMINAL_DECISIONS = (
     "group_message",
     "group_or_self",
     "bot_origin_skipped",
+    # Resposta do Renato a proposta: nunca vira linha em `messages` (o handler
+    # retorna antes do INSERT), nem ao vivo nem em replay. Sem esta entrada o
+    # catchup a re-detecta como 'missing' toda run -- o livelock de 25/07 outra vez.
+    "proposal_response_replay",
 )
 
 
