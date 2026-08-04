@@ -157,6 +157,12 @@ _SCHEDULER_JOBS = [
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
+    # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e
+    # nada avisou; 93 mensagens ficaram fora. Roda /10min porque o custo e uma
+    # query (so consulta a Evolution quando o banco ja esta quieto) e porque o
+    # valor esta em encurtar o buraco, nao em descobrir depois. Ver
+    # services/wa_ingest_heartbeat.py.
+    ("wa-ingest-heartbeat", "/api/cron/wa-ingest-heartbeat", CronTrigger(minute="*/10")),
     # 11/07/26 — F-2 Passo B: arquiva o binário dos anexos WA no Google Drive
     # (re-baixa da Evolution, sobe pro Drive, grava drive_file_id). Só go-forward
     # (mídia Evolution expira → janela 3 dias). Endpoint roda no Vercel (token
