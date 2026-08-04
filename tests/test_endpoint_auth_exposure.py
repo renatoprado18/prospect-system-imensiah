@@ -54,7 +54,22 @@ AUTH_CALLS = {
     "require_scaffold_auth", "require_api_auth", "get_current_user", "require_auth", "require_admin",
     "require_operador", "verify_cron_auth", "_empresas_require_auth",
     "verify_session_token",
+    # Porteiros de CONSUMIDOR EXTERNO. Nao usam cookie nem X-API-Key porque quem
+    # chama e um terceiro (worker, Tonia): o segredo vai no corpo/header proprio.
+    # Sem estes nomes aqui, a regua lia essas rotas como "sem auth" e a proxima
+    # varredura as fecharia de novo -- foi assim que o webhook do WhatsApp caiu.
+    "check_worker_secret", "check_ingest_secret",
+    # A validacao da assinatura Svix da Fathom mora DENTRO deste handler, nao no
+    # corpo do endpoint. Ancorar no nome da funcao e nao no docstring: docstring
+    # se reescreve sem querer, e a rota voltaria a contar como aberta.
+    "handle_fathom_webhook",
 }
+
+# Segredos de PROVEDOR: o terceiro assina/carimba a requisicao do jeito dele.
+# Google Drive manda `x-goog-channel-token`; Fathom assina via Svix
+# (`webhook-signature`). Uma rota que confere um destes ESTA fechada, mesmo sem
+# nenhum `Depends` no decorator.
+TOKENS_DE_PROVEDOR = ("x-goog-channel-token", "webhook-signature", "X-Ingest-Secret")
 
 
 @pytest.fixture(scope="module")
@@ -219,7 +234,7 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # e atualize aqui. **Baixar e obrigatorio** — se o teto ficar folgado, ele para
 # de proteger e vira decoracao (foi o que aconteceu com `ANDAIME_LEITURA_EXPOSTA`
 # antes de ser esvaziada). Subir exige decisao explicita e justificativa aqui.
-TETO_MUTANTES_SEM_AUTH = 54
+TETO_MUTANTES_SEM_AUTH = 53
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -271,9 +286,12 @@ def _rotas_de_main():
                 nome = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
                 if nome in AUTH_CALLS:
                     tem_auth = True
-        # comparacao manual de segredo (X-API-Key / CRON_SECRET / hmac)
+        # comparacao manual de segredo (X-API-Key / CRON_SECRET / hmac) ou
+        # carimbo de provedor externo (Google channel token, assinatura Svix).
         corpo = "\n".join(linhas[node.lineno - 1:node.end_lineno])
         if any(t in corpo for t in ("X-API-Key", "CRON_SECRET", "compare_digest", "hmac")):
+            tem_auth = True
+        if any(t in corpo for t in TOKENS_DE_PROVEDOR):
             tem_auth = True
         for metodo, path in rotas:
             saida.append((node.lineno, metodo, path, tem_auth, node.name))

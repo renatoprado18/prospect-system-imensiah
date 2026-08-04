@@ -1809,12 +1809,19 @@ async def submit_feedback(feedback: FeedbackSubmit):
     }
 
 
-@app.post("/api/webhooks/fathom", dependencies=[Depends(require_api_auth)])
+@app.post("/api/webhooks/fathom")
 async def fathom_webhook(request: Request):
     """Webhook Fathom — event new-meeting-content-ready.
 
     Le raw body antes do .json() pra validar assinatura Svix
     (headers: webhook-id, webhook-timestamp, webhook-signature).
+
+    SEM `require_api_auth` DE PROPOSITO. Quem chama e a Fathom, que nao tem
+    cookie nem X-API-Key -- o porteiro dela e a ASSINATURA SVIX, validada em
+    `handle_fathom_webhook`. Em 03/08 esta rota levou `require_api_auth` porque a
+    varredura de "rotas sem consumidor" nao achou o path no repo; webhook tem o
+    consumidor FORA do repo por definicao. Ficou 401 pra Fathom ate 04/08.
+    Revertido. Ver a mesma nota em google-drive, contact-lookup e wa-ingest.
     """
     raw = await request.body()
     try:
@@ -11945,12 +11952,17 @@ async def cron_index_drive_documents(request: Request):
     }
 
 
-@app.post("/api/webhooks/google-drive", dependencies=[Depends(require_api_auth)])
+@app.post("/api/webhooks/google-drive")
 async def webhook_google_drive(request: Request):
     """
     Webhook: Receives Google Drive push notifications when files change.
     Google sends POST requests here when watched folders are modified.
     No user auth required - verified via channel token.
+
+    SEM `require_api_auth` DE PROPOSITO: quem chama e o Google, que manda
+    `x-goog-channel-token` e nao tem como mandar cookie/X-API-Key. O 403 abaixo
+    ja fecha a rota. Fechada por engano em 03/08 na varredura de "sem
+    consumidor" (webhook tem consumidor externo); revertido em 04/08.
     """
     # Google Drive sends these headers
     channel_id = request.headers.get("x-goog-channel-id", "")
@@ -15002,9 +15014,14 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
 
 from integrations.evolution_api import get_evolution_client, handle_evolution_webhook
 
-@app.post("/api/webhooks/contact-lookup", dependencies=[Depends(require_api_auth)])
+@app.post("/api/webhooks/contact-lookup")
 async def worker_contact_lookup(request: Request):
-    """Lookup contacts by name for external workers (authenticated by secret)."""
+    """Lookup contacts by name for external workers (authenticated by secret).
+
+    SEM `require_api_auth` DE PROPOSITO: o porteiro e o `check_worker_secret`
+    abaixo, e quem chama e worker externo. Fechada por engano em 03/08 (mesma
+    varredura), revertido em 04/08.
+    """
     data = await request.json()
     secret = data.get("secret", "")
     if not check_worker_secret(secret):
@@ -15066,7 +15083,7 @@ async def whatsapp_webhook(request: Request):
         return {"error": str(e)}
 
 
-@app.post("/api/webhooks/wa-ingest", dependencies=[Depends(require_api_auth)])
+@app.post("/api/webhooks/wa-ingest")
 async def wa_ingest_webhook(request: Request):
     """
     Ingestão persist-only de upserts da instância da Tonia (intel-bot-v2).
@@ -15077,6 +15094,10 @@ async def wa_ingest_webhook(request: Request):
 
     Auth: header X-Ingest-Secret == env WA_INGEST_SECRET (sem fallback).
     Response: {"stored": bool, "reason": str} — 200 sempre que autenticado.
+
+    SEM `require_api_auth` DE PROPOSITO: o X-Ingest-Secret acima E a auth, e quem
+    chama e a Tonia (processo externo). Fechada por engano em 03/08 (mesma
+    varredura), revertido em 04/08.
     """
     from services.wa_ingest import check_ingest_secret, ingest_evolution_payload
 
@@ -28646,6 +28667,72 @@ async def cron_process_scheduled_actions(request: Request):
         # NAO catch silenciosamente (licao Marcos 07/06): se cron quebra, queremos
         # ver 500 no /admin/cron-health ao inves de "status sent" mentindo.
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/cron/wa-ingest-heartbeat")
+@app.post("/api/cron/wa-ingest-heartbeat")
+@track_cron_run
+async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
+    """Avisa quando a ingestao do WhatsApp para de entregar — e fecha o buraco.
+
+    Why (03-04/08/26): o webhook ficou 3h calado (rota fechada por engano em
+    `a7654f4`) e NADA avisou; 93 mensagens ficaram fora, entre elas o endereco
+    de uma reuniao presencial, e a CoS marcou compromisso em cima de horario ja
+    tomado. Descobriu-se por acaso.
+
+    O veredito e COMPARATIVO (services/wa_ingest_heartbeat): so alerta quando a
+    Evolution tem mensagem que o INTEL nao tem. "Nao chegou nada ha 20min" nao
+    basta — de madrugada isso e normal, e alerta que grita a toa e desligado na
+    primeira semana.
+
+    `recuperar=True`: ao detectar o gap, ja dispara o catchup da janela perdida.
+    Foi pedido explicito da CoS — "webhook voltou" nao e "banco em dia"; sem
+    isso o que caiu no buraco fica fora ate alguem ir buscar a mao.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.wa_ingest_heartbeat import checar_ingestao, janela_perdida
+
+    veredito = checar_ingestao()
+    resultado = {"job": "wa-ingest-heartbeat", **veredito}
+
+    if not veredito.get("alerta"):
+        return resultado
+
+    if recuperar:
+        # Recupera ANTES de notificar: se o buraco fechar sozinho, o aviso ja
+        # sai dizendo que fechou, em vez de mandar o Renato agir a toa.
+        janela = janela_perdida(veredito)
+        try:
+            from services.wa_catchup import catchup_recent_dms
+            resultado["recuperacao"] = await catchup_recent_dms(hours=janela.get("horas", 2))
+        except Exception as e:
+            logging.error(f"wa-ingest-heartbeat: catchup falhou: {e}", exc_info=True)
+            resultado["recuperacao"] = {"erro": str(e)[:200]}
+
+    try:
+        from services.notification_router import notify
+        recuperadas = (resultado.get("recuperacao") or {}).get("recovered")
+        extra = f" · {recuperadas} recuperadas no catchup" if recuperadas else ""
+        await notify(
+            "wa_ingest_parada",
+            "Ingestao do WhatsApp parada",
+            f"O WhatsApp nao entra no INTEL ha {veredito['quieto_min']:.0f}min "
+            f"(a Evolution tem mensagem {veredito['atraso_min']:.0f}min mais nova "
+            f"que o ultimo evento gravado){extra}.",
+            9,
+            msg_type="wa_ingest_alert",
+            # Dedup pela hora do ultimo evento: enquanto o cano seguir parado no
+            # mesmo ponto e a mesma noticia. Se voltar e parar de novo, o ponto
+            # muda e volta a avisar — a intermitencia PRECISA aparecer.
+            dedup=f"wa_ingest:{veredito.get('ultimo_evento')}",
+        )
+        resultado["notificado"] = True
+    except Exception as e:
+        logging.warning(f"wa-ingest-heartbeat: notify falhou: {e}")
+
+    return resultado
 
 
 @app.get("/api/cron/wa-catchup")

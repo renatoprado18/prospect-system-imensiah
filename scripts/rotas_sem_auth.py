@@ -56,8 +56,33 @@ def _corpus() -> dict[str, list[str]]:
     return out
 
 
+# Rotas cujo chamador NUNCA aparece no repo porque ele e um terceiro: a
+# Evolution, o Google, a Fathom, um worker. "Nao achei quem chama" aqui nao
+# significa "ninguem chama" -- significa que a busca nao alcanca o chamador.
+#
+# 04/08/2026: em 03/08 a leva de "129 rotas sem consumidor" fechou 6 webhooks por
+# esse falso negativo. O `/api/webhooks/whatsapp` passou a responder 401 pra
+# Evolution e o WhatsApp do Renato ficou 3h fora do INTEL -- 93 mensagens, entre
+# elas o endereco de uma reuniao presencial. Fathom e Google Drive ficaram calados
+# junto, e ninguem teria percebido.
+PREFIXOS_DE_CONSUMIDOR_EXTERNO = ("/api/webhooks/", "/api/whatsapp/webhook")
+
+MARCA_EXTERNO = "<consumidor externo: nao aparece no repo>"
+
+
+def _consumidor_externo(path: str) -> bool:
+    return path.startswith(PREFIXOS_DE_CONSUMIDOR_EXTERNO)
+
+
 def consumidores(path: str, corpus: dict, ignorar: str = "") -> list[tuple[str, str]]:
-    """Onde a rota e chamada. Casa por segmentos literais na MESMA linha."""
+    """Onde a rota e chamada. Casa por segmentos literais na MESMA linha.
+
+    Webhook responde com um consumidor SINTETICO: o chamador e externo e nao ha
+    o que procurar no repo. Fechar por "sem consumidor" ali e o defeito que
+    derrubou a ingestao do WhatsApp em 03/08.
+    """
+    if _consumidor_externo(path):
+        return [(MARCA_EXTERNO, f"{path} — chamado de fora do repo; NAO fechar por 'sem consumidor'")]
     segs = [s for s in path.split("/") if s and not s.startswith("{")]
     if len(segs) < 2:
         return []                      # generico demais pra afirmar qualquer coisa
