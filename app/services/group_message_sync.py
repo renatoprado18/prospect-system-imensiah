@@ -88,30 +88,86 @@ async def _sync_single_group(
     group_jid: str, group_name: str,
     limit: int
 ) -> int:
-    """Sincroniza mensagens de um grupo especifico. Retorna quantidade salva."""
+    """Sincroniza mensagens de um grupo especifico. Retorna quantidade salva.
 
-    # Fetch messages from Evolution API
-    resp = await client.post(
-        f"{base_url}/chat/findMessages/{instance}",
-        headers={'apikey': api_key, 'Content-Type': 'application/json'},
-        json={"where": {"key": {"remoteJid": group_jid}}, "limit": limit}
-    )
+    PAGINA ATE ALCANCAR O QUE JA TEM — nao pega um teto fixo e para.
 
-    if resp.status_code != 200:
-        logger.warning(f"Failed to fetch messages for {group_name}: {resp.status_code}")
-        return 0
+    O BUG QUE ISTO CORRIGE (medido em 05/08/2026). A versao anterior pedia as
+    `limit` (50) mensagens mais recentes, UMA VEZ, e o chamador e o `daily-sync`
+    — 1x/dia. Grupo que passasse de 50 mensagens naquele dia perdia o excedente
+    **para sempre**: a rodada seguinte tambem so olhava as 50 ultimas, e nao ha
+    catch-up. Medicao no CHARUTO CAP: estourou as 50 em **52 de 66 dias (79%)**,
+    media 73/dia, pico 154. O INTEL tinha **3.741 de 19.508** mensagens do grupo.
 
-    resp_data = resp.json()
-    msgs_container = resp_data.get('messages', resp_data)
-    if isinstance(msgs_container, dict):
-        raw_msgs = msgs_container.get('records', [])
-    elif isinstance(msgs_container, list):
-        raw_msgs = msgs_container
-    else:
-        raw_msgs = []
+    Somando os 8 grupos rastreados: **20.646 no INTEL contra 56.037 na
+    Evolution — 37%**. E a perda era invisivel porque o sync pedia 50, recebia
+    50, gravava e reportava sucesso: ninguem perguntava "havia mais?". Mesma
+    classe do webhook fechado por engano e do check G — o mecanismo nao media o
+    proprio denominador, entao o painel ficava verde.
+
+    Assimetria que escondeu o problema: grupo calmo (Familia Dansieri, IMEX)
+    NUNCA estoura 50/dia. So perde quem tem conversa de verdade — exatamente
+    onde o contexto importa.
+
+    Como para: quando a pagina inteira ja e conhecida (todos os `message_id` ja
+    no banco), alcancou o passado e nao ha o que buscar. `MAX_PAGINAS` e um
+    freio de seguranca contra grupo gigante numa 1a sync, nao a regra.
+    """
+    MAX_PAGINAS = 40          # 4.000 msgs/grupo/rodada — teto de emergencia
+    POR_PAGINA = max(50, limit)
+
+    with get_db() as _c:
+        _cur = _c.cursor()
+        _cur.execute("SELECT message_id FROM group_messages WHERE group_jid = %s", (group_jid,))
+        conhecidos = {r['message_id'] for r in _cur.fetchall()}
+
+    raw_msgs, total_evolution, pagina = [], None, 1
+    while pagina <= MAX_PAGINAS:
+        resp = await client.post(
+            f"{base_url}/chat/findMessages/{instance}",
+            headers={'apikey': api_key, 'Content-Type': 'application/json'},
+            json={"where": {"key": {"remoteJid": group_jid}},
+                  "page": pagina, "offset": POR_PAGINA}
+        )
+        if resp.status_code != 200:
+            logger.warning(f"Failed to fetch messages for {group_name} "
+                           f"(page {pagina}): {resp.status_code}")
+            break
+
+        container = resp.json().get('messages', {})
+        if isinstance(container, dict):
+            lote = container.get('records', [])
+            if total_evolution is None:
+                total_evolution = container.get('total')
+        elif isinstance(container, list):
+            lote = container
+        else:
+            lote = []
+
+        if not lote:
+            break
+        raw_msgs.extend(lote)
+
+        # Alcancou o passado: pagina inteira ja conhecida.
+        ids = {(m.get('key') or {}).get('id') for m in lote}
+        if ids and ids.issubset(conhecidos):
+            break
+        pagina += 1
 
     if not raw_msgs:
         return 0
+
+    # GUARDA COMPARATIVA. Sem isto a proxima regressao volta a ser silenciosa:
+    # e so comparando com a fonte que se sabe que faltou algo (mesmo principio
+    # do heartbeat de ingestao do WhatsApp, 04/08).
+    if total_evolution:
+        gap = total_evolution - len(conhecidos)
+        if gap > POR_PAGINA * MAX_PAGINAS:
+            logger.warning(
+                f"[group_sync] {group_name}: Evolution tem {total_evolution}, "
+                f"INTEL {len(conhecidos)} — faltam {gap}, mais que o teto de uma "
+                f"rodada. Rode o backfill dedicado."
+            )
 
     # Parse and save messages
     saved = 0
