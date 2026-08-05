@@ -20,6 +20,9 @@ Tabelas (schema `public`):
 - `contact_facts` (contact_id, categoria, fato, confianca, criado_em) — **o que o sistema já SABE sobre a pessoa**, destilado de conversas anteriores. Padrões de comportamento, preferências, histórico de relação. **Consulte SEMPRE antes de abrir portão sobre alguém** (ver regra 8).
 - `messages` (id, conversation_id, conteudo, direcao, enviado_em, recebido_em) · `conversations` (id, contact_id, canal)
   - `direcao='outgoing'` = **o Renato falando**
+  - ⚠️ **`canal` NÃO é só WhatsApp.** Vale `'whatsapp'` (20.482 msgs) **e `'email'` (1.763 msgs, desde jul/2025)**. E-mail SEMPRE esteve aqui e a camada nunca soube — o efeito foi cobrar coisa já resolvida: a nota do café afirmou *"Orestes não respondeu à proposta de 30/07"* e ele tinha **respondido por e-mail em 31/07**, com uma decisão que reorientava a frente inteira.
+  - **Antes de abrir portão, cheque os DOIS canais** — a regra 1 (ele já executou?) só vale se você olhou o outbound de e-mail também. Filtrar por `canal='whatsapp'` é fabricar um "sem resposta" falso.
+- `copilot.emails` — **view pronta de e-mail**, mais rica que `messages` crua: `(subject, from_email, from_name, content, priority, classification, timestamp)`. Você já tem SELECT nela. Use quando o **assunto** ou o **remetente** importarem — em `messages` o corpo está em `conteudo`, mas o assunto vive em `metadata->>'subject'`.
 - `project_notes` (project_id, tipo, titulo, conteudo, criado_em) — `conteudo` pode ser longo; **leia inteiro quando importar**
 - `project_whatsapp_groups` + `group_messages` (group_jid, sender_name, content, from_me, timestamp)
 - `message_project_links` (message_id, project_id) — mensagem que o roteador já atribuiu a uma frente

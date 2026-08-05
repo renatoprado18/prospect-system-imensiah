@@ -118,9 +118,25 @@ lastdir AS (    -- de quem esta a bola: ultima msg de cada contato
   ORDER BY contact_id, criado_em DESC
 ),
 qual AS (
+  -- ⚠️ NAO FILTRA MAIS POR VOCABULARIO. Ate 05/08 havia aqui um regex
+  -- ('reuni|agend|proposta|prazo...') e o que nao casava SUMIA: zero linha,
+  -- zero erro. Medido no dia: das 24 mensagens com a bola no Renato em 4 dias,
+  -- **4 passavam e 20 eram descartadas em silencio (83%)**. Entre as cortadas:
+  -- Jose Horacio Halfeld ("Avise quando puder falar do projeto do Judo" —
+  -- frente #7), Glaucia Parizotto (consulta trabalhista da Vallen), Luguitec
+  -- ("vamos realizar a descupinizacao?"), e tres contatos abrindo conversa.
+  --
+  -- O fix NAO e acrescentar palavra no regex (decisao do Renato, 05/08):
+  -- e gato-e-rato infinito, e cada palavra que falta vira silencio de novo.
+  -- Traz TUDO que esta com a bola nele e deixa o JULGAMENTO com quem tem
+  -- contexto — voce. Volume real: ~5/dia. Nao e enxurrada.
+  --
+  -- `ack` marca encerramento obvio ("ok", "feito", "obrigado", so emoji) pra
+  -- voce REBAIXAR, nao pra sumir: a lista mostra tudo, ordenada.
   SELECT m.id, m.contact_id, m.criado_em, m.conteudo,
          COALESCE(a.has_doc,false) has_doc, a.fname,
-         (m.conteudo ~* 'reuni|particip|confirm|agend|consegue|veja se|proposta|contrato|assin|prazo|amanh[ãa]|hoje.*[0-9]{1,2}[:h]') text_hit
+         (length(btrim(m.conteudo)) <= 22
+          AND btrim(lower(m.conteudo)) ~ '^(ok|okay|blz|beleza|feito|certo|certinho|combinado|indo|vou|sim|nao|não|valeu|obrigad[oa]|grato|perfeito|show|joia|jóia|👍|🙏|😉|🤝|❤️|\W)+$') AS ack
   FROM messages m LEFT JOIN att a ON a.message_id = m.external_id
   WHERE m.direcao='incoming' AND m.contact_id IS NOT NULL
     AND m.criado_em > NOW() - INTERVAL '4 days'
@@ -130,8 +146,11 @@ cand AS (
   JOIN lastdir l ON l.contact_id=q.contact_id AND l.direcao='incoming'   -- GATE: bola com o Renato (ele ainda nao respondeu por ultimo)
   WHERE (
       q.has_doc
-      OR (q.text_hit AND length(q.conteudo) <= 280              -- GATE: texto-so <=280 chars (forward/thread de email e longo)
-          AND q.conteudo !~* 'desconto|promo[çc]|black friday|imperd|clique aqui|link na bio|inscri[çc]|newsletter|cancelar')  -- GATE: promo obvio fora
+      -- Sem `text_hit`: o que decide agora e ser inbound com a bola nele.
+      -- Fica so o corte de RUIDO COMERCIAL, que e sobre a NATUREZA do
+      -- remetente e nao sobre o assunto do Renato — promo nunca vira acao.
+      OR (length(q.conteudo) <= 600
+          AND q.conteudo !~* 'desconto|promo[çc]|black friday|imperd|clique aqui|link na bio|inscri[çc]|newsletter|cancelar|no-?reply|unsubscribe')
   )
   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id=q.contact_id AND t.data_criacao > q.criado_em)          -- GATE: ja virou task (criada depois)
   AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.contact_id=q.contact_id AND e.criado_em > q.criado_em)   -- GATE: ja virou evento
@@ -139,15 +158,34 @@ cand AS (
 )
 SELECT c.contact_id, ct.nome, max(c.criado_em) ultima, bool_or(c.has_doc) tem_doc,
        max(c.fname) FILTER (WHERE c.has_doc) anexo,
+       bool_and(c.ack) so_ack,   -- true = tudo que ele mandou foi "ok/feito/obrigado": REBAIXE (nao suma)
        (array_agg(c.conteudo ORDER BY (c.has_doc)::int DESC, c.criado_em DESC))[1] amostra
 FROM cand c LEFT JOIN contacts ct ON ct.id=c.contact_id
-GROUP BY c.contact_id, ct.nome ORDER BY ultima DESC;
+GROUP BY c.contact_id, ct.nome
+ORDER BY bool_and(c.ack) ASC,    -- o que PEDE algo primeiro; encerramento no fim
+         bool_or(c.has_doc) DESC, ultima DESC;
 ```
 **INCLUI se:** (a) tem anexo pdf/docx/xlsx (NAO imagem — imagem e ~90% ruido), OU (b) o texto casa o regex de convite/pedido E e curto (<=280).
 **GATES anti-ruido (CRITICO — Renato ODEIA firehose, alta precisao > recall):**
 - **Bola com o Renato** (`lastdir=incoming`): a ULTIMA msg do contato e incoming → ele ainda nao fechou o loop. Isso deixa passar o caso "respondeu no WA mas nao criou o evento" (ex.: "Consigo sim" no chat ≠ evento na agenda). Se o contato mandou algo DEPOIS que o Renato ja respondeu por ultimo (bola=outgoing), sai — sinal comportamental de "ja tratou".
 - **Ja virou task/evento** (`NOT EXISTS` task/event criado depois da msg) → ja tem cano, sai.
-- **Ja foi RESOLVIDO depois da msg (fix 29/07):** UM gate novo fecha o falso-positivo que re-levantava item ja tratado (o Renato reclamou "de novo" — [[feedback_cos_action_blindness]]). O gate antigo so olhava se nascia task *depois* da msg; a task de arranque costuma nascer *antes* do anexo do desfecho chegar, entao o PDF ressurgia como orfao. O novo: **task DO PROPRIO contato (`t.contact_id=q.contact_id`) `completed` com `atualizado_em > msg`** = ja tratado. **Por que casar por `contact_id` e nao por projeto/nome:** testei as duas versoes amplas contra prod e as DUAS mataram a Thalita (item legitimo — ela perguntou do proprio contrato) porque ela e da equipe Vallen e aparece em qualquer nota de estado do #24; gatear por "atividade no projeto do contato" e grosso demais. So a task DELE e sinal limpo. **Licao de dado (nao de query):** o caso Priscila so passou porque a task do desfecho (#999678, "Arranque Priscila") estava com **`contact_id` NULL** — nao linkada a ficha #4734. Corrigido o dado, o gate pega. **Convencao que isso impoe:** ao fechar uma task de arranque/desfecho, LINKE ao contato (`contact_id`), senao o gate nao a ve. **Residual conhecido (aceito):** resolucao registrada SO como nota (sem fechar task linkada) OU discutida e nunca gravada (ex.: "Fam Faria" do Jose Olimpio, falado fora do sistema) nao tem como ser suprimida por query — o gate amplo de nota resolveria mas ao custo de matar item legitimo, entao fica de fora. O fix real e completo e um **ledger de "dispensado" por mensagem** (Dev) — registrado no `session_locks`.
+- **Ja foi RESOLVIDO depois da msg (fix 29/07):** UM gate novo fecha o falso-positivo que re-levantava item ja tratado (o Renato reclamou "de novo" — [[feedback_cos_action_blindness]]). O gate antigo so olhava se nascia task *depois* da msg; a task de arranque costuma nascer *antes* do anexo do desfecho chegar, entao o PDF ressurgia como orfao. O novo: **task DO PROPRIO contato (`t.contact_id=q.contact_id`) `completed` com `atualizado_em > msg`** = ja tratado. **Por que casar por `contact_id` e nao por projeto/nome:** testei as duas versoes amplas contra prod e as DUAS mataram a Thalita (item legitimo — ela perguntou do proprio contrato) porque ela e da equipe Vallen e aparece em qualquer nota de estado do #24; gatear por "atividade no projeto do contato" e grosso demais. So a task DELE e sinal limpo. **Licao de dado (nao de query):** o caso Priscila so passou porque a task do desfecho (#999678, "Arranque Priscila") estava com **`contact_id` NULL** — nao linkada a ficha #4734. Corrigido o dado, o gate pega. **Convencao que isso impoe:** ao fechar uma task de arranque/desfecho, LINKE ao contato (`contact_id`), senao o gate nao a ve. **Residual conhecido (aceito):** resolucao registrada SO como nota (sem fechar task linkada) OU discutida e nunca gravada (ex.: "Fam Faria" do Jose Olimpio, falado fora do sistema) nao tem como ser suprimida por query — o gate amplo de nota resolveria mas ao custo de matar item legitimo, entao fica de fora. **COMO LER O RESULTADO (05/08):** a lista agora traz TUDO com a bola nele — o
+julgamento e teu, nao do SQL. Para cada linha, decida com o CONTEXTO (quem e a
+pessoa, que frente, o que estava pendente), nao pelo texto isolado:
+- `ack=true` (ok/feito/obrigado/so emoji) → encerramento; **rebaixe**, nao suma.
+  Mas leia junto: "Ok" depois de uma pergunta aberta ainda pode exigir resposta.
+- Pedido de contato sem palavra-chave ("Avise quando puder falar do projeto X",
+  "Tudo bem? Sumido") → **e acao**. Foi exatamente isso que o regex antigo
+  cortava.
+- **Na duvida, MOSTRE e diga que esta em duvida.** A regra do Renato (05/08):
+  *na incerteza, PERGUNTAR — nunca descartar calado.* Um item a mais na lista
+  custa 3 segundos de leitura; um pedido perdido custa a relacao.
+
+⚠️ **Ainda session-bound e ainda sem ledger.** Se ele nao abrir `/cos` por 5
+dias, o inbound daqueles dias evapora sem nunca ter sido avaliado — a janela e
+de 4 dias. E nada registra o que foi dispensado, entao **o falso negativo segue
+imensuravel**: nao da pra saber o que a triagem deixou passar. O fix completo e
+um **ledger de "dispensado" por mensagem** (Dev) — registrado no `session_locks`.
 - **Texto-so <=280 chars** → derruba forward motivacional/politico e thread de email quotado (450-10k chars). Anexo-documento ignora o length (PDF e PDF).
 - **Promo obvio** (regex negativo) e **imagem** (fora do `att`) → ruido social/marketing.
 - Msg WA e 1:1 (tabela `messages`, nao `group_messages`) → sem ruido de grupo.
