@@ -102,6 +102,28 @@ FROM tasks t JOIN project_notes pn ON pn.project_id=t.project_id
 WHERE t.status='pending' AND pn.criado_em > NOW() - INTERVAL '96 hours'
 GROUP BY t.id, t.titulo, t.project_id ORDER BY ultima DESC;
 ```
+**(F3) QUEM FECHA NEM SEMPRE E O RENATO — nem a contraparte (06/08).** A
+Andressa escreveu *"Esta sim. Paguei hoje."* (05/08 16:48) e a task do G100
+(#999562) seguiu aberta; o Renato perguntou DUAS vezes no cockpit por que. Dois
+furos somados: a task estava com `contact_id` NULL, e mesmo linkada apontaria
+pro contato do G100 — a contraparte — enquanto quem paga e a **executora**.
+```sql
+-- atos de executor (Andressa/Priscila/Piccino, via tonha_role_contacts) que
+-- declaram execucao. `declara_execucao` ORDENA, nao filtra: o regex de verbo
+-- acerta ~15% e confunde "paguei" com "vou transferir".
+SELECT papel, quando, evidencia FROM atos_que_resolvem
+WHERE quem='executor' AND quando > NOW() - INTERVAL '7 days'
+ORDER BY declara_execucao DESC, quando DESC LIMIT 20;
+```
+⚠️ **NAO cruze isto automaticamente com a lista de tasks abertas** — testei: da
+produto cartesiano, 12 tasks casando com a mesma mensagem que nem era execucao.
+Le a lista, reconhece o que fecha o que, e confirma com o Renato.
+
+📉 **E saiba o limite:** so **49% das tasks abertas tem `contact_id`** (eram 37%
+antes de 06/08; 14 foram ligadas pelo titulo com `scripts/tasks_liga_contato.py`).
+Task sem contato e invisivel pra F1, F2, F3 e pro check G. Quando criar ou fechar
+task, LINKE ao contato — e as 60 orfas seguem fora de qualquer cruzamento.
+
 Calibracao (13/07): **verbo de acao** (FUP/contatar/planejar/revisar/enviar) → o entregavel E A ACAO; se a acao foi feita (outgoing do Renato, nota criada, gate batido) = **RESOLVIDA, procurar a evidencia ativamente e fechar** (NAO devolver pro Renato quando a evidencia existe — [[feedback_nao_perguntar_age]]). **"Aguardar X retornar"** so fecha com `incoming` do terceiro. Ignorar tasks dev/backlog. So exibir se houver candidatas; NAO fechar auto — Renato confirma.
 
 **G. Inbound orfao (WA/email que devia virar task/evento e nao virou):**
