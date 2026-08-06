@@ -66,14 +66,31 @@ def _upsert_outbound_message(
     sent_at: Optional[datetime],
     to_emails: List[str],
     account_email: str,
+    thread_id: Optional[str] = None,
 ) -> Optional[int]:
     """Insert message direcao='outgoing' se nao existir (external_id dedup).
 
     Cria conversation canal='email' se necessario.
     """
-    cursor.execute("SELECT id FROM messages WHERE external_id = %s LIMIT 1", (gmail_id,))
+    cursor.execute("SELECT id, metadata FROM messages WHERE external_id = %s LIMIT 1", (gmail_id,))
     existing = cursor.fetchone()
     if existing:
+        # Backfill do thread_id nas linhas gravadas antes de 04/08/2026, quando o
+        # sync lia o `id` da mensagem e descartava o `threadId`. Sem isto, todo
+        # e-mail ja capturado na janela de 24h ficaria sem a unica ancora que
+        # casa rascunho com enviado, e o loop so fecharia pro que viesse depois.
+        meta = existing.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        if thread_id and not meta.get("thread_id"):
+            meta["thread_id"] = thread_id
+            cursor.execute(
+                "UPDATE messages SET metadata = %s WHERE id = %s",
+                (json.dumps(meta), existing["id"]),
+            )
         return existing["id"]
 
     cursor.execute(
@@ -103,6 +120,11 @@ def _upsert_outbound_message(
         "to": to_emails,
         "subject": subject,
         "source": "gmail_outbound_sync",
+        # `thread_id` e a ancora que fecha o loop DRAFT -> ENVIADO. O message id
+        # do rascunho NAO e o da mensagem enviada (o Gmail cria outro ao
+        # despachar); a thread e a mesma. Vinha na resposta do list e do get
+        # desde sempre e era descartado aqui.
+        "thread_id": thread_id,
     }
     cursor.execute(
         """
@@ -197,6 +219,10 @@ async def sync_account_outbound(
     stats["emails_listed"] = len(messages)
 
     contact_ids_touched: set = set()
+    # Toda thread vista em `in:sent`, mesmo a de e-mail cujo destinatario nao
+    # virou contato: o rascunho pendente existe independentemente de o outro
+    # lado estar cadastrado, e o loop tem que fechar do mesmo jeito.
+    threads_enviadas: List[Dict[str, Any]] = []
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -213,6 +239,10 @@ async def sync_account_outbound(
                     stats["errors"] += 1
                     continue
 
+                # O `threadId` vem tanto no list quanto no get; o get manda,
+                # porque o summary pode ter vindo de pagina anterior.
+                thread_id = msg.get("threadId") or msg_summary.get("threadId")
+
                 headers = gmail.parse_message_headers(msg)
                 to_emails = _extract_emails(headers.get("to"))
                 cc_emails = _extract_emails(headers.get("cc"))
@@ -220,8 +250,6 @@ async def sync_account_outbound(
                 # Skip Renato → Renato (cron, automacao)
                 renato_emails = {"renato@almeida-prado.com", "renato.almeida.prado@gmail.com", "renatodaprado@gmail.com"}
                 recipient_emails = [e for e in recipient_emails if e not in renato_emails]
-                if not recipient_emails:
-                    continue
 
                 subject = headers.get("subject", "")[:200]
                 date_str = headers.get("date", "")
@@ -230,6 +258,16 @@ async def sync_account_outbound(
                     sent_at = parse_gmail_date(date_str)
                 except Exception:
                     pass
+
+                if thread_id:
+                    threads_enviadas.append(
+                        {"thread_id": thread_id, "sent_at": sent_at, "message_id": gmail_id}
+                    )
+
+                # A partir daqui e sobre CONTATO; a thread ja foi anotada acima
+                # justamente porque o loop do rascunho nao depende disso.
+                if not recipient_emails:
+                    continue
 
                 body = gmail.parse_message_body(msg)
                 body_text = (body.get("text", "") or "")[:5000]
@@ -247,6 +285,7 @@ async def sync_account_outbound(
                         sent_at=sent_at,
                         to_emails=recipient_emails,
                         account_email=account.get("email", ""),
+                        thread_id=thread_id,
                     )
                     if msg_id_inserted:
                         stats["registered"] += 1
@@ -279,13 +318,28 @@ async def sync_account_outbound(
         except Exception as e:
             logger.warning(f"Failed to dismiss proposals after outbound sync: {e}")
 
+    # Fechamento do loop DRAFT -> ENVIADO (04/08/2026): rascunho pendente numa
+    # thread onde acabou de sair e-mail passa a 'sent'. Roda mesmo com
+    # `post_process=False` — ao contrario do dismiss de propostas, aqui o
+    # backfill historico e inofensivo: a propria regra de casamento exige que o
+    # envio seja POSTERIOR a criacao do rascunho (draft_matches_sent), entao um
+    # e-mail de meses atras nunca fecha um rascunho de hoje.
+    if threads_enviadas:
+        try:
+            from services.email_draft_registry import reconcile_sent_threads
+            recon = reconcile_sent_threads(threads_enviadas)
+            stats["threads_seen"] = recon["threads"]
+            stats["drafts_reconciled"] = recon["drafts_sent"]
+        except Exception as e:
+            logger.warning(f"Failed to reconcile email drafts after outbound sync: {e}")
+
     return stats
 
 
 async def sync_all_outbound(hours: int = 24, max_pages: int = 1,
                             post_process: bool = True) -> Dict[str, Any]:
     """Itera google_accounts conectadas e roda sync_account_outbound."""
-    out = {"accounts": [], "registered_total": 0, "errors_total": 0}
+    out = {"accounts": [], "registered_total": 0, "errors_total": 0, "drafts_reconciled_total": 0}
     gmail = GmailIntegration()
     with get_db() as conn:
         cursor = conn.cursor()
@@ -305,5 +359,6 @@ async def sync_all_outbound(hours: int = 24, max_pages: int = 1,
         out["accounts"].append(stats)
         out["registered_total"] += stats.get("registered", 0)
         out["errors_total"] += stats.get("errors", 0)
+        out["drafts_reconciled_total"] += stats.get("drafts_reconciled", 0)
 
     return out
