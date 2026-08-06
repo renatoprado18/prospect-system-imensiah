@@ -95,5 +95,8 @@ class TestFormatProposalWa:
         assert "2 regra(s) nova(s)" in msg
         assert "1. [EXPORTAÇÃO] EUDR" in msg
         assert "2. [AMOSTRAS] Peso" in msg
-        assert "#42" in msg
+        # PLAYBOOK-42, não "#42": o id cru colidiria com task #42 e a brain
+        # aplicaria o alvo errado (playbook_rules.py:300). O teste ficou preso
+        # ao formato antigo e falhava desde então — alarme que ninguém ouve.
+        assert "PLAYBOOK-42" in msg
         assert "aprovo playbook" in msg
