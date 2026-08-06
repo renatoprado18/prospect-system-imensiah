@@ -175,6 +175,80 @@ def analisar(f):
     }
 
 
+
+# O feedback vive em localStorage e sai por copiar-colar. Sem POST de propósito:
+# a página roda em file:// e abrir CORS num endpoint de escrita pra economizar um
+# clique é troca ruim — mesma decisão do placar e da fila de fatos.
+#
+# ⚠️ Raw string em constante do módulo, NÃO dentro da f-string do render: as
+# chaves do JavaScript colidem com a interpolação, e em 04/08 um `\n` não-raw já
+# partiu o script ao meio e derrubou todos os listeners sem erro visível.
+JS_FEEDBACK = r"""
+<script>
+const CHAVE = "sistema-vereditos";
+const salvo = JSON.parse(localStorage.getItem(CHAVE) || "{}");
+
+function pintar() {
+  let n = 0;
+  document.querySelectorAll(".veredito").forEach(v => {
+    const e = salvo[v.dataset.uid];
+    v.querySelectorAll("button[data-v]").forEach(b =>
+      b.setAttribute("aria-pressed", String(!!e && e.v === b.dataset.v)));
+    const chk = v.querySelector("[data-raso]");
+    if (chk) chk.checked = !!(e && e.raso);
+    if (e && e.v) n++;
+  });
+  document.getElementById("fb-n").textContent = n;
+}
+
+document.querySelectorAll(".veredito button[data-v]").forEach(b => {
+  b.addEventListener("click", () => {
+    const v = b.closest(".veredito"), uid = v.dataset.uid, atual = salvo[uid];
+    if (atual && atual.v === b.dataset.v) delete salvo[uid];
+    else salvo[uid] = { v: b.dataset.v, raso: !!(atual && atual.raso) };
+    localStorage.setItem(CHAVE, JSON.stringify(salvo)); pintar();
+  });
+});
+
+document.querySelectorAll("[data-raso]").forEach(chk => {
+  chk.addEventListener("change", () => {
+    const uid = chk.closest(".veredito").dataset.uid;
+    if (!salvo[uid]) salvo[uid] = { v: "", raso: false };
+    salvo[uid].raso = chk.checked;
+    localStorage.setItem(CHAVE, JSON.stringify(salvo)); pintar();
+  });
+});
+
+document.getElementById("fb-limpar").addEventListener("click", () => {
+  Object.keys(salvo).forEach(k => delete salvo[k]);
+  localStorage.removeItem(CHAVE);
+  document.getElementById("fb-saida").style.display = "none"; pintar();
+});
+
+document.getElementById("fb-copiar").addEventListener("click", async () => {
+  const L = ["VEREDITOS DO RACIOCINIO (cole no Claude)"];
+  let c = 0;
+  document.querySelectorAll(".veredito").forEach(v => {
+    const e = salvo[v.dataset.uid];
+    if (!e || !e.v) return;
+    c++;
+    const p = v.dataset.uid.split("|");
+    const rot = { certa: "CERTA", errada: "COBROU A TOA", passou: "DEIXOU PASSAR" }[e.v];
+    L.push(p[0] + " #" + p[1] + " " + p[2] + " — " + rot + (e.raso ? " | RASO: julgou sem olhar tudo" : ""));
+  });
+  const txt = L.join("\n"), out = document.getElementById("fb-saida");
+  const btn = document.getElementById("fb-copiar");
+  out.value = txt; out.style.display = "block";
+  try { await navigator.clipboard.writeText(txt); btn.textContent = "Copiado (" + c + ")"; }
+  catch (e) { btn.textContent = "Copie abaixo"; out.select(); }
+  setTimeout(() => btn.textContent = "Copiar para o Claude", 1800);
+});
+
+pintar();
+</script>
+"""
+
+
 # ------------------------------------------------------------------ render --
 
 def render(d):
@@ -256,6 +330,13 @@ def render(d):
   <details open><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(f.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + nao + '</ul></details>' if nao else ''}
   {'<details><summary>aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</summary><ul>' + fat + '</ul></details>' if fat else ''}
+  <div class="veredito" data-uid="{esc(d['rodada']['run_date'])}|{f.get('project_id')}|{esc(f.get('frente'))}">
+    <span class="v-t">este julgamento</span>
+    <button type="button" data-v="certa">Certa</button>
+    <button type="button" data-v="errada">Cobrou à toa</button>
+    <button type="button" data-v="passou">Deixou passar</button>
+    <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
+  </div>
 </article>""")
 
     # --- agora
@@ -338,6 +419,17 @@ summary:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 details ol,details ul{{margin:.4rem 0 .2rem;padding-left:1.3rem;font-size:.85rem;color:var(--ink-soft)}}
 details li{{margin-bottom:.25rem}}
 ul.nao li{{color:var(--warn)}}
+.veredito{{display:flex;gap:.35rem;flex-wrap:wrap;align-items:center;margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--panel-edge)}}
+.v-t{{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);margin-right:.2rem}}
+.veredito button{{font:inherit;font-size:.76rem;padding:.28rem .7rem;cursor:pointer;background:transparent;color:var(--ink-faint);border:1px solid var(--panel-edge);border-radius:2px}}
+.veredito button:hover{{border-color:var(--brass-soft);color:var(--ink)}}
+.veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
+.veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
+.raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
+.barra-fb{{position:sticky;bottom:0;margin-top:1.4rem;padding:.8rem 1rem;background:var(--panel);border:1px solid var(--panel-edge);border-radius:4px;display:flex;gap:1rem;justify-content:space-between;align-items:center;flex-wrap:wrap;box-shadow:0 -2px 14px rgba(35,33,28,.08)}}
+.barra-fb button{{font:inherit;font-size:.79rem;padding:.42rem .95rem;cursor:pointer;border-radius:2px;border:1px solid var(--brass);background:var(--brass);color:var(--panel);font-weight:600}}
+.barra-fb button.ghost{{background:transparent;color:var(--ink-faint);border-color:var(--panel-edge);font-weight:400}}
+#fb-saida{{width:100%;margin-top:.6rem;font:12px/1.5 var(--mono);padding:.6rem;border:1px solid var(--panel-edge);border-radius:3px;background:var(--paper);color:var(--ink);display:none}}
 .alerta{{background:var(--crit-bg);border:1px solid var(--crit);border-radius:4px;padding:.7rem .9rem;margin:.6rem 0;font-size:.86rem}}
 .alerta ul{{margin:.4rem 0 0;padding-left:1.2rem}}
 .alerta code{{font-family:var(--mono);font-size:.78rem}}
@@ -387,13 +479,80 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   {esc(d['rodada']['run_at'].strftime('%d/%m %H:%M') if d['rodada'] else '—')} UTC.</p>
   {''.join(cards) or '<p class="nota">Nenhuma frente com trajetória nesta rodada.</p>'}
 
+  <div class="barra-fb">
+    <span class="progresso"><b id="fb-n">0</b> julgamento(s) avaliado(s)</span>
+    <div>
+      <button type="button" class="ghost" id="fb-limpar">Limpar</button>
+      <button type="button" id="fb-copiar">Copiar para o Claude</button>
+    </div>
+  </div>
+  <textarea id="fb-saida" rows="6" readonly></textarea>
+
   <h2>5 · O que rodou nas últimas 6h</h2>
   <table><thead><tr><th>job</th><th class="n">runs</th><th class="n">erros</th><th class="n">último</th></tr></thead>
   <tbody>{''.join(crons)}</tbody></table>
-</div></body></html>"""
+</div>@@JS@@</body></html>""".replace("@@JS@@", JS_FEEDBACK)
+
+
+
+# ------------------------------------------------------------------ gravar --
+
+ROTULOS = {"CERTA": "certa", "COBROU A TOA": "errada", "DEIXOU PASSAR": "passou"}
+
+
+def gravar(texto: str) -> int:
+    """Aplica o veredito colado da página em `cos_portao_veredito`.
+
+    Formato de cada linha (o botão "Copiar para o Claude" produz assim):
+        2026-08-06 #48 Luminosità — CERTA | RASO: julgou sem olhar tudo
+
+    O "RASO" vai pra coluna `nota` em vez de virar veredito novo: o CHECK da
+    tabela aceita só certa/errada/passou, e mexer nele exigiria migration pra
+    guardar um sinal que é ORTOGONAL ao acerto. Um portão pode estar CERTO e
+    ainda assim ter sido julgado sem olhar tudo — inclusive é o caso mais
+    perigoso, porque acertou por sorte.
+    """
+    linhas = [l.strip() for l in texto.splitlines()
+              if re.match(r"^\d{4}-\d{2}-\d{2}\s+#\d+", l.strip())]
+    if not linhas:
+        sys.exit("nada reconhecido — esperado 'AAAA-MM-DD #id Frente — VEREDITO'")
+
+    conn = psycopg2.connect(env("DATABASE_URL"))
+    cur = conn.cursor()
+    ok = raso_n = 0
+    for l in linhas:
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})\s+#(\d+)\s+(.+?)\s+—\s+([A-ZÀ-Ú ]+?)(?:\s*\|\s*RASO:(.*))?$", l)
+        if not m:
+            print(f"  ? não parseou: {l[:70]}")
+            continue
+        dia, pid, frente, rot, raso = m.groups()
+        ver = ROTULOS.get(rot.strip())
+        if not ver:
+            print(f"  ? veredito desconhecido '{rot.strip()}'")
+            continue
+        nota = "julgou sem olhar todo o contexto disponível" if raso is not None else None
+        # portao = a frente + o dia: é o que identifica o julgamento avaliado
+        cur.execute("""
+            INSERT INTO cos_portao_veredito
+              (run_date, project_id, frente, portao, veredito, nota, motor)
+            VALUES (%s,%s,%s,%s,%s,%s,'agente_local')
+            ON CONFLICT (run_date, frente, portao)
+            DO UPDATE SET veredito = EXCLUDED.veredito, nota = EXCLUDED.nota
+        """, (dia, int(pid), frente.strip(), f"julgamento da rodada de {dia}", ver, nota))
+        ok += 1
+        raso_n += 1 if nota else 0
+    conn.commit()
+    print(f"{ok} veredito(s) gravado(s)" + (f" · {raso_n} marcado(s) como RASO" if raso_n else ""))
+    if ok:
+        print("Rode `scripts/cos_agent/pdca.py` — o bloco 5b já lê estes números.")
+    return 0
 
 
 def main():
+    if "--gravar" in sys.argv:
+        i = sys.argv.index("--gravar")
+        alvo = sys.argv[i + 1] if len(sys.argv) > i + 1 else "-"
+        return gravar(sys.stdin.read() if alvo == "-" else open(alvo).read())
     conn = psycopg2.connect(env("DATABASE_URL"))
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     d = coletar(cur)
@@ -403,4 +562,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

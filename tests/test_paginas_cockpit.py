@@ -118,3 +118,44 @@ def test_parser_aceita_correcao_com_texto():
     # entraria como veredito vazio e o fato ficaria como estava
     assert r'([A-ZÀ-Ú]+)\s*(?::\s*(.+))?$' in fonte
     assert "CORRIGE sem texto" in fonte, "correção vazia tem que ser recusada, não gravada"
+
+
+# ------------------------------------- feedback na página do sistema --------
+
+def test_pagina_do_sistema_tem_js_valido():
+    """Mesma armadilha do placar: JS dentro de f-string com chaves colidindo, ou
+    `\\n` não-raw partindo a string. Nos dois casos o script morre inteiro e
+    NENHUM listener registra — o sintoma é 'clico e não acontece nada'."""
+    import pathlib
+    import subprocess
+
+    if not shutil.which("node"):
+        pytest.skip("node ausente")
+
+    src = pathlib.Path(_ROOT).joinpath("scripts", "sistema.py").read_text()
+    assert "JS_FEEDBACK = r\"\"\"" in src, "o JS voltou pra dentro da f-string"
+
+    html = pathlib.Path(os.path.expanduser("~/cockpit/sistema.html"))
+    if not html.exists():
+        pytest.skip("página ainda não gerada")
+    js = re.search(r"<script>(.*?)</script>", html.read_text(), re.S)
+    assert js, "página sem script"
+    r = subprocess.run(["node", "--check", "-"], input=js.group(1),
+                       capture_output=True, text=True)
+    assert r.returncode == 0, f"JS inválido:\n{r.stderr[:400]}"
+
+
+def test_gravador_aceita_nome_com_em_dash():
+    """O separador do formato é ' — ' e VÁRIAS frentes têm em-dash no nome
+    ("Luminosità — Vinho Itália→Japão"). Um regex guloso partiria o nome e
+    gravaria o veredito na frente errada."""
+    import re as _re
+
+    padrao = r"^(\d{4}-\d{2}-\d{2})\s+#(\d+)\s+(.+?)\s+—\s+([A-ZÀ-Ú ]+?)(?:\s*\|\s*RASO:(.*))?$"
+    linha = "2026-08-06 #48 Luminosità — Vinho Itália→Japão — CERTA | RASO: julgou sem olhar tudo"
+    m = _re.match(padrao, linha)
+
+    assert m, "não parseou"
+    assert m.group(3) == "Luminosità — Vinho Itália→Japão", f"nome partido: {m.group(3)!r}"
+    assert m.group(4).strip() == "CERTA"
+    assert m.group(5) is not None, "perdeu o marcador RASO"
