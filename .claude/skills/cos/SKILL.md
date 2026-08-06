@@ -196,8 +196,21 @@ pessoa, que frente, o que estava pendente), nao pelo texto isolado:
   *na incerteza, PERGUNTAR — nunca descartar calado.* Um item a mais na lista
   custa 3 segundos de leitura; um pedido perdido custa a relacao.
 
-⚠️ **Ainda session-bound e ainda sem ledger.** Se ele nao abrir `/cos` por 5
-dias, o inbound daqueles dias evapora sem nunca ter sido avaliado — a janela e
+✅ **LEDGER NO AR (06/08).** O que o check descarta passou a ficar registrado —
+`check_g_ledger`, gravado por cron diario (9h UTC), independente de voce abrir a
+`/cos`. Leia o estado com:
+```bash
+curl -s -H "X-API-Key: $INTEL_API_KEY" "https://intel.almeida-prado.com/api/cos/check-g-ledger?dias=14"
+```
+Primeira medicao: **falso negativo 5,6%** sobre o que deu pra medir, e **37,7%
+NAO MEDIDO** (mensagem sem ficha nao tem `contact_id` pra cruzar — sao todas
+e-mail, newsletter/boleto). O numero do buraco vem sempre junto do resultado, de
+proposito: taxa sem denominador foi o que produziu os sete defeitos de 04-06/08.
+O funil de uma janela de 4 dias: **328 incoming → 71 sobrevivem aos gates**.
+
+⚠️ **Ainda session-bound na EXIBICAO** (o ledger grava sozinho, mas quem julga e
+voce). Se ele nao abrir `/cos` por 5 dias, o inbound daqueles dias nao evapora
+mais — fica marcado como nao-avaliado —, mas segue sem julgamento. A janela e
 de 4 dias. E nada registra o que foi dispensado, entao **o falso negativo segue
 imensuravel**: nao da pra saber o que a triagem deixou passar. O fix completo e
 um **ledger de "dispensado" por mensagem** (Dev) — registrado no `session_locks`.
