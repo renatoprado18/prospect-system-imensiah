@@ -123,6 +123,35 @@ def coletar(cur):
                    FROM cos_portao_veredito GROUP BY 1""")
     d["placar"] = {r["frente"]: (r["certas"], r["n"]) for r in cur.fetchall()}
 
+    # 3b. PORTÕES AGUARDANDO VEREDITO — 7 dias, não só a última rodada.
+    #
+    # Por que existe (06/08): a página mostrava o raciocínio da ÚLTIMA rodada e
+    # os botões viviam nesses cards. Mas o agente roda 14×/dia e o portão da
+    # rodada das 15h não aparece na página gerada às 20h. Medido no dia: **9
+    # portões abertos em 05-06/08, e a página oferecia veredito de 1** (11%).
+    # O gate dos cockpits pede ≥70% em ≥15 portões; com 11% da amostra
+    # alcançável, o placar não fecha por falta de o que marcar — o número
+    # ficaria parado e pareceria estabilidade.
+    cur.execute("""SELECT run_date, payload FROM cos_daily_review
+                   WHERE run_date > CURRENT_DATE - 7 ORDER BY run_at""")
+    abertos = {}
+    for r in cur.fetchall():
+        pay = r["payload"]
+        if isinstance(pay, str):
+            pay = json.loads(pay)
+        for f in (pay.get("frentes") or []):
+            pv = f.get("precisa_de_voce") or {}
+            if pv.get("sim") and f.get("trajetoria"):
+                abertos[(r["run_date"], f.get("frente"))] = {
+                    "dia": r["run_date"], "frente": f.get("frente"),
+                    "project_id": f.get("project_id"),
+                    "o_que": pv.get("o_que") or pv.get("pergunta") or "",
+                }
+    cur.execute("SELECT run_date, frente FROM cos_portao_veredito "
+                "WHERE run_date > CURRENT_DATE - 7")
+    ja = {(r["run_date"], r["frente"]) for r in cur.fetchall()}
+    d["pendentes"] = [v for k, v in sorted(abertos.items(), reverse=True) if k not in ja]
+
     # 4. AGORA
     cur.execute("""
         SELECT regexp_replace(path,'^/api/cron/([^?]+).*$','\\1') AS job,
@@ -339,6 +368,29 @@ def render(d):
   </div>
 </article>""")
 
+    # --- portões pendentes de veredito (mesmo data-uid: o JS e o `--gravar` já servem)
+    #
+    # Fora os que JÁ têm card acima: uid repetido na página faria o botão
+    # "Copiar" emitir a mesma linha duas vezes e o contador mentir pra cima.
+    ja_na_pagina = {f"{d['rodada']['run_date']}|{f.get('project_id')}|{f.get('frente')}"
+                    for f in frentes[:6]} if d["rodada"] else set()
+    pendentes = []
+    for pd in d["pendentes"]:
+        if f"{pd['dia']}|{pd['project_id']}|{pd['frente']}" in ja_na_pagina:
+            continue
+        pendentes.append(f"""<article class="frente frente--pend">
+  <header><span class="nome">{esc(pd['frente'])[:52]}</span>
+    <span class="lat">{esc(pd['dia'])}</span></header>
+  <p class="portao"><b>pediu de você:</b> {esc(pd['o_que'])[:300]}</p>
+  <div class="veredito" data-uid="{esc(pd['dia'])}|{pd['project_id']}|{esc(pd['frente'])}">
+    <span class="v-t">este julgamento</span>
+    <button type="button" data-v="certa">Certa</button>
+    <button type="button" data-v="errada">Cobrou à toa</button>
+    <button type="button" data-v="passou">Deixou passar</button>
+    <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
+  </div>
+</article>""")
+
     # --- agora
     crons = []
     for c in d["crons"]:
@@ -396,6 +448,8 @@ td.n{{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums
 .dot{{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;margin-right:.35rem;vertical-align:middle}}
 .dot--calm{{background:var(--calm)}} .dot--warn{{background:var(--warn)}} .dot--crit{{background:var(--crit)}}
 .frente{{background:var(--panel);border:1px solid var(--panel-edge);border-left:3px solid var(--brass-soft);border-radius:4px;padding:.85rem 1rem;margin:0 0 .6rem;box-shadow:var(--shadow)}}
+.frente--pend{{border-left-style:dashed}}
+.pend-t{{font-family:var(--serif);font-weight:400;font-size:1.02rem;margin:1.8rem 0 .3rem}}
 .frente>header{{display:flex;justify-content:space-between;gap:.7rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.4rem}}
 .nome{{font-weight:600;font-size:.94rem}}
 .lat{{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint)}}
@@ -478,6 +532,12 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   datas citados (a regra manda citar) e quantas dúvidas ele declarou. Última rodada
   {esc(d['rodada']['run_at'].strftime('%d/%m %H:%M') if d['rodada'] else '—')} UTC.</p>
   {''.join(cards) or '<p class="nota">Nenhuma frente com trajetória nesta rodada.</p>'}
+
+  <h3 class="pend-t">Outros portões dos últimos 7 dias sem veredito — {len(pendentes)}</h3>
+  <p class="sub-h2">O agente roda 14×/dia; a rodada acima é uma delas. Sem esta lista, o
+  portão aberto às 15h nunca chegava ao placar — e o gate dos cockpits (≥70% em ≥15 portões)
+  ficava parado por falta do que marcar, parecendo estabilidade.</p>
+  {''.join(pendentes) or '<p class="nota">Nenhum portão pendente — tudo dos últimos 7 dias já foi marcado.</p>'}
 
   <div class="barra-fb">
     <span class="progresso"><b id="fb-n">0</b> julgamento(s) avaliado(s)</span>
