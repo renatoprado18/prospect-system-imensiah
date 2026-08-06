@@ -88,14 +88,74 @@ SELECT SUM(amount_usd) FROM platform_costs WHERE data_referencia = CURRENT_DATE 
 ```
 So alertar se acima do baseline.
 
-**F. Reconciliacao WA×tasks (PROTECAO anti cos_action_blindness):**
-O sistema so reconcilia quando o BOT age; quando o Renato age direto no WA ou uma nota e criada, a task fica aberta = drift. Cruzar tasks pending × atividade real (~96h):
+**F. Reconciliacao conversa×tasks (PROTECAO anti cos_action_blindness):**
+O sistema so reconcilia quando o BOT age; quando o Renato age direto no WA/e-mail ou uma nota e criada, a task fica aberta = drift. Cruzar tasks abertas × atividade real (~96h):
 ```sql
--- (F1) task pending cujo CONTATO teve WA recente (inclui outgoing do Renato)
-SELECT t.id, t.titulo, c.nome, max(m.criado_em) ultima, string_agg(DISTINCT m.direcao,',') dirs
-FROM tasks t JOIN messages m ON m.contact_id=t.contact_id LEFT JOIN contacts c ON c.id=t.contact_id
-WHERE t.status='pending' AND m.criado_em > NOW() - INTERVAL '96 hours'
-GROUP BY t.id, t.titulo, c.nome ORDER BY ultima DESC;
+-- (F1) task ABERTA cujo TERCEIRO teve atividade recente — WhatsApp E E-MAIL.
+--
+-- Ate 06/08 este cruzamento era `JOIN messages m ON m.contact_id = t.contact_id`
+-- e so via WhatsApp na pratica. Tres furos medidos no caso #999695 ("FUP
+-- Piccino", espera de joao@piccino.com.br):
+--   (a) 81% dos e-mails tem `messages.contact_id` NULL (1.436 de 1.769) —
+--       o e-mail JA esta na base desde jul/2025, o cruzamento e que nao o via;
+--   (b) FICHA IRMA: a task aponta pra ficha #2869 e a thread esta na #2858, as
+--       duas com o mesmo endereco (56 enderecos em >1 ficha, 133 fichas);
+--   (c) task SEM `contact_id` (73 das 119 abertas) sumia inteira do gate.
+-- Agora casa por IDENTIDADE: ficha + fichas irmas + endereco citado no texto da
+-- task quando nao ha ficha. Em codigo o mesmo cano vive em
+-- `services/task_reconciler.py` (funcoes `_task_scope`/`_scope_where`), que usa
+-- os primitivos de `services/contact_identity.py` — NAO reescrever `ILIKE '%x%'`.
+WITH aberta AS (   -- `on_hold` entra: task parqueada cujo terceiro respondeu e o caso classico da bola que voltou
+  SELECT id, titulo, status, contact_id,
+         coalesce(titulo,'') || ' ' || coalesce(descricao,'') AS txt
+  FROM tasks WHERE status IN ('pending','on_hold')
+),
+dono AS (   -- e-mail do proprio Renato nunca e "o terceiro respondeu" (a maquina ouvindo o proprio eco)
+  SELECT unnest(ARRAY['renato@almeida-prado.com','renato.almeida.prado@gmail.com']) em
+),
+ident AS (
+  SELECT a.id tid, lower(btrim(e->>'email')) em
+    FROM aberta a JOIN contacts c ON c.id = a.contact_id
+    CROSS JOIN LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(c.emails)='array' THEN c.emails ELSE '[]'::jsonb END) e
+  UNION      -- sem ficha: o endereco que a propria descricao registrou ("E-mail ENVIADO ao Piccino (joao@piccino.com.br)")
+  SELECT a.id, lower((regexp_matches(a.txt,
+         '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', 'g'))[1])
+    FROM aberta a WHERE a.contact_id IS NULL
+),
+alvo AS (SELECT * FROM ident WHERE em <> '' AND em NOT IN (SELECT em FROM dono)),
+fichas AS (   -- ficha da task + IRMAS (mesmo endereco em outra ficha)
+  SELECT a.id tid, a.contact_id cid FROM aberta a WHERE a.contact_id IS NOT NULL
+  UNION
+  SELECT al.tid, c.id FROM alvo al JOIN contacts c ON EXISTS (
+    SELECT 1 FROM jsonb_array_elements(
+      CASE WHEN jsonb_typeof(c.emails)='array' THEN c.emails ELSE '[]'::jsonb END) e
+     WHERE lower(btrim(e->>'email')) = al.em)
+),
+ev AS (   -- `from` vem ora puro ora "Nome <endereco>", e `to` ora array ora string: a regex normaliza os tres
+  SELECT m.contact_id, m.direcao, COALESCE(m.enviado_em, m.recebido_em, m.criado_em) ts,
+         COALESCE(cv.canal,'whatsapp') canal,
+         ARRAY(SELECT DISTINCT lower(x[1]) FROM regexp_matches(coalesce(m.metadata->>'from',''),
+               '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', 'g') x) frm,
+         ARRAY(SELECT DISTINCT lower(x[1]) FROM regexp_matches(coalesce(m.metadata->>'to',''),
+               '[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', 'g') x) too
+  FROM messages m LEFT JOIN conversations cv ON cv.id = m.conversation_id
+  WHERE COALESCE(m.enviado_em, m.recebido_em, m.criado_em) > NOW() - INTERVAL '96 hours'
+)
+SELECT a.id, a.status, a.titulo,
+       string_agg(DISTINCT coalesce(ct.nome, e.frm[1]), ', ') quem,
+       max(e.ts) ultima,
+       string_agg(DISTINCT e.canal||'/'||e.direcao, ',') sinais   -- 'email/incoming' = a bola VOLTOU por e-mail
+FROM aberta a
+JOIN ev e ON (
+     EXISTS (SELECT 1 FROM fichas f WHERE f.tid = a.id AND f.cid = e.contact_id)
+     -- incoming casa pelo `from`, outgoing pelo `to`: sem essa separacao um
+     -- e-mail de OUTRA pessoa com o contato em copia contaria como resposta dele
+  OR (e.canal='email' AND EXISTS (SELECT 1 FROM alvo al WHERE al.tid = a.id
+        AND (CASE WHEN e.direcao='incoming' THEN e.frm ELSE e.too END) && ARRAY[al.em])))
+LEFT JOIN contacts ct ON ct.id = e.contact_id
+GROUP BY a.id, a.status, a.titulo
+ORDER BY ultima DESC;
 -- (F2) task pending cujo PROJETO teve nota nova recente
 SELECT t.id, t.titulo, t.project_id, max(pn.criado_em) ultima
 FROM tasks t JOIN project_notes pn ON pn.project_id=t.project_id
@@ -103,6 +163,12 @@ WHERE t.status='pending' AND pn.criado_em > NOW() - INTERVAL '96 hours'
 GROUP BY t.id, t.titulo, t.project_id ORDER BY ultima DESC;
 ```
 Calibracao (13/07): **verbo de acao** (FUP/contatar/planejar/revisar/enviar) → o entregavel E A ACAO; se a acao foi feita (outgoing do Renato, nota criada, gate batido) = **RESOLVIDA, procurar a evidencia ativamente e fechar** (NAO devolver pro Renato quando a evidencia existe — [[feedback_nao_perguntar_age]]). **"Aguardar X retornar"** so fecha com `incoming` do terceiro. Ignorar tasks dev/backlog. So exibir se houver candidatas; NAO fechar auto — Renato confirma.
+
+Como ler as colunas novas (06/08):
+- **`sinais` com `email/incoming`** = a bola voltou POR E-MAIL. Era o caso invisivel: o #999695 esperava resposta do Piccino e nenhum check a alcancava.
+- **`status='on_hold'`** so interessa quando ha `incoming`: parqueada sem resposta e espera em curso, nao candidata a fechar. O `sweep_on_hold` do `task_reconciler` ja a reabre sozinho quando o terceiro responde (por WhatsApp OU e-mail) — se ela aparecer aqui com `incoming`, e porque a reconciliacao ainda nao rodou no dia.
+- **`quem` com mais de um nome** = a task cita mais de uma pessoa (a #999735 cita o Nick e a Fran em copia). Conferir se quem respondeu foi de fato **o esperado** antes de propor fechar.
+- Task alcancada so pelo endereco no texto e task com **dado faltando**: aproveitar e **linkar o `contact_id`** ([[feedback_check_g_task_link_convention]]). Medido 06/08: 72 das 119 abertas nao tem ficha NEM endereco no texto — para essas, este check continua cego.
 
 **G. Inbound orfao (WA/email que devia virar task/evento e nao virou):**
 Fecha o buraco do inbound do Renato que e capturado+extraido mas nao tem cano pra acao. **Substitui parcialmente o `detector_relacionamento` desligado 20/07** — e **NAO religa signals** (respeita a decisao "ii" do Renato: zero notificacao nova, so aparece quando ele abre `/cos`). **Limite honesto: e session-bound** — se o Renato nao abrir `/cos` num dia, o inbound daquele dia espera ate a proxima abertura. Read-only, roda na abertura como A-F. Janela 4 dias:
