@@ -10778,6 +10778,52 @@ async def cron_cos_daily_review(request: Request):
         return {"status": "error", "job": "cos-daily-review", "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/cron/check-g-ledger")
+@track_cron_run
+async def cron_check_g_ledger(request: Request):
+    """Cron 1x/dia: grava o que a triagem de inbound viu E o que descartou.
+
+    O check G é session-bound — só roda quando o Renato abre a `/cos`, e a
+    janela é de 4 dias. Cinco dias sem abrir e o inbound daqueles dias evapora
+    sem nunca ter sido avaliado. Gravando todo dia, o que não foi visto fica
+    marcado como não-visto em vez de sumir.
+
+    NÃO notifica e NÃO cria proposta — é memória pra medir, não alarme.
+    Ver services/check_g_ledger.py.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.check_g_ledger import registrar, medir
+
+    try:
+        reg = registrar(dias=4)
+        # Medir junto: sem isso o ledger acumula linhas que ninguém interpreta,
+        # e uma tabela que só cresce é a versão silenciosa de não medir nada.
+        med = medir(dias=14)
+        return {"status": "ok", "job": "check-g-ledger", "registro": reg,
+                "falso_negativo_pct": med["falso_negativo_pct"],
+                "nao_medido_pct": med["nao_medido_pct"]}
+    except Exception as e:
+        logger.exception("cron_check_g_ledger: exception fatal")
+        return {"status": "error", "job": "check-g-ledger", "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/cos/check-g-ledger")
+async def api_check_g_ledger(request: Request, dias: int = 14):
+    """Leitura do ledger: falso negativo por gate, com o não-medido à vista.
+
+    Consumido pela abertura da `/cos` — é o número que responde "o que a
+    triagem está descartando?", que até 06/08 só existia por medição manual.
+    """
+    # Chamada nua, sem `if`: o helper levanta 401 sozinho e devolve None quando
+    # a credencial é a X-API-Key. Testar o retorno reprovaria justamente quem
+    # passou.
+    require_scaffold_auth(request)
+    from services.check_g_ledger import medir
+    return medir(dias=dias)
+
+
 @app.get("/api/cron/cos-signal-router")
 @track_cron_run
 async def cron_cos_signal_router(request: Request):

@@ -213,6 +213,13 @@ _SCHEDULER_JOBS = [
     # Ver services/signal_router.py + services/frente_review.py.
     ("cos-signal-router", "/api/cron/cos-signal-router", CronTrigger(hour="*/4", minute=40)),
     ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=10, minute=0)),
+    # 06/08/26 — LEDGER do check G. O check e session-bound: so roda quando o
+    # Renato abre a /cos, com janela de 4 dias. Cinco dias sem abrir e o inbound
+    # daqueles dias evapora sem nunca ter sido avaliado. Este job grava todo dia
+    # o que entrou e o gate que matou cada mensagem — 328 avaliadas, 20 exibidas
+    # na medicao de 06/08. NAO notifica (respeita a decisao "ii"): e memoria pra
+    # medir, nao alarme. 9h UTC = 6h BRT, antes do review das 10h.
+    ("check-g-ledger", "/api/cron/check-g-ledger", CronTrigger(hour=9, minute=0)),
     # 28/06/26 — F3.1 WA Triage sweep. Janela 4h batched Sonnet classifica
     # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
     # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
