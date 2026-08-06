@@ -50,8 +50,19 @@ ROTAS_FECHADAS = [
 ]
 
 # Nomes que contam como verificacao de auth no corpo de um handler.
+# CHAMAR NAO E BARRAR (06/08/2026). `get_current_user` nao e porteiro: ele
+# DEVOLVE o usuario (ou None) e quem decide barrar e a rota. Estava aqui dentro
+# como se fosse porteiro, e por isso `POST /api/push/subscribe` contava como
+# fechada — ela chama o getter, ignora o None e grava a inscricao de push de um
+# ANONIMO com `user_id=None`. Uma regua que confunde consultar com barrar
+# certifica exatamente o que deveria pegar.
+#
+# Agora ele so vale como auth se a rota tambem BARRAR (raise/redirect/401/403) —
+# ver `_barra_de_verdade`.
+GETTERS_QUE_NAO_BARRAM = {"get_current_user"}
+
 AUTH_CALLS = {
-    "require_scaffold_auth", "require_api_auth", "get_current_user", "require_auth", "require_admin",
+    "require_scaffold_auth", "require_api_auth", "require_auth", "require_admin",
     "require_operador", "verify_cron_auth", "_empresas_require_auth",
     "verify_session_token",
     # Porteiros de CONSUMIDOR EXTERNO. Nao usam cookie nem X-API-Key porque quem
@@ -234,8 +245,29 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # e atualize aqui. **Baixar e obrigatorio** — se o teto ficar folgado, ele para
 # de proteger e vira decoracao (foi o que aconteceu com `ANDAIME_LEITURA_EXPOSTA`
 # antes de ser esvaziada). Subir exige decisao explicita e justificativa aqui.
-TETO_MUTANTES_SEM_AUTH = 53
+# 06/08/26: 53 → 46. Sete a menos, mas a conta tem uma virada no meio: a régua
+# passou a exigir que `get_current_user` BARRE, e não só seja chamado — com isso
+# apareceu uma rota que estava escondida (`POST /api/push/subscribe`, que gravava
+# inscrição de push de anônimo). O número real era 54, não 53. Fechado o bloco
+# `/api/contacts` (7 rotas, consumidor só na UI, que exige sessão) mais o push:
+# 54 - 8 = 46.
+TETO_MUTANTES_SEM_AUTH = 46
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _barra_de_verdade(corpo: str) -> bool:
+    """A rota REJEITA quem não passou, ou só consultou quem era?
+
+    Sinal grosso de propósito: qualquer 401/403, `raise HTTPException` ou
+    redirect pro login serve. Errar para o lado de "não barra" só faz a rota
+    aparecer na lista de trabalho — errar para o outro lado a esconde, e
+    esconder foi o que deixou `POST /api/push/subscribe` aberta contando como
+    fechada.
+    """
+    return any(t in corpo for t in (
+        "raise HTTPException", "status_code=401", "status_code=403",
+        "RedirectResponse", "/login",
+    ))
 
 
 def _rotas_de_main():
@@ -261,7 +293,7 @@ def _rotas_de_main():
         if not rotas:
             continue
         tem_auth = False
-        # `dependencies=[Depends(auth)]` NO DECORATOR — forma idiomatica do
+        # `dependencies=[Depends(auth)]` NO DECORATOR  # noqa: E501 (ver _barra_de_verdade) — forma idiomatica do
         # FastAPI e a usada no fechamento em massa de 03/08 (129 rotas). Sem
         # este ramo o teste nao enxergaria nenhuma delas e o teto continuaria
         # marcando 193 com o trabalho feito: guarda que nao ve o progresso
@@ -280,11 +312,16 @@ def _rotas_de_main():
             if any(nome in despejo for nome in AUTH_CALLS):
                 tem_auth = True
         # chamada de auth no corpo
+        corpo_fn = "\n".join(linhas[node.lineno - 1:node.end_lineno])
+        barra = _barra_de_verdade(corpo_fn)
         for interno in ast.walk(node):
             if isinstance(interno, ast.Call):
                 f = interno.func
                 nome = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
                 if nome in AUTH_CALLS:
+                    tem_auth = True
+                # Getter só protege se a rota realmente rejeitar depois.
+                elif nome in GETTERS_QUE_NAO_BARRAM and barra:
                     tem_auth = True
         # comparacao manual de segredo (X-API-Key / CRON_SECRET / hmac) ou
         # carimbo de provedor externo (Google channel token, assinatura Svix).

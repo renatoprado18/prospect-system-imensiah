@@ -3124,7 +3124,7 @@ async def get_contact_facts(contact_id: int):
         conn.close()
 
 
-@app.delete("/api/contacts/facts/{fact_id}")
+@app.delete("/api/contacts/facts/{fact_id}", dependencies=[Depends(require_scaffold_auth)])
 async def delete_contact_fact(fact_id: int):
     """Delete a specific fact"""
     conn = get_connection()
@@ -3165,7 +3165,7 @@ async def add_contact_fact(contact_id: int, request: Request):
         return {"status": "success", "fact": fact}
 
 
-@app.put("/api/contacts/facts/{fact_id}")
+@app.put("/api/contacts/facts/{fact_id}", dependencies=[Depends(require_scaffold_auth)])
 async def update_contact_fact(fact_id: int, request: Request):
     """Update an existing fact"""
     data = await request.json()
@@ -7457,6 +7457,17 @@ async def merge_contacts_endpoint(request: Request):
     propagate = body.get('propagate', True)
     field_choices = body.get('field_choices')
 
+    # 06/08/26 — `keep_id`/`merge_id` é o formato que a tela de DUPLICADOS
+    # sempre mandou. Existiam DUAS rotas `POST /api/contacts/merge` no arquivo:
+    # esta e uma segunda, 7 mil linhas abaixo, que falava esse dialeto. No
+    # FastAPI a primeira registrada vence, então a segunda nunca rodou — era
+    # código morto com cara de funcionalidade, e a tela de duplicados levava
+    # **400 em toda tentativa** (o `contact_ids` chegava vazio). Os 293 merges
+    # de 06/08 foram feitos por script, não por ela. A rota morta saiu; o
+    # dialeto dela é traduzido aqui.
+    if not contact_ids and body.get('keep_id') and body.get('merge_id'):
+        contact_ids = [body['keep_id'], body['merge_id']]
+
     if len(contact_ids) < 2:
         raise HTTPException(status_code=400, detail="Precisa de pelo menos 2 contatos para merge")
 
@@ -7713,7 +7724,7 @@ async def auto_merge_all_duplicates(request: Request):
 
 # ============== LinkedIn Import ==============
 
-@app.post("/api/contacts/linkedin/analyze")
+@app.post("/api/contacts/linkedin/analyze", dependencies=[Depends(require_scaffold_auth)])
 async def analyze_linkedin_csv(request: Request):
     """
     Analisa CSV do LinkedIn e retorna preview das ações.
@@ -7751,7 +7762,7 @@ async def analyze_linkedin_csv(request: Request):
     return analysis
 
 
-@app.post("/api/contacts/linkedin/import")
+@app.post("/api/contacts/linkedin/import", dependencies=[Depends(require_scaffold_auth)])
 async def import_linkedin_csv(request: Request):
     """
     Executa importação do CSV do LinkedIn.
@@ -8728,7 +8739,7 @@ async def get_contact(contact_id: int):
     }
 
 
-@app.put("/api/contacts/{contact_id}")
+@app.put("/api/contacts/{contact_id}", dependencies=[Depends(require_scaffold_auth)])
 async def update_contact(contact_id: int, request: Request):
     """Atualiza um contato"""
     body = await request.json()
@@ -8775,7 +8786,7 @@ async def update_contact(contact_id: int, request: Request):
     return {"status": "ok", "contact": updated}
 
 
-@app.post("/api/contacts")
+@app.post("/api/contacts", dependencies=[Depends(require_scaffold_auth)])
 async def create_contact(contact: ContactCreate):
     """Cria novo contato"""
     conn = get_db()
@@ -14354,40 +14365,6 @@ async def get_duplicates(
     )
 
 
-@app.post("/api/contacts/merge")
-async def merge_duplicate_contacts(data: dict):
-    """
-    Merge dois contatos duplicados.
-
-    Body: {
-        "keep_id": 123,
-        "merge_id": 456,
-        "field_choices": {                    # Opcional
-            "nome": 123,                      # Usar valor do contato 123
-            "empresa": 456,                   # Usar valor do contato 456
-            "emails": "combine",              # Combinar todos
-            "telefones": "combine"
-        }
-    }
-
-    O contato merge_id sera excluido apos transferir:
-    - Dados conforme field_choices (ou automatico se nao especificado)
-    - Mensagens
-    - Conversas
-    - Tasks
-    """
-    keep_id = data.get("keep_id")
-    merge_id = data.get("merge_id")
-    field_choices = data.get("field_choices")
-
-    if not keep_id or not merge_id:
-        raise HTTPException(status_code=400, detail="keep_id e merge_id sao obrigatorios")
-
-    result = merge_contatos(keep_id, merge_id, field_choices)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
-
 
 @app.get("/api/contacts/duplicates/stats")
 async def get_duplicates_stats():
@@ -19175,11 +19152,20 @@ async def get_vapid_public_key():
 
 @app.post("/api/push/subscribe")
 async def subscribe_push(request: Request, subscription: PushSubscription):
-    """Subscribe to push notifications."""
+    """Subscribe to push notifications. Exige sessão.
+
+    06/08/26 — antes aceitava ANÔNIMO: chamava `get_current_user`, ignorava o
+    None e gravava a inscrição com `user_id=None`. Qualquer um podia registrar
+    um endpoint de push e passar a receber notificação destinada ao Renato.
+    A régua de exposição contava a rota como fechada porque ela CHAMAVA um
+    helper de auth — mas `get_current_user` consulta, não barra. A régua também
+    foi corrigida (`GETTERS_QUE_NAO_BARRAM`), senão a próxima rota assim se
+    esconderia do mesmo jeito.
+    """
     from services.push_notifications import get_push_service
 
-    user = get_current_user(request)
-    user_id = user.get('email') if user else None
+    user = require_auth(request)
+    user_id = user.get('email')
 
     service = get_push_service()
 
