@@ -136,3 +136,36 @@ def test_endpoint_existe_e_exige_cron_auth():
     i = fonte.find('@app.post("/api/cron/wa-ingest-heartbeat")')
     assert i > 0, "endpoint nao existe"
     assert "verify_cron_auth" in fonte[i:i + 2000]
+
+
+# ------------------------------- diagnóstico da falha do agente CoS --------
+
+def test_motivo_da_falha_vai_pro_payload():
+    """Até 06/08 o `cos_daily_review` gravava `falhas: 3` e o PORQUÊ ia só pro
+    stderr (`~/.cos-agent/run.err`), que ninguém abre. O `pdca.py` mostrava o
+    número sem diagnóstico e cada investigação recomeçava do zero.
+
+    Naquele dia foram 2 falhas de DNS do Neon e 1 timeout — e só se soube lendo
+    um arquivo local por acaso. Oitava aparição do padrão do dia: o mecanismo
+    registra QUE falhou, não O QUE falhou.
+    """
+    import pathlib
+
+    src = pathlib.Path(_ROOT).joinpath("scripts", "cos_agent", "run.py").read_text()
+    assert '"falhas_detalhe"' in src, "o motivo da falha voltou a morrer no stderr"
+    assert '"erro": str(d.get("error"))' in src
+
+
+def test_retry_so_pra_falha_de_rede():
+    """DNS que falha é transitório e some sozinho — repetir salva a frente.
+    Timeout NÃO: se estourou 420s, repetir custa mais 420s e estoura de novo.
+    """
+    import pathlib
+
+    src = pathlib.Path(_ROOT).joinpath("scripts", "cos_agent", "run.py").read_text()
+    i = src.index("RETRY PRA FALHA DE REDE")
+    trecho = src[i:i + 1800]
+    assert "translate host name" in trecho, "não reconhece o erro real que ocorreu"
+    # o retorno de timeout tem que continuar saindo direto, sem 2a tentativa
+    assert 'error": f"timeout > {AGENT_TIMEOUT_S}s"' in trecho
+    assert "time.sleep(30)" in trecho

@@ -211,14 +211,32 @@ def julgar(frente: dict, ro_url: str) -> dict:
         "--disallowedTools", "Write", "Edit", "MultiEdit", "NotebookEdit",
         "--add-dir", "/Users/rap/.claude/projects/-Users-rap-prospect-system/memory",
     ]
+    # RETRY PRA FALHA DE REDE. Em 06/08 três frentes falharam numa rodada e o
+    # `run.err` mostrou a causa: `could not translate host name ... neon.tech`
+    # — 11 ocorrências. É o DNS da máquina local oscilando, não o sistema. Duas
+    # das três frentes perderam a rodada inteira por um erro que some sozinho em
+    # segundos. Timeout NÃO entra no retry: se estourou 420s, repetir custa mais
+    # 420s e provavelmente estoura de novo.
     t0 = time.monotonic()
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=AGENT_TIMEOUT_S, env=env,
-                           cwd=str(BASE))
-    except subprocess.TimeoutExpired:
-        return {"project_id": frente["id"], "frente": frente["nome"],
-                "error": f"timeout > {AGENT_TIMEOUT_S}s"}
+    r = None
+    for tentativa in range(2):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=AGENT_TIMEOUT_S, env=env,
+                               cwd=str(BASE))
+        except subprocess.TimeoutExpired:
+            return {"project_id": frente["id"], "frente": frente["nome"],
+                    "error": f"timeout > {AGENT_TIMEOUT_S}s"}
+        if r.returncode == 0 or tentativa == 1:
+            break
+        erro = (r.stderr or "") + (r.stdout or "")
+        if not any(t in erro for t in ("translate host name", "Temporary failure",
+                                       "Connection refused", "Name or service not known",
+                                       "could not connect")):
+            break                      # erro de lógica: repetir não ajuda
+        print(f"[cos-agent] #{frente['id']} falhou por rede, 2ª tentativa em 30s",
+              file=sys.stderr, flush=True)
+        time.sleep(30)
     dur = int(time.monotonic() - t0)
 
     if r.returncode != 0:
@@ -706,6 +724,14 @@ def main() -> int:
     # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).
     triagem = {"ativas": len(todas), "com_movimento": len(alvo),
                "paradas": len(paradas), "falhas": len(ruim),
+               # O MOTIVO, não só a contagem. Até 06/08 o payload gravava
+               # `falhas: 3` e o porquê ia só pro stderr (`~/.cos-agent/run.err`),
+               # que ninguém abre: o `pdca.py` mostrava o número sem diagnóstico e
+               # cada investigação recomeçava do zero. Naquele dia foram 2 DNS e 1
+               # timeout — e só descobri lendo um arquivo local por acaso.
+               "falhas_detalhe": [{"project_id": d.get("project_id"),
+                                   "frente": d.get("frente"),
+                                   "erro": str(d.get("error"))[:160]} for d in ruim],
                "modo": "horario" if a.horario else "lote",
                "nao_julgadas": motivos}
     m = fundir(anterior, ok, triagem)   # `anterior` já foi lido no topo
