@@ -159,12 +159,27 @@ cand AS (
 SELECT c.contact_id, ct.nome, max(c.criado_em) ultima, bool_or(c.has_doc) tem_doc,
        max(c.fname) FILTER (WHERE c.has_doc) anexo,
        bool_and(c.ack) so_ack,   -- true = tudo que ele mandou foi "ok/feito/obrigado": REBAIXE (nao suma)
+       -- ⚠️ 06/08: uma amostra so NAO basta — LEIA `fio`, nao `amostra`.
+       -- `msgs` e o DENOMINADOR: quantas incoming distintas o contato mandou
+       -- na janela. Medido no dia: 62 mensagens em 20 contatos — a amostra
+       -- unica mostrava 20 delas (**32%**), e 14 dos 20 contatos tinham mais
+       -- de uma. O caso que expos isso: o Orestes mandou 4 PDFs de comprovante
+       -- (04/08 ~15h) e as 21:07 um WA separado com o pedido real ("voce
+       -- precisa conversar com a Daniela... zerar estas despesas"). O
+       -- ORDER BY has_doc DESC elegeu o PDF, a triagem leu so o anexo e
+       -- concluiu "nada a fazer". Quem pegou foi o Renato.
+       count(*) AS msgs,
+       (array_agg(c.conteudo ORDER BY c.criado_em DESC))[1:3] AS fio,   -- ate 3 ultimas, recente primeiro
        (array_agg(c.conteudo ORDER BY (c.has_doc)::int DESC, c.criado_em DESC))[1] amostra
 FROM cand c LEFT JOIN contacts ct ON ct.id=c.contact_id
 GROUP BY c.contact_id, ct.nome
 ORDER BY bool_and(c.ack) ASC,    -- o que PEDE algo primeiro; encerramento no fim
          bool_or(c.has_doc) DESC, ultima DESC;
 ```
+**LER O FIO, NAO A ANCORA.** `msgs > 1` significa que ha conversa: o pedido
+acionavel pode ser o irmao da mensagem que aparece em `amostra` — anexo nao e
+o assunto, e o envelope. Com `msgs > 3` o `fio` tambem esta truncado: abra a
+conversa do contato antes de julgar. Ver [[feedback_inbound_ancora_nao_e_a_mensagem_acionavel]].
 **INCLUI se:** (a) tem anexo pdf/docx/xlsx (NAO imagem — imagem e ~90% ruido), OU (b) o texto casa o regex de convite/pedido E e curto (<=280).
 **GATES anti-ruido (CRITICO — Renato ODEIA firehose, alta precisao > recall):**
 - **Bola com o Renato** (`lastdir=incoming`): a ULTIMA msg do contato e incoming → ele ainda nao fechou o loop. Isso deixa passar o caso "respondeu no WA mas nao criou o evento" (ex.: "Consigo sim" no chat ≠ evento na agenda). Se o contato mandou algo DEPOIS que o Renato ja respondeu por ultimo (bola=outgoing), sai — sinal comportamental de "ja tratou".
