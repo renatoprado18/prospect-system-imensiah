@@ -295,6 +295,15 @@ _SCHEDULER_JOBS = [
     # dropped → Railway in-process. Horarios UTC identicos aos do vercel.json
     # (remocao do vercel.json na mesma PR pra evitar trigger duplicado).
     ("daily-sync", "/api/cron/daily-sync", CronTrigger(hour=5, minute=0)),
+    # 06/08/26 — SYNC DE CALENDAR a cada 15min. O endpoint existia desde sempre
+    # e NUNCA teve agendador: 2 runs na vida, o ultimo em 02/05. O calendar so
+    # entrava como um passo do daily-sync das 5h, entao tudo que o Renato
+    # agendava ou movia durante o dia ficava invisivel por ate 24h — e o portao,
+    # o check F/G e as propostas rodavam sobre agenda velha. Descoberto quando
+    # ele criou "Almoco MBB" as 13h03 e perguntou por que nada apareceu; o
+    # disparo manual trouxe o evento na hora (created:1). Mesma classe do
+    # webhook WA que parou 3h: o mecanismo nao entregava e nada avisava.
+    ("sync-calendar", "/api/cron/sync-calendar", CronTrigger(minute="*/15")),
     ("run-daily-ai", "/api/cron/run-daily-ai", CronTrigger(hour=5, minute=15)),
     ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=5, minute=25)),
     ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),

@@ -176,6 +176,16 @@ def coletar(cur):
     cur.execute("SELECT count(*) AS n, count(*) FILTER (WHERE verificado) AS verificados FROM contact_facts")
     d["fatos"] = cur.fetchone()
 
+    # AGENDA como cano. Faltava aqui — e foi por isso que a parada passou
+    # despercebida: o cron `sync-calendar` nunca teve agendador (2 runs na vida,
+    # o último em 02/05), o calendar só entrava no daily-sync das 5h, e o que o
+    # Renato marcava durante o dia ficava invisível por até 24h. Nenhuma
+    # superfície mostrava a idade desse cano. O que não aparece não é vigiado.
+    cur.execute("""SELECT count(*) AS n, max(last_synced_at) AS ultima,
+                          count(*) FILTER (WHERE start_datetime > now()) AS futuros
+                     FROM calendar_events""")
+    d["agenda"] = cur.fetchone()
+
     cur.execute("""SELECT max(received_at) AS ultima,
                    count(*) FILTER (WHERE received_at > now() - interval '1 hour') AS ult_hora
                    FROM webhook_audit""")
@@ -436,6 +446,15 @@ def render(d):
         f'<td class="n">{g["msgs"]:,}</td><td class="n">'
         f'<span class="dot dot--{"calm" if idg is not None and idg < 6 else "warn"}"></span>'
         f'{("há %.0fh" % idg) if idg is not None else "—"}</td></tr>'.replace(",", "."))
+    # Agenda: sincroniza a cada 15min desde 06/08. Vermelho aqui significa que o
+    # INTEL está julgando sobre agenda velha — foi o que aconteceu por 3 meses.
+    ag = d["agenda"]
+    ida = (ago.replace(tzinfo=None) - ag["ultima"]).total_seconds() / 3600 if ag["ultima"] else None
+    linhas_cano.append(
+        f'<tr><td><b>agenda</b> (Google Calendar) <span class="sub">{ag["futuros"]} eventos futuros</span></td>'
+        f'<td class="n">{ag["n"]:,}</td><td class="n">'
+        f'<span class="dot dot--{"calm" if ida is not None and ida < 1 else ("warn" if ida is not None and ida < 6 else "crit")}"></span>'
+        f'{("há %.0fh" % ida) if ida is not None else "—"}</td></tr>'.replace(",", "."))
     linhas_cano.append(
         f'<tr><td><b>fatos</b> destilados <span class="sub">{d["fatos"]["verificados"]} verificados por você</span></td>'
         f'<td class="n">{d["fatos"]["n"]:,}</td><td class="n">—</td></tr>'.replace(",", "."))

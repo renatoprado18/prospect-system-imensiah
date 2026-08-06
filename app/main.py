@@ -11296,10 +11296,15 @@ async def cron_run_social_groups(request: Request):
 @track_cron_run
 async def cron_sync_calendar(request: Request):
     """
-    Trigger manual/debug para sincronizar eventos do Google Calendar.
-    NAO tem agendador — nao esta em vercel.json nem no worker Railway.
-    O sync agendado roda via daily-sync (step_calendar). Este endpoint
-    existe so pra disparo manual/debug.
+    Sincroniza eventos do Google Calendar (incremental, por conta conectada).
+
+    AGENDADO A CADA 15 MIN no worker Railway desde 06/08/26. Antes disso este
+    docstring dizia "NAO tem agendador" — e era verdade: 2 runs na vida, o
+    ultimo em 02/05. O calendar so entrava como um passo do `daily-sync` das 5h,
+    entao **tudo que o Renato agendava ou movia durante o dia ficava invisivel
+    ao INTEL por ate 24 horas**, e o portao/checks rodavam sobre agenda velha.
+    Apareceu quando ele criou um almoco as 13h03 e perguntou por que nada
+    aparecia; o disparo manual trouxe o evento na hora.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
