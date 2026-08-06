@@ -22,6 +22,12 @@ Tabelas (schema `public`):
   - `direcao='outgoing'` = **o Renato falando**
   - ⚠️ **`canal` NÃO é só WhatsApp.** Vale `'whatsapp'` (20.482 msgs) **e `'email'` (1.763 msgs, desde jul/2025)**. E-mail SEMPRE esteve aqui e a camada nunca soube — o efeito foi cobrar coisa já resolvida: a nota do café afirmou *"Orestes não respondeu à proposta de 30/07"* e ele tinha **respondido por e-mail em 31/07**, com uma decisão que reorientava a frente inteira.
   - **Antes de abrir portão, cheque os DOIS canais** — a regra 1 (ele já executou?) só vale se você olhou o outbound de e-mail também. Filtrar por `canal='whatsapp'` é fabricar um "sem resposta" falso.
+- ⭐ **`acao_do_renato` (pessoa_id, canal, o_que, evidencia, quando)** — **a fonte única do "ele já fez isso?"**. Une num só lugar tudo que o Renato fez DIRETO: WhatsApp e e-mail enviados, mensagem no grupo, e **RSVP de convite** (aceitou/recusou). Antes dela, responder "ele já agiu?" exigia três consultas e lembrar de todas — e o RSVP não era lido por consulta nenhuma. **Rode ANTES de marcar `precisa_de_voce`** (regra 1):
+  ```sql
+  SELECT canal, o_que, quando, left(evidencia,120) FROM acao_do_renato
+  WHERE pessoa_id = <id> AND quando > '<data da cobrança>' ORDER BY quando DESC LIMIT 5;
+  ```
+  Existe porque em 06/08 a camada errou **cinco vezes na mesma sessão** propondo o que ele já tinha feito: Michele ("pode mandar sim", 04/08 21:48), Orestes (retorno no WA), parabéns ao Marson (05/08 18:07), convite da Phisalia já respondido. **Nenhuma exigia dado novo — exigia um lugar pra perguntar.**
 - `copilot.emails` — **view pronta de e-mail**, mais rica que `messages` crua: `(subject, from_email, from_name, content, priority, classification, timestamp)`. Você já tem SELECT nela. Use quando o **assunto** ou o **remetente** importarem — em `messages` o corpo está em `conteudo`, mas o assunto vive em `metadata->>'subject'`.
 - `project_notes` (project_id, tipo, titulo, conteudo, criado_em) — `conteudo` pode ser longo; **leia inteiro quando importar**
 - `project_whatsapp_groups` + `group_messages` (group_jid, sender_name, content, from_me, timestamp)
@@ -43,7 +49,7 @@ Os memos também estão em `/Users/rap/.claude/projects/-Users-rap-prospect-syst
 
 ## Regras duras
 
-1. **Se o Renato JÁ EXECUTOU a ação que você ia pedir, o portão está cumprido.** Confira o outbound dele antes de marcar `precisa_de_voce`. Anúncio de intenção não conta; mensagem enviada conta.
+1. **Se o Renato JÁ EXECUTOU a ação que você ia pedir, o portão está cumprido.** Confira o outbound dele antes de marcar `precisa_de_voce` — **uma query em `acao_do_renato`**, que já cobre WhatsApp, e-mail, grupo e RSVP. Anúncio de intenção não conta; mensagem enviada conta. **Aceitar um convite é responder**: o convite já aceito na agenda não vira portão de "responder ao fulano".
 2. **Task `on_hold` NÃO é atraso e NÃO é portão** — foi parqueada de propósito, e vencimento passado é o normal nesse estado. Se o parqueio parecer errado, diga na `nota`; não abra portão.
 3. **Participante compartilhado.** Muita gente participa de várias frentes e a DM chega inteira. Mensagem dessa pessoa só é evidência DESTA frente se **menciona o objeto DESTA frente**. Na dúvida, não é movimento daqui — e diga na `nota` que ignorou.
 4. **Cite evidência** ao afirmar: id de task, quem disse, data. **Nunca invente.** Copie datas e valores EXATOS.

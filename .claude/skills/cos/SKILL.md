@@ -270,6 +270,31 @@ Nao mostrar: "amanha", decisoes futuras (so gate HOJE), zero-states. **Excecao:*
 
 NAO comecar a implementar antes do user responder. `/cos` apresenta, nao decide.
 
+## Principio: "ele ja fez isso?" tem UMA fonte
+
+Antes de oferecer QUALQUER coisa — rascunho, task, cobranca, item de check F/G,
+proposta pra sessao — pergunte a `acao_do_renato`:
+
+```sql
+SELECT canal, o_que, quando, left(evidencia,120) FROM acao_do_renato
+WHERE pessoa_id = <id> AND quando > '<data do pedido>' ORDER BY quando DESC LIMIT 5;
+```
+
+Ela une o que ele fez DIRETO em qualquer canal: WhatsApp e e-mail enviados,
+mensagem no grupo, **e RSVP de convite** — este ultimo nao era lido por consulta
+nenhuma antes de 06/08. Nao decide nada: mostra o ato, com data e evidencia; o
+julgamento de se aquilo cumpre o pedido continua seu.
+
+Existe porque em 06/08 foram **cinco falhas numa sessao so**, todas oferecendo o
+que ele ja tinha feito — Michele, Orestes, parabens ao Marson, RSVP da Phisalia,
+itens do check-G ja engajados. Nenhuma exigia dado novo. Ver
+[[feedback_checar_acao_renato_antes_de_oferecer]].
+
+⚠️ **Medicao honesta (06/08):** nos itens do check G de hoje ela nao suprimiu
+nada — o gate `lastdir=incoming` ja cobria esses casos. Onde ela morde e no
+**portao** (o agente propondo o que ele fez) e no **RSVP**, que era invisivel.
+Nao infle o valor dela: consulte e siga.
+
 ## Principio: consultar antes de perguntar
 
 Antes de perguntar algo que o SISTEMA sabe (composicao de grupo WA, estado de task, cargo de contato, se msg foi respondida), CONSULTAR primeiro (`messages`, `group_messages`, `tasks`, `project_notes`, `contacts`). So perguntar o que exige julgamento do Renato. Ver `feedback_cos_action_blindness`, `feedback_timeline_triage`, `feedback_vallen_grupo_inclui_aptus`.
