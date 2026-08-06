@@ -19,6 +19,42 @@ from services.worker_secret import get_worker_secret
 logger = logging.getLogger(__name__)
 
 
+def _registrar_falha(message_id: str, phone: str, kind: str, motivo: str) -> None:
+    """Grava em `wa_attachments` a extração que NÃO aconteceu.
+
+    Sem isto o anexo que falha no dispatch some sem rastro: sem linha, sem
+    erro, nada pra reprocessar — foi assim que 50 de 52 áudios DM incoming
+    ficaram invisíveis por 30 dias. Uma fila de reprocessamento construída
+    sobre esta tabela nasce cega enquanto o fracasso não for registrado.
+
+    Nunca levanta: telemetria não pode derrubar a ingestão. O UPDATE só
+    sobrescreve linha sem texto extraído — sucesso anterior fica de pé.
+    """
+    if not message_id:
+        return
+    try:
+        from database import get_db
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO wa_attachments (message_id, phone, kind, error)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (message_id, kind) DO UPDATE
+                        SET error = EXCLUDED.error
+                        WHERE wa_attachments.extracted_text IS NULL
+                           OR wa_attachments.extracted_text = ''
+                    """,
+                    (message_id, phone or "", kind, motivo[:500]),
+                )
+            conn.commit()
+    except Exception as e:
+        logger.warning(
+            f"wa_attachment_dispatch: falha ao registrar erro "
+            f"msg={message_id} kind={kind}: {e}"
+        )
+
+
 def _detect_attachment_kind(message_obj: Dict) -> Optional[str]:
     """Returns 'audio', 'image', 'pdf', or None."""
     if not isinstance(message_obj, dict):
@@ -62,12 +98,14 @@ async def dispatch_attachment_to_worker(
             f"wa_attachment_dispatch: AUDIO_WORKER_URL not set — "
             f"skip kind={kind} source={source} msg={message_id}"
         )
+        _registrar_falha(message_id, phone, kind, "dispatch: AUDIO_WORKER_URL ausente")
         return {"dispatched": False, "reason": "worker_url_missing", "kind": kind}
     if not worker_secret:
         logger.error(
             f"wa_attachment_dispatch: WORKER_SECRET não configurado — "
             f"dispatch abortado (sem fallback) kind={kind} msg={message_id}"
         )
+        _registrar_falha(message_id, phone, kind, "dispatch: WORKER_SECRET ausente")
         return {"dispatched": False, "reason": "worker_secret_missing", "kind": kind}
 
     endpoint_map = {"audio": "/transcribe", "pdf": "/analyze-pdf", "image": "/analyze-image"}
@@ -100,10 +138,19 @@ async def dispatch_attachment_to_worker(
             f"wa_attachment_dispatch: kind={kind} source={source} "
             f"msg={message_id} status={resp.status_code}"
         )
+        if resp.status_code >= 400:
+            _registrar_falha(
+                message_id, phone, kind,
+                f"dispatch: worker respondeu HTTP {resp.status_code}",
+            )
+            return {"dispatched": False, "kind": kind, "status": resp.status_code}
         return {"dispatched": True, "kind": kind, "status": resp.status_code}
     except Exception as e:
         logger.warning(
             f"wa_attachment_dispatch: failed kind={kind} source={source} "
             f"msg={message_id} err_type={type(e).__name__} err={e!r}"
+        )
+        _registrar_falha(
+            message_id, phone, kind, f"dispatch: {type(e).__name__}: {e}"
         )
         return {"dispatched": False, "kind": kind, "error": f"{type(e).__name__}: {e}"}

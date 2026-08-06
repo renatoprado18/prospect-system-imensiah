@@ -2326,6 +2326,8 @@ async def _transcribe_audio_inner(data: dict) -> dict:
 
         if dl_resp.status_code not in (200, 201):
             logger.error(f"Download failed: {dl_resp.status_code}")
+            _save_wa_attachment(message_id, phone, "audio",
+                                error=f"download_failed: HTTP {dl_resp.status_code}")
             await _maybe_respond("Nao consegui baixar o audio. Pode digitar?")
             return {"error": "download_failed"}
 
@@ -2334,6 +2336,7 @@ async def _transcribe_audio_inner(data: dict) -> dict:
         mimetype = dl_data.get("mimetype", "audio/ogg")
 
         if not audio_b64:
+            _save_wa_attachment(message_id, phone, "audio", error="empty_audio")
             await _maybe_respond("Audio vazio. Pode digitar?")
             return {"error": "empty_audio"}
 
@@ -2381,6 +2384,9 @@ async def _transcribe_audio_inner(data: dict) -> dict:
         if resp.status_code != 200:
             error_detail = resp.text[:500]
             logger.error(f"Groq transcription failed: {resp.status_code} - {error_detail}")
+            _save_wa_attachment(message_id, phone, "audio", mime_type=clean_mime,
+                                size_bytes=len(audio_bytes),
+                                error=f"groq_failed: HTTP {resp.status_code}")
             await _maybe_respond(f"Erro na transcricao ({resp.status_code}). Pode digitar?")
             return {"error": f"transcription_failed: {resp.status_code}", "detail": error_detail}
 
@@ -2406,10 +2412,18 @@ async def _transcribe_audio_inner(data: dict) -> dict:
             logger.info(f"Whisper quality: no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f}, len={len(transcription)}")
             if avg_no_speech > 0.6 or avg_logprob < -1.0:
                 logger.warning(f"Whisper hallucination suspected (no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f})")
+                _save_wa_attachment(
+                    message_id, phone, "audio", mime_type=clean_mime,
+                    size_bytes=len(audio_bytes),
+                    error=(f"descartado pelo filtro anti-alucinacao "
+                           f"(no_speech={avg_no_speech:.2f} logprob={avg_logprob:.2f})"),
+                )
                 await _maybe_respond("Nao consegui entender o audio (qualidade baixa ou silencio). Pode digitar ou mandar de novo?")
                 return {"error": "hallucination_filter", "no_speech": avg_no_speech, "logprob": avg_logprob}
 
         if not transcription:
+            _save_wa_attachment(message_id, phone, "audio", mime_type=clean_mime,
+                                size_bytes=len(audio_bytes), error="empty_transcription")
             await _maybe_respond("Nao consegui entender o audio. Pode digitar?")
             return {"error": "empty_transcription"}
 
@@ -2718,9 +2732,9 @@ def _save_wa_attachment(
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (message_id, kind) DO UPDATE
-            SET extracted_text = EXCLUDED.extracted_text,
-                extraction_model = EXCLUDED.extraction_model,
-                extraction_cost_usd = EXCLUDED.extraction_cost_usd,
+            SET extracted_text = COALESCE(EXCLUDED.extracted_text, wa_attachments.extracted_text),
+                extraction_model = COALESCE(EXCLUDED.extraction_model, wa_attachments.extraction_model),
+                extraction_cost_usd = COALESCE(EXCLUDED.extraction_cost_usd, wa_attachments.extraction_cost_usd),
                 error = EXCLUDED.error
             RETURNING id
         """, (
