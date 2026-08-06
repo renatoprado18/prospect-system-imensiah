@@ -67,6 +67,90 @@ def coletar(cur):
     cur.execute("SELECT count(*) n FROM information_schema.tables WHERE table_schema='public'")
     d["tabelas"] = cur.fetchone()["n"]
 
+    # 1b. O MODELO PLOTADO, com o movimento das últimas 24h por entidade.
+    #
+    # Pedido do Renato (06/08): "dá pra plotar o modelo e mostrar nele o que
+    # aconteceu no último período?". O verificador respondia "🟢 conforme" —
+    # verdadeiro e inútil pra quem quer ver o sistema PENSANDO. Conformidade é
+    # sobre a forma; o que muda de hora em hora é o volume que passa por cada
+    # entidade. Sem o movimento, o mapa é uma planta baixa; com ele, é o prédio
+    # com as luzes acesas.
+    d["mapa"] = []
+    try:
+        sys.path.insert(0, f"{ROOT}/scripts")
+        from verifica_modelo import ler_contrato
+        contrato = ler_contrato()
+    except Exception as e:
+        contrato = None
+        d["mapa_erro"] = str(e)[:120]
+    if contrato:
+        # Cada tabela tem sua própria coluna de tempo. Sem esta descoberta, contar
+        # "o que entrou em 24h" exigiria hardcode por tabela — e tabela nova
+        # entraria como zero, que é o silêncio de sempre.
+        # DUAS leituras de tempo, e a diferença entre elas é o ponto:
+        #   · ACONTECEU  — a coluna do fato no mundo (timestamp, recebido_em…)
+        #   · GRAVADO    — quando a linha entrou no banco (criado_em)
+        # Medir só a segunda faz a máquina ouvir o próprio eco: o backfill de
+        # grupos de hoje (26.712 mensagens de meses atrás) apareceria como
+        # "+40.315 em 24h", como se o mundo tivesse falado 40 mil vezes desde
+        # ontem. Quando as duas divergem, a página mostra as duas.
+        cur.execute("""SELECT table_name, column_name FROM information_schema.columns
+                       WHERE table_schema='public' AND column_name IN
+                       ('criado_em','created_at','timestamp','data_criacao','received_at',
+                        'started_at','run_at','recebido_em','enviado_em','data_hora','inicio')""")
+        tem = {}
+        for r in cur.fetchall():
+            tem.setdefault(r["table_name"], set()).add(r["column_name"])
+        EVENTO = ["timestamp", "data_hora", "inicio", "recebido_em", "received_at",
+                  "started_at", "run_at", "data_criacao"]
+        GRAVOU = ["criado_em", "created_at"]
+
+        def relogios(t):
+            """(coluna do fato, coluna da gravação) — qualquer uma pode faltar."""
+            cs = tem.get(t, set())
+            ev = next((c for c in EVENTO if c in cs), None)
+            gr = next((c for c in GRAVOU if c in cs), None)
+            if t == "messages" and "recebido_em" in cs:   # incoming×outgoing em colunas distintas
+                ev = "COALESCE(recebido_em, enviado_em)"
+            return ev, gr
+        for ent, spec in contrato["entidades"].items():
+            tabs = []
+            for t in spec["tabelas"]:
+                nome = t.split(".")[-1]        # copilot.emails -> emails
+                ev, gr = relogios(nome)
+                alvo = f'"{t.split(".")[0]}"."{nome}"' if "." in t else f'"{nome}"'
+                total = novas = gravadas = None
+                try:
+                    cur.execute(f"SELECT count(*) AS n FROM {alvo}")
+                    total = cur.fetchone()["n"]
+                    for coluna, destino in ((ev, "ev"), (gr, "gr")):
+                        if not coluna:
+                            continue
+                        expr = coluna if coluna.startswith("COALESCE") else f'"{coluna}"'
+                        cur.execute(f"SELECT count(*) AS n FROM {alvo} "
+                                    f"WHERE {expr} > now() - interval '24 hours'")
+                        n = cur.fetchone()["n"]
+                        if destino == "ev":
+                            novas = n
+                        else:
+                            gravadas = n
+                    if novas is None:
+                        novas = gravadas
+                except Exception:
+                    # Tabela do contrato que não existe mais (ou schema errado):
+                    # o erro aborta a transação inteira no psycopg2 — sem este
+                    # rollback, TODA consulta seguinte falharia e o mapa viria
+                    # vazio sem dizer por quê.
+                    cur.connection.rollback()
+                tabs.append({"nome": t, "total": total, "novas": novas,
+                             "gravadas": gravadas, "sem_relogio": not (ev or gr)})
+            d["mapa"].append({
+                "entidade": ent, "esperado": spec["esperado"], "tabelas": tabs,
+                "novas": sum(x["novas"] or 0 for x in tabs),
+                "gravadas": sum(x["gravadas"] or 0 for x in tabs),
+                "total": sum(x["total"] or 0 for x in tabs),
+            })
+
     # 2. CANOS
     cur.execute("""
         SELECT cv.canal, count(*) AS msgs, max(COALESCE(m.recebido_em, m.enviado_em)) AS ultima
@@ -74,6 +158,14 @@ def coletar(cur):
         GROUP BY 1 ORDER BY 2 DESC
     """)
     d["canais"] = cur.fetchall()
+
+    # Canal cujas mensagens são TODAS coladas à mão não é cano — ver render().
+    cur.execute("""
+        SELECT cv.canal FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
+        GROUP BY 1
+        HAVING bool_and(COALESCE(m.metadata->>'via', m.metadata->>'source', '') LIKE '%manual%')
+    """)
+    d["canais_manuais"] = {r["canal"] for r in cur.fetchall()}
 
     cur.execute("""
         SELECT count(*) AS msgs, max(timestamp) AS ultima,
@@ -292,15 +384,51 @@ def render(d):
         return (f'<div class="tile" style="--t:var(--{cor})"><b>{esc(v)}</b>'
                 f'<span>{esc(rot)}</span></div>')
 
+    # --- mapa do modelo (entidades × movimento em 24h)
+    mapa = []
+    for e in d.get("mapa", []):
+        vivo = e["novas"] > 0
+        tabs = "".join(
+            f'<li{" class=~morta~" if not (t["novas"] or 0) else ""}>{esc(t["nome"])}'
+            f'<b>{"+%d" % t["novas"] if t["novas"] else ("·" if not t["sem_relogio"] else "?")}</b>'
+            f'<span>{("{:,}".format(t["total"])).replace(",", ".") if t["total"] is not None else "—"}</span></li>'
+            .replace("~", '"')
+            for t in e["tabelas"])
+        # Só mostra o "gravadas" quando ele DIVERGE do acontecido — aí ele
+        # significa alguma coisa (backfill, importação, sync recuperando atraso).
+        # replace no NÚMERO, não na frase — senão a vírgula do texto vira ponto.
+        eco = (f'<p class="ent-eco">+{("{:,}".format(e["gravadas"])).replace(",", ".")} gravadas '
+               f'no mesmo período — a diferença é histórico entrando, não conversa nova</p>'
+               if e["gravadas"] > e["novas"] * 1.3 and e["gravadas"] - e["novas"] > 50 else "")
+        mapa.append(f"""<div class="ent{'' if vivo else ' ent--parada'}">
+      <header><span>{esc(e['entidade'])}</span><b>+{e['novas']}</b></header>
+      <p class="ent-tot">{("{:,}".format(e['total'])).replace(",", ".")} no total · {len(e['tabelas'])} tabela(s)</p>
+      {eco}
+      <ul>{tabs}</ul></div>""")
+    if d.get("mapa_erro"):
+        mapa.append(f'<p class="nota">(contrato não pôde ser lido: {esc(d["mapa_erro"])})</p>')
+
     # --- canos
+    #
+    # `manual` separa cano de registro colado à mão. Sem isso o Instagram
+    # aparecia como fonte "parada há 700h" (06/08: o Renato perguntou por quê) —
+    # quando na verdade são DUAS mensagens que ele mesmo colou, a DM ao Joe
+    # Shoemaker e a resposta. Não existe integração de Instagram no INTEL.
+    # Marcar de vermelho um cano que nunca existiu é fabricar um defeito.
     linhas_cano = []
     for c in d["canais"]:
         idade = (ago.replace(tzinfo=None) - c["ultima"]).total_seconds() / 3600 if c["ultima"] else None
-        cor = "calm" if idade is not None and idade < 6 else ("warn" if idade is not None and idade < 48 else "crit")
+        manual = c["canal"] in d.get("canais_manuais", set())
+        if manual:
+            cor, quando = "faint", "registro manual"
+        else:
+            cor = "calm" if idade is not None and idade < 6 else ("warn" if idade is not None and idade < 48 else "crit")
+            quando = ("há %.0fh" % idade) if idade is not None else "—"
+        rot = (f'mensagens · <b>{esc(c["canal"])}</b>'
+               + ('<span class="sub"> colado à mão — sem integração</span>' if manual else ''))
         linhas_cano.append(
-            f'<tr><td>mensagens · <b>{esc(c["canal"])}</b></td><td class="n">{c["msgs"]:,}</td>'
-            f'<td class="n"><span class="dot dot--{cor}"></span>'
-            f'{("há %.0fh" % idade) if idade is not None else "—"}</td></tr>'.replace(",", "."))
+            f'<tr><td>{rot}</td><td class="n">{c["msgs"]:,}</td>'
+            f'<td class="n"><span class="dot dot--{cor}"></span>{quando}</td></tr>'.replace(",", "."))
     g = d["grupos"]
     idg = (ago.replace(tzinfo=None) - g["ultima"]).total_seconds() / 3600 if g["ultima"] else None
     linhas_cano.append(
@@ -334,16 +462,21 @@ def render(d):
         cor_hist = "calm" if (pct or 0) >= 70 else ("warn" if pct is not None and pct >= 40 else "crit")
         hist = (f'<span class="chip chip--{cor_hist}">precisão histórica {pct}% ({cert}/{tot})</span>'
                 if tot else '<span class="chip chip--faint">sem placar ainda</span>')
-        usados = "".join(f'<span class="fonte fonte--sim">{esc(x)}</span>' for x in q["tocou"])
-        faltou = "".join(f'<span class="fonte fonte--nao">{esc(x)}</span>' for x in q["nao_tocou"])
+        # Uma linha de cabeçalho, o resto dobrado.
+        #
+        # Pedido do Renato (06/08): "não dá pra simplificar a exibição?". Antes,
+        # cada frente abria com três blocos de chips e nove passos de trajetória
+        # ABERTOS — a página pedia leitura de relatório quando a pergunta dele é
+        # de um segundo: acertou ou não? O que ele precisa ver de imediato é o
+        # que o agente decidiu e o que ficou faltando olhar; a memória de
+        # cálculo fica a um clique.
+        faltou = ", ".join(q["nao_tocou"])
         barra = f'''<div class="qual">
       {hist}
-      <span class="chip">{q['ids']} ids · {q['datas']} datas citadas</span>
-      <span class="chip chip--{'calm' if q['incertezas'] else 'warn'}">{q['incertezas']} incerteza(s) declarada(s)</span>
-    </div>
-    <div class="ctx"><span class="ctx-t">contexto que tocou</span>
-      <div>{usados or '<span class="fonte fonte--nao">nenhuma fonte identificada</span>'}</div>
-      {'<span class="ctx-t" style="margin-top:.4rem;display:block">NÃO tocou</span><div>' + faltou + '</div>' if faltou else ''}
+      <span class="chip chip--faint">{q['passos']} passos · {q['ids']} ids · {q['datas']} datas</span>
+      {'<span class="chip chip--warn">não olhou: ' + esc(faltou) + '</span>'
+       if faltou else '<span class="chip chip--calm">olhou as 8 fontes</span>'}
+      {'<span class="chip chip--faint">' + str(q['incertezas']) + ' incerteza(s)</span>' if q['incertezas'] else ''}
     </div>'''
         traj = "".join(f'<li>{esc(t)[:260]}</li>' for t in (f.get("trajetoria") or [])[:9])
         nao = "".join(f'<li>{esc(t)[:220]}</li>' for t in (f.get("nao_consegui_saber") or [])[:5])
@@ -356,7 +489,7 @@ def render(d):
     <span class="lat">{meta.get('duracao_s','?')}s · US${round(meta.get('custo_usd') or 0, 2)}</span></header>
   {barra}
   {'<p class="portao"><b>precisa de você:</b> ' + esc(pv.get('o_que'))[:300] + '</p>' if pv.get('sim') else '<p class="ok">sem portão nesta frente</p>'}
-  <details open><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
+  <details><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(f.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + nao + '</ul></details>' if nao else ''}
   {'<details><summary>aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</summary><ul>' + fat + '</ul></details>' if fat else ''}
   <div class="veredito" data-uid="{esc(d['rodada']['run_date'])}|{f.get('project_id')}|{esc(f.get('frente'))}">
@@ -436,6 +569,7 @@ h1{{font-family:var(--serif);font-weight:400;font-size:clamp(1.6rem,4vw,2.1rem);
 .quando{{font-family:var(--mono);font-size:.74rem;color:var(--ink-faint);margin:0 0 1.6rem}}
 h2{{font-family:var(--serif);font-weight:400;font-size:1.15rem;margin:2.2rem 0 .3rem}}
 .sub-h2{{font-size:.84rem;color:var(--ink-soft);margin:0 0 .9rem}}
+.legenda{{font-size:.76rem;color:var(--ink-soft);margin:.15rem 0 1rem;padding:.5rem .7rem;background:var(--panel);border:1px solid var(--panel-edge);border-left:3px solid var(--brass-soft);border-radius:3px}}
 .resumo{{display:grid;grid-template-columns:repeat(auto-fit,minmax(7rem,1fr));gap:.55rem;margin:0 0 .5rem}}
 .tile{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4px;padding:.75rem .8rem;box-shadow:var(--shadow);border-top:2px solid var(--t)}}
 .tile b{{display:block;font-family:var(--mono);font-size:1.35rem;line-height:1.15;font-variant-numeric:tabular-nums;color:var(--t)}}
@@ -450,6 +584,25 @@ td.n{{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums
 .frente{{background:var(--panel);border:1px solid var(--panel-edge);border-left:3px solid var(--brass-soft);border-radius:4px;padding:.85rem 1rem;margin:0 0 .6rem;box-shadow:var(--shadow)}}
 .frente--pend{{border-left-style:dashed}}
 .pend-t{{font-family:var(--serif);font-weight:400;font-size:1.02rem;margin:1.8rem 0 .3rem}}
+.h2-sub{{font-size:.8rem;color:var(--ink-faint);font-family:var(--sans)}}
+.mapa{{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:.6rem;margin:.2rem 0 .8rem}}
+.ent{{background:var(--panel);border:1px solid var(--panel-edge);border-top:3px solid var(--brass);border-radius:4px;padding:.7rem .8rem;box-shadow:var(--shadow)}}
+.ent--parada{{border-top-color:var(--panel-edge);opacity:.62}}
+.ent header{{display:flex;justify-content:space-between;align-items:baseline;gap:.5rem}}
+.ent header span{{font-family:var(--serif);font-size:1rem}}
+.ent header b{{font-family:var(--mono);font-size:1.25rem;color:var(--brass)}}
+.ent--parada header b{{color:var(--ink-faint)}}
+.ent-tot{{margin:.1rem 0 .5rem;font-size:.68rem;color:var(--ink-faint);font-family:var(--mono)}}
+.ent-eco{{margin:-.3rem 0 .5rem;font-size:.66rem;color:var(--ink-soft);background:var(--warn-bg);padding:.25rem .4rem;border-radius:3px}}
+.ent ul{{list-style:none;margin:0;padding:0;font-family:var(--mono);font-size:.7rem}}
+.ent li{{display:flex;gap:.4rem;align-items:baseline;padding:.14rem 0;border-top:1px solid var(--panel-edge)}}
+.ent li:first-child{{border-top:0}}
+.ent li b{{margin-left:auto;color:var(--brass);font-weight:600}}
+.ent li span{{color:var(--ink-faint);min-width:3.6rem;text-align:right}}
+.ent li.morta{{color:var(--ink-faint)}}
+.ent li.morta b{{color:var(--ink-faint);font-weight:400}}
+.verif{{margin:0 0 .4rem}}
+.verif summary{{font-size:.8rem;color:var(--ink-soft);cursor:pointer}}
 .frente>header{{display:flex;justify-content:space-between;gap:.7rem;align-items:baseline;flex-wrap:wrap;margin-bottom:.4rem}}
 .nome{{font-weight:600;font-size:.94rem}}
 .lat{{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint)}}
@@ -504,15 +657,26 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
     {tile(tri.get('julgadas_agora','?'), 'julgadas na rodada', 'ink')}
     {tile(tri.get('falhas', 0), 'falhas', 'crit' if tri.get('falhas') else 'calm')}
   </div>
+  <p class="legenda">Destes seis, só <b>dois exigem ação sua</b>: <b>falhas</b> (&gt;0 = algo caiu
+  agora) e <b>eventos WA/h</b> em zero por mais de uma hora (o cano da ingestão parou — foi assim
+  o incidente de 03/08, 3h caladas). <b>Tabelas</b> só importa se o verificador reprovar;
+  <b>fatos</b>, <b>frentes</b> e <b>julgadas</b> são escala, não alarme.</p>
   {bloco_falhas}
 
-  <h2>1 · Modelo de dados</h2>
-  <p class="sub-h2">O banco vivo contra o contrato registrado. <b>Divergência não é erro — é sinal:</b>
+  <h2>1 · Modelo de dados <span class="h2-sub">— e o que passou por ele em 24h</span></h2>
+  <p class="sub-h2">Cada caixa é uma <b>entidade do contrato</b>; dentro, as tabelas que ela ocupa.
+  O número grande é <b>o que entrou nas últimas 24h</b> — é ele que mostra o sistema respirando.
+  O total só existe pra dar escala. <b>Caixa apagada = entidade parada há um dia.</b></p>
+  <div class="mapa">{''.join(mapa)}</div>
+  <details class="verif"><summary>o verificador de conformidade (forma, não movimento)</summary>
+  <p class="nota">Compara o banco com o baseline do contrato. <b>Divergência não é erro — é sinal:</b>
   ou foi decisão e o contrato precisa mudar, ou alguém criou estrutura fora do modelo.</p>
-  <pre>{esc(d['modelo_txt'])}</pre>
+  <pre>{esc(d['modelo_txt'])}</pre></details>
 
   <h2>2 · Canos de entrada</h2>
-  <p class="sub-h2">Cada fonte, com volume real e quando entrou a última.</p>
+  <p class="sub-h2">Cada fonte, com volume real e quando entrou a última.
+  <b>Cano automático</b> é o que se mede sozinho; <b>registro manual</b> é conversa que você colou
+  à mão — não há integração por trás, e cobrar dele "está parado" seria inventar um defeito.</p>
   <table><thead><tr><th>fonte</th><th class="n">registros</th><th class="n">última</th></tr></thead>
   <tbody>{''.join(linhas_cano)}</tbody></table>
 
