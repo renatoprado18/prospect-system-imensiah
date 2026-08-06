@@ -1,3 +1,4 @@
+#!/usr/bin/env -S /Users/rap/prospect-system/.venv/bin/python
 """Gera ~/cockpit/sistema.html — o que o INTEL está processando, e por quê.
 
 PEDIDO (Renato, 06/08/2026): "como visualizar o modelo de dados e a arquitetura

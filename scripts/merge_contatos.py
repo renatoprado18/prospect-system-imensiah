@@ -1,3 +1,4 @@
+#!/usr/bin/env -S /Users/rap/prospect-system/.venv/bin/python
 """Merge de fichas duplicadas: migra tudo, depois apaga.
 
 ⚠️ DESTRUTIVO. Das 32 FKs que apontam pra `contacts`, a MAIORIA é CASCADE —
@@ -101,7 +102,13 @@ def merge(cur, fica: int, absorvidas: list, aplicar: bool) -> dict:
 
 
 def main() -> int:
-    arq = sys.argv[1]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args or "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        print("uso:  ./merge_contatos.py <arquivo-de-decisoes> [--apply]\n"
+              "      cada linha: 'MERGE 1-2-3 -> manter #1'  ou  'NAO 4-5'")
+        return 1
+    arq = args[0]
     aplicar = "--apply" in sys.argv
     if aplicar and not (os.getenv("DB_TARGET") == "prod"
                         and os.getenv("ALLOW_PROD_FROM_LOCAL") == "1"):

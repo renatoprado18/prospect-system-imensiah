@@ -1,3 +1,4 @@
+#!/usr/bin/env -S /Users/rap/prospect-system/.venv/bin/python
 """Acha fichas duplicadas e monta a página de revisão.
 
 POR QUE. Duplicata apareceu SOZINHA em três frentes diferentes de 04/08: o

@@ -1,3 +1,4 @@
+#!/usr/bin/env -S /Users/rap/prospect-system/.venv/bin/python
 """Backfill do histórico de grupos WhatsApp direto da Evolution.
 
 POR QUE EXISTE (05-06/08/2026). O sync regular pedia 50 mensagens por grupo, uma
@@ -149,6 +150,9 @@ def um_grupo(evo, key, conn, jid, nome):
 
 
 def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        return 0
     evo, key = env("EVOLUTION_API_URL"), env("EVOLUTION_API_KEY")
     if APPLY and not (os.getenv("DB_TARGET") == "prod"
                       and os.getenv("ALLOW_PROD_FROM_LOCAL") == "1"):
