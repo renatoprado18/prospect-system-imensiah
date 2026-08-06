@@ -596,3 +596,43 @@ propósito: injetar o documento inteiro (8 perfis × 2 canais, ~30k) no system p
 gastaria contexto em todo ciclo, inclusive nos que não rascunham nada — a tool devolve
 só a seção do perfil (~3k). `channel='linkedin_dm'` usa a voz de WhatsApp; `voz=null`
 (perfil sem política destilada) faz o agente rascunhar como antes, nunca trava o ciclo.
+
+---
+
+## Loop DRAFT → ENVIADO (e-mail) — 06/08/2026
+
+**Caso que motivou (04/08):** a camada montou um e-mail ao pai do Renato, deixou
+no rascunho do Gmail e relatou "pronto no rascunho". Ele já tinha enviado às
+16h29. O sistema sabia o que ELE criava e era cego ao que o Renato FAZIA — irmã
+do caso de 13/06 (`feedback_cos_action_blindness`), do lado do rascunho.
+
+**Duas causas.** (1) `POST /api/admin/gmail-proxy` action=`create_draft` recebia
+`{id, message:{id, threadId}}` do Gmail e devolvia ao caller HTTP — nada
+persistia, não havia o que reconciliar. (2) `gmail_outbound_sync` lia o `id` da
+mensagem enviada e **ignorava o `threadId`**.
+
+**⚠️ O message id MUDA no envio** (o rascunho tem um, o Gmail cria outro ao
+despachar). `thread_id` é a única âncora estável entre rascunho e enviado.
+
+- **Tabela `email_drafts`** (migration `061_email_drafts_loop.sql`): draft_id
+  (UNIQUE), thread_id, draft_message_id, account_email, to_emails, subject,
+  contact_id, source, status (`pending`|`sent`|`discarded`), sent_at,
+  sent_message_id, reconciled_at. Tabela nova e não `cos_draft_responses`
+  (017): aquela guarda TEXTO à espera de aprovação, que a máquina envia; esta
+  guarda objeto que já existe no Gmail e cujo envio é do Renato, à mão — ciclos
+  de vida opostos (justificativa longa no cabeçalho da migration).
+- **Service `app/services/email_draft_registry.py`**: `register_draft`
+  (chamado pelo proxy), `draft_matches_sent` (regra de casamento, em Python
+  para ser testável), `reconcile_thread`, `reconcile_sent_threads`,
+  `pending_drafts`.
+- **Sync**: `_upsert_outbound_message` grava `metadata.thread_id` (e faz
+  backfill da chave em linhas antigas); `sync_account_outbound` coleta toda
+  thread vista em `in:sent` — inclusive de destinatário sem contato — e roda a
+  reconciliação no pós-processamento. Stats novos: `threads_seen`,
+  `drafts_reconciled` (e `drafts_reconciled_total` em `sync_all_outbound`).
+  Roda **mesmo com `post_process=False`**: a regra exige envio POSTERIOR à
+  criação do rascunho, então backfill histórico não fecha rascunho de hoje.
+- **Leitura**: `GET /api/admin/email-drafts/pending` (admin OU `X-API-Key`) —
+  para quem for relatar o estado ler o fato em vez de supô-lo.
+- **Testes**: `tests/test_email_draft_loop.py` (22 casos) — casa por thread,
+  **não** casa por message id, rascunho nunca enviado continua pendente.

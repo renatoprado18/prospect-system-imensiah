@@ -12835,6 +12835,27 @@ async def api_empresas_link_contacts_bulk(empresa_id: int, request: Request):
     }
 
 
+@app.get("/api/admin/email-drafts/pending")
+async def admin_email_drafts_pending(request: Request, limit: int = 50):
+    """Rascunhos de e-mail que a camada criou e ninguem enviou ainda.
+
+    Existe pra que quem for RELATAR o estado ("esta pronto no rascunho") leia o
+    fato em vez de supo-lo. Foi supor que produziu o caso de 04/08/2026: a
+    camada anunciou o e-mail ao pai como pendente 40min depois de o Renato ter
+    enviado. O que nao esta aqui foi enviado (ou descartado a mao) — a
+    reconciliacao roda a cada 30min junto do sync de `in:sent`.
+
+    Admin OU X-API-Key: o consumidor natural e a propria camada, por HTTP.
+    """
+    require_scaffold_auth(request)
+    from database import get_db as _get_db
+    from services.email_draft_registry import pending_drafts
+
+    with _get_db() as conn:
+        drafts = pending_drafts(conn.cursor(), limit=min(max(1, limit), 200))
+    return {"count": len(drafts), "drafts": drafts}
+
+
 @app.post("/api/admin/gmail-proxy")
 async def admin_gmail_proxy(request: Request):
     """
@@ -12987,7 +13008,37 @@ async def admin_gmail_proxy(request: Request):
                 headers={**headers, "Content-Type": "application/json"},
                 json=payload,
             )
-            return r.json()
+            resultado = r.json()
+
+            # Registra o rascunho pra que o loop DRAFT -> ENVIADO possa fechar.
+            #
+            # Ate 04/08/2026 este `return` jogava fora o {id, message:{id,
+            # threadId}} que o Gmail devolve. Sem essa linha no banco o sistema
+            # sabia o que ELE criava e era cego ao que o Renato FAZIA: no dia 04
+            # a camada relatou o e-mail ao pai como "pronto no rascunho" — ele ja
+            # tinha enviado as 16h29. Quem fecha o loop e o gmail_outbound_sync,
+            # casando por thread_id (nunca por message id, que muda no envio).
+            #
+            # Nunca deixa a persistencia derrubar o proxy: o rascunho ja existe
+            # no Gmail: perder o registro e ruim, perder a resposta e pior.
+            try:
+                from database import get_db as _get_db
+                from services.email_draft_registry import register_draft
+
+                with _get_db() as _conn:
+                    register_draft(
+                        _conn.cursor(),
+                        resultado,
+                        account_email=account_dict.get("email"),
+                        to_emails=[e.strip() for e in (params.get("to") or "").split(",") if e.strip()],
+                        subject=params.get("subject"),
+                        source=params.get("source") or "gmail_proxy",
+                        contact_id=params.get("contact_id"),
+                    )
+            except Exception as _e:
+                logger.warning(f"create_draft: falha ao registrar rascunho: {_e}")
+
+            return resultado
 
         if action == "send_message":
             result = await gmail.send_message(
