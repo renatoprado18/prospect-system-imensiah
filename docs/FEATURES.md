@@ -636,3 +636,55 @@ despachar). `thread_id` é a única âncora estável entre rascunho e enviado.
   para quem for relatar o estado ler o fato em vez de supô-lo.
 - **Testes**: `tests/test_email_draft_loop.py` (22 casos) — casa por thread,
   **não** casa por message id, rascunho nunca enviado continua pendente.
+
+## Ferramentas de operação e diagnóstico (`scripts/`) — 06/08/2026
+
+Quatro utilitários promovidos do scratchpad da sessão de 03-06/08. Viviam em
+`/private/tmp`, que **some quando a sessão acaba** — e um deles apaga fichas.
+Ferramenta destrutiva sem versionamento, teste nem review é convite pra alguém
+reescrever pior daqui a um mês.
+
+### `scripts/sistema.py` — o que o INTEL está processando, e por quê
+Gera `~/cockpit/sistema.html` (tema claro, recarrega a cada 2min). Cinco camadas:
+modelo vivo × contrato · canos de entrada com idade · **cobertura contra a
+origem** (INTEL × Evolution) · **raciocínio do agente** · jobs das últimas 6h.
+
+O valor está na camada 4: `cos_daily_review.payload` **já guardava** a trajetória
+do agente, o que ele não conseguiu saber e o que aprendeu — faltava superfície.
+Cada frente mostra **precisão histórica** (do placar humano), **quais das 8
+fontes ele tocou e quais ignorou**, e quantos ids/datas citou.
+⚠️ A detecção de fonte é heurística (lê a narrativa do próprio agente): levanta a
+pergunta, não fecha o veredito.
+
+    ./scripts/sistema.py
+
+### `scripts/duplicatas.py` — fichas repetidas, por prova forte
+Detecta por telefone canônico (só dígitos, 10-13, nunca `LIKE`), e-mail e nome.
+Descarta identificador que aparece em >3 fichas — telefone compartilhado por
+muita gente não identifica ninguém. **Só mostra grupo com histórico**: dos 3.193
+suspeitos, 2.897 eram fichas vazias em triplicata, sem decisão a tomar.
+
+    ./scripts/duplicatas.py        # → ~/cockpit/duplicatas.html
+
+### `scripts/merge_contatos.py` — absorve ficha ⚠️ DESTRUTIVO
+Migra as **32 FKs** e só então apaga. A maioria é CASCADE: apagar antes levaria
+mensagens, fatos e conversas junto, **sem erro**. Seis tabelas têm UNIQUE com
+`contact_id` e a linha redundante é descartada antes do UPDATE. Backup das
+fichas antes da primeira escrita; keepalive + commit por grupo + reconexão (o
+Neon derruba conexão em lote longo, e o processo fica vivo pendurado no socket).
+
+Em 06/08: **293 fichas absorvidas, 1.721+ registros religados, zero FK órfã**.
+`tests/test_merge_contatos.py` guarda a ordem — verificado invertendo o DELETE
+de propósito.
+
+    ./scripts/merge_contatos.py decisoes.txt            # dry-run
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/merge_contatos.py decisoes.txt --apply
+
+### `scripts/backfill_grupo.py` — histórico de grupo que a sync perdeu
+O sync pedia 50 msgs/dia por grupo e reportava sucesso; quem passava disso
+perdia o excedente para sempre. Corrigido em `2da93e3`, mas paginar daqui pra
+frente não traz o passado. Este varre a Evolution até o fim do backlog.
+Em 06/08: **26.712 mensagens**, cobertura 37% → 71%.
+
+    ./scripts/backfill_grupo.py                     # dry-run, todos
+    ./scripts/backfill_grupo.py <jid>@g.us --apply  # um grupo
