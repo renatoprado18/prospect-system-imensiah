@@ -57,7 +57,7 @@ WITH tel AS (
 grupos AS (
   SELECT k FROM tel WHERE length(k) = 8 GROUP BY k HAVING count(DISTINCT id) > 1
 )
-SELECT t.k, c.id, c.nome, c.empresa, c.cargo, c.origem, c.criado_em,
+SELECT t.k, c.id, c.nome, c.empresa, c.cargo, c.origem, c.criado_em, c.contexto,
        (SELECT count(*) FROM messages m WHERE m.contact_id = c.id) AS msgs,
        (SELECT max(m.criado_em) FROM messages m WHERE m.contact_id = c.id) AS ultima,
        (SELECT e2.j->>'number' FROM jsonb_array_elements(c.telefones) e2(j) LIMIT 1) AS tel
@@ -256,7 +256,14 @@ def main():
             alvo.append(dict(r))
     # só os que têm conversa: decidir sobre cadastro morto é gastar atenção onde
     # não há consequência
-    grupos = [(k, v) for k, v in por_k.items() if sum(f["msgs"] for f in v) > 0]
+    # O QUE ELE JÁ DECIDIU NÃO VOLTA. Marcar "telefone compartilhado" no contexto
+    # não servia de nada se a tela seguisse perguntando — foi o que aconteceu com
+    # Orestes/Douglas e Carla/Vânia, que ele teve de responder duas vezes. Mesma
+    # lição do check-G hoje de manhã: decisão registrada que não filtra a próxima
+    # varredura é decisão que evapora.
+    grupos = [(k, v) for k, v in por_k.items()
+              if sum(f["msgs"] for f in v) > 0
+              and not all("telefone compartilhado" in (f.get("contexto") or "") for f in v)]
     grupos.sort(key=lambda kv: -sum(f["msgs"] for f in kv[1]))
     open(SAIDA, "w").write(render(grupos))
     print(f"→ {SAIDA} ({len(grupos)} grupos, {sum(len(v) for _, v in grupos)} fichas)")
