@@ -637,19 +637,20 @@ def render(d):
   {'<div class="aprendeu"><span class="ap-t">o que ele aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</span><ul>' + fat + '</ul></div>' if fat else ''}
   <details><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(f.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + nao + '</ul></details>' if nao else ''}
-  {_bloco_veredito(d, d['rodada']['run_date'], f.get('project_id'), f.get('frente'))}
 </article>""")
 
     # --- portões pendentes de veredito (mesmo data-uid: o JS e o `--gravar` já servem)
     #
     # Fora os que JÁ têm card acima: uid repetido na página faria o botão
     # "Copiar" emitir a mesma linha duas vezes e o contador mentir pra cima.
-    ja_na_pagina = {f"{d['rodada']['run_date']}|{f.get('project_id')}|{f.get('frente')}"
-                    for f in frentes_abertas[:6]} if d["rodada"] else set()
+    # A fila é COMPLETA de propósito (07/08). Antes ela excluía o que estava nos
+    # cards acima, porque os cards tinham botões próprios. Agora os cards são só
+    # leitura — "o que o sistema pensou" — e toda avaliação mora dentro da
+    # dobra, que ele abre por vontade. Duas superfícies pedindo a mesma coisa em
+    # lugares diferentes é o que fazia a página parecer uma lista de tarefas
+    # dele.
     pendentes = []
     for pd in d["pendentes"]:
-        if f"{pd['dia']}|{pd['project_id']}|{pd['frente']}" in ja_na_pagina:
-            continue
         p_fat = "".join(f'<li>{esc((x or {}).get("fato", x))}</li>'
                         for x in (pd.get("fatos_novos") or []))
         p_traj = "".join(f"<li>{esc(t)}</li>" for t in (pd.get("trajetoria") or []))
@@ -805,6 +806,9 @@ ul.nao li{{color:var(--warn)}}
 .veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 .veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
 .raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
+.fila{{margin:1.4rem 0 0;padding-top:.8rem;border-top:1px dashed var(--panel-edge)}}
+.fila>summary{{font-size:.78rem;letter-spacing:.04em;color:var(--ink-faint);cursor:pointer;font-family:var(--mono)}}
+.fila>summary:hover{{color:var(--brass)}}
 .gate{{font-size:.86rem;margin:.5rem 0 0;padding:.55rem .75rem;border-radius:4px;
   background:var(--warn-bg);border-left:3px solid var(--warn)}}
 .gate--ok{{background:var(--calm-bg);border-left-color:var(--calm)}}
@@ -883,7 +887,7 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   caminho A.</p>
   {placar_html}
 
-  <h2>5 · Raciocínio do agente <span class="h2-sub">— o que ainda falta avaliar</span></h2>
+  <h2>5 · Raciocínio do agente</h2>
   <p class="sub-h2"><b>Três leituras, não uma.</b> (a) <b>precisão histórica</b> — do placar que
   VOCÊ preencheu, único juízo que não é o sistema se auto-avaliando; (b) <b>contexto tocado</b> —
   quais das 8 fontes ele consultou, e <b class="risco">quais ignorou</b>: julgar sem olhar o
@@ -892,11 +896,13 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   {esc(d['rodada']['run_at'].strftime('%d/%m %H:%M') if d['rodada'] else '—')} UTC.</p>
   {''.join(cards) or '<p class="nota">Nenhuma frente com trajetória nesta rodada.</p>'}
 
-  <h3 class="pend-t">Outros portões dos últimos 7 dias sem veredito — {len(pendentes)}</h3>
-  <p class="sub-h2">O agente roda 14×/dia; a rodada acima é uma delas. Sem esta lista, o
-  portão aberto às 15h nunca chegava ao placar — e o gate dos cockpits (≥70% em ≥15 portões)
-  ficava parado por falta do que marcar, parecendo estabilidade.</p>
-  {''.join(pendentes) or '<p class="nota">Nenhum portão pendente — tudo dos últimos 7 dias já foi marcado.</p>'}
+  <details class="fila">
+  <summary>avaliar portões — {len(pendentes)} sem veredito (opcional)</summary>
+  <p class="sub-h2">Esta lista <b>não é tarefa sua</b>. O gate já foi decidido com os
+  {n_tot} vereditos acima; daqui pra frente o sistema acompanha sozinho a tendência e
+  só vale a pena voltar aqui se o placar cair ou se a calibração mudar — aí umas
+  poucas marcações recalibram a régua. Abrir por vontade, não por cobrança.</p>
+  {''.join(pendentes) or '<p class="nota">Nenhum portão pendente.</p>'}
 
   <div class="barra-fb">
     <span class="progresso"><b id="fb-n">0</b> julgamento(s) avaliado(s)</span>
@@ -906,6 +912,7 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
     </div>
   </div>
   <textarea id="fb-saida" rows="6" readonly></textarea>
+  </details>
 
   <h2>6 · O que rodou nas últimas 6h</h2>
   <table><thead><tr><th>job</th><th class="n">runs</th><th class="n">erros</th><th class="n">último</th></tr></thead>
