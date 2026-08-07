@@ -152,6 +152,10 @@ def coletar(cur, hoje):
          WHERE l.decisao = 'mostrado'
            AND l.msg_em > now() - interval '3 days'
            AND COALESCE(l.desfecho, '') <> 'virou_task'
+           -- O que ele já disse que não precisa de ação não volta amanhã (066).
+           -- `dispensado_em` é decisão dele; `desfecho` é observação do sistema,
+           -- e o cron reescreve o segundo a cada rodada.
+           AND l.dispensado_em IS NULL
          GROUP BY 1, 2 ORDER BY 4 DESC
     """)
     d["checkg"] = cur.fetchall()
@@ -167,6 +171,16 @@ def coletar(cur, hoje):
                           EXTRACT(EPOCH FROM (now() - run_at))/3600 AS horas
                      FROM cos_daily_review ORDER BY run_at DESC LIMIT 1""")
     d["review"] = cur.fetchone()
+
+    # Portão que ele já resolveu HOJE não volta pra tela. O `/api/cos/portao-action`
+    # grava um `project_note` tipo `portao_acao`, e a camada só o lê na PRÓXIMA
+    # rodada — até lá o cockpit continuaria pedindo o que ele acabou de fazer.
+    # Foi exatamente a reclamação de hoje sobre o placar ("dou feedback e
+    # continua lá"); aqui a correção nasce junto com o recurso.
+    cur.execute("""SELECT DISTINCT project_id FROM project_notes
+                    WHERE tipo = 'portao_acao'
+                      AND criado_em > (now() AT TIME ZONE 'UTC')::date""")
+    d["portao_resolvido"] = {r["project_id"] for r in cur.fetchall()}
 
     # --- FRESCOR DOS CANOS ---------------------------------------------------
     # A razão de existir desta faixa: por 3 meses o INTEL julgou sobre agenda de
@@ -576,6 +590,8 @@ def render(d, cur_cos, cos_em):
             pv = f.get("precisa_de_voce") or {}
             if not pv.get("sim"):
                 continue
+            if f.get("project_id") in (d.get("portao_resolvido") or set()):
+                continue          # ele já marcou feito hoje
             c = cos(f"frente:{f.get('project_id')}")
             if c.get("ocultar"):
                 continue
