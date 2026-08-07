@@ -22656,7 +22656,7 @@ async def api_add_milestone(project_id: int, request: Request):
     return {"status": "success", "milestone": milestone}
 
 
-@app.put("/api/milestones/{milestone_id}")
+@app.put("/api/milestones/{milestone_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_update_milestone(milestone_id: int, request: Request):
     """Atualiza marco."""
     data = await request.json()
@@ -22666,7 +22666,7 @@ async def api_update_milestone(milestone_id: int, request: Request):
     return {"status": "success", "milestone": milestone}
 
 
-@app.delete("/api/milestones/{milestone_id}")
+@app.delete("/api/milestones/{milestone_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_delete_milestone(milestone_id: int):
     """Deleta marco."""
     if delete_milestone(milestone_id):
@@ -23227,7 +23227,7 @@ async def api_create_project_raci_item(project_id: int, request: Request):
     return result
 
 
-@app.patch("/api/raci-itens/{item_uid}")
+@app.patch("/api/raci-itens/{item_uid}", dependencies=[Depends(require_scaffold_auth)])
 async def api_update_raci_item(item_uid: str, request: Request):
     """Atualiza item de RACI NA FONTE dele (`intel:12` ou `conselhoos:<uuid>`;
     id nu = INTEL, retrocompat). So mexe nos campos enviados."""
@@ -23241,7 +23241,7 @@ async def api_update_raci_item(item_uid: str, request: Request):
     return result
 
 
-@app.delete("/api/raci-itens/{item_uid}")
+@app.delete("/api/raci-itens/{item_uid}", dependencies=[Depends(require_scaffold_auth)])
 async def api_delete_raci_item(item_uid: str):
     """Remove item de RACI — so o lado INTEL (item de conselho se apaga no
     ConselhoOS; ver services/raci_matrix.py)."""
@@ -25541,7 +25541,7 @@ async def api_hot_takes_stats():
     return get_weekly_digest_stats()
 
 
-@app.post("/api/hot-takes/digest")
+@app.post("/api/hot-takes/digest", dependencies=[Depends(require_scaffold_auth)])
 async def api_generate_digest(request: Request):
     """Gera digest semanal de hot takes"""
     from services.hot_takes import generate_weekly_digest
@@ -25551,7 +25551,7 @@ async def api_generate_digest(request: Request):
     return result
 
 
-@app.post("/api/hot-takes/from-url")
+@app.post("/api/hot-takes/from-url", dependencies=[Depends(require_scaffold_auth)])
 async def api_hot_take_from_url(request: Request):
     """Gera hot take a partir de URL manual"""
     from services.hot_takes import generate_hot_take_from_url
@@ -26019,7 +26019,7 @@ async def page_clipping(request: Request):
     })
 
 
-@app.post("/api/news/to-post")
+@app.post("/api/news/to-post", dependencies=[Depends(require_scaffold_auth)])
 async def api_news_to_post(request: Request):
     """Cria post editorial a partir de noticia do clipping.
 
@@ -26258,7 +26258,7 @@ async def api_news_feedback(news_id: int, request: Request):
     return result
 
 
-@app.post("/api/news/collect")
+@app.post("/api/news/collect", dependencies=[Depends(require_scaffold_auth)])
 async def api_news_collect():
     """Coleta novas notícias das fontes RSS"""
     from services.news_hub import collect_news
@@ -26266,7 +26266,7 @@ async def api_news_collect():
     return result
 
 
-@app.post("/api/news/interaction")
+@app.post("/api/news/interaction", dependencies=[Depends(require_scaffold_auth)])
 async def api_news_interaction(request: Request):
     """Registra interação do usuário com uma notícia"""
     from services.news_hub import record_interaction
@@ -26324,7 +26324,7 @@ async def api_news_connect_article(news_id: int, article_id: int):
     return result
 
 
-@app.post("/api/hot-takes/from-news")
+@app.post("/api/hot-takes/from-news", dependencies=[Depends(require_scaffold_auth)])
 async def api_hot_take_from_news(request: Request):
     """Cria hot take a partir de uma notícia"""
     from services.hot_takes import save_hot_take
@@ -26904,7 +26904,7 @@ async def api_iniciar_ordem(os_id: int):
     return {"status": "ok", "os": resultado}
 
 
-@app.delete("/api/ordens/{os_id}")
+@app.delete("/api/ordens/{os_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_deletar_ordem(os_id: int):
     """Deleta uma ordem de servico pendente"""
     from services.veiculos import deletar_ordem_servico
@@ -26917,7 +26917,7 @@ async def api_deletar_ordem(os_id: int):
     return resultado
 
 
-@app.put("/api/ordens/{os_id}")
+@app.put("/api/ordens/{os_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_atualizar_ordem(os_id: int, request: Request):
     """
     Atualiza itens de uma ordem de servico pendente.
@@ -27151,7 +27151,7 @@ async def api_get_oficina(oficina_id: int):
     return oficina
 
 
-@app.post("/api/oficinas")
+@app.post("/api/oficinas", dependencies=[Depends(require_scaffold_auth)])
 async def api_criar_oficina(request: Request):
     """Cria uma nova oficina"""
     from services.oficinas import criar_oficina
@@ -27159,7 +27159,7 @@ async def api_criar_oficina(request: Request):
     return criar_oficina(data)
 
 
-@app.put("/api/oficinas/{oficina_id}")
+@app.put("/api/oficinas/{oficina_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_atualizar_oficina(oficina_id: int, request: Request):
     """Atualiza uma oficina"""
     from services.oficinas import atualizar_oficina
@@ -27167,7 +27167,7 @@ async def api_atualizar_oficina(oficina_id: int, request: Request):
     return atualizar_oficina(oficina_id, data)
 
 
-@app.delete("/api/oficinas/{oficina_id}")
+@app.delete("/api/oficinas/{oficina_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_deletar_oficina(oficina_id: int):
     """Desativa uma oficina"""
     from services.oficinas import deletar_oficina
