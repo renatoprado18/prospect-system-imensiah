@@ -351,6 +351,66 @@ def ultimo_julgamento_por_frente(anterior: dict) -> dict:
     return out
 
 
+def _assinatura_pedido(t: str) -> str:
+    """Assinatura estável de um pedido de portão, pra reconhecer repetição.
+
+    Números viram `#` porque o mesmo pedido reaparece com valores e datas
+    ligeiramente diferentes ("R$ 65.000" / "R$ 65.237,46", "16-17/07" /
+    "17/07") sem que a PERGUNTA tenha mudado. Trunca em 28 palavras: o miolo do
+    pedido está na abertura, e a cauda costuma trazer a justificativa, que varia
+    de redação a cada rodada sem mudar o que se pede.
+    """
+    import re
+    t = re.sub(r"\d+", "#", (t or "").lower())
+    t = re.sub(r"\W+", " ", t)
+    return " ".join(t.split()[:28])
+
+
+def repeticao_por_frente(ro_url: str, dias: int = 3) -> dict:
+    """project_id -> quantas rodadas SEGUIDAS repetiram o mesmo pedido.
+
+    POR QUE EXISTE (07/08/2026). Medido numa janela de 7 dias: **305 dos 393
+    portões abertos (77%) eram o mesmo pedido de novo**. Wadhwani repetiu 36 de
+    40; Despesas, 33 de 40. Os filtros existentes não pegam isso porque olham a
+    ENTRADA — houve movimento? já vi este movimento? — e num grupo ativo a
+    resposta é sim toda hora. O que se repete é a SAÍDA: a frente anda, o agente
+    relê e chega exatamente ao mesmo pedido.
+
+    O custo não é o Renato ver sete vezes (as superfícies já agrupam por dia) —
+    é o TETO DIÁRIO ser gasto reconfirmando o que já se sabia, enquanto frente
+    com novidade de verdade fica cortada por falta de orçamento.
+
+    Isto NÃO suprime nada: quem repete vai pro fim da fila. Suprimir seria
+    apostar que nada mudou, e o movimento que dispara a frente pode ser
+    justamente a resposta que FECHA o portão — perder essa seria trocar ruído
+    por cegueira.
+    """
+    try:
+        with _conn(ro_url) as c, c.cursor() as cur:
+            cur.execute("""SELECT payload FROM cos_daily_review
+                            WHERE run_date > CURRENT_DATE - %s ORDER BY run_at""", (dias,))
+            linhas = cur.fetchall()
+    except Exception:
+        return {}          # sem histórico, ninguém é penalizado
+    ultimo, seguidas = {}, {}
+    for r in linhas:
+        p = r["payload"] if isinstance(r, dict) else r[0]
+        if isinstance(p, str):
+            try:
+                p = json.loads(p)
+            except ValueError:
+                continue
+        for f in (p.get("frentes") or []):
+            pv = f.get("precisa_de_voce") or {}
+            pid = f.get("project_id")
+            if pid is None or not pv.get("sim"):
+                continue
+            h = _assinatura_pedido(pv.get("o_que") or pv.get("pergunta"))
+            seguidas[pid] = seguidas.get(pid, 0) + 1 if ultimo.get(pid) == h else 0
+            ultimo[pid] = h
+    return seguidas
+
+
 def herdar(ro_url: str) -> dict:
     """Último payload gravado, de qualquer motor. É a base sobre a qual esta
     rodada escreve.
@@ -559,7 +619,13 @@ def main() -> int:
                     motivos["movimento_ja_visto"] += 1
                     continue          # o movimento é o mesmo que ela já viu
             alvo.append(f)
-        alvo = sorted(alvo, key=lambda f: -f["movimento"])
+        # ORDEM: novidade primeiro, repetição depois (07/08). Ordenar só por
+        # movimento fazia a frente de grupo movimentado — que repete o mesmo
+        # pedido a cada rodada — entrar SEMPRE na frente, comendo o teto de quem
+        # tinha algo novo a dizer. Quem repetiu o mesmo pedido 2+ vezes seguidas
+        # continua na fila, só que atrás.
+        repetidas = repeticao_por_frente(ro_url)
+        alvo = sorted(alvo, key=lambda f: (repetidas.get(f["id"], 0) >= 2, -f["movimento"]))
         # DOIS cortes distintos, contados separadamente. Até 31/07 os dois caíam
         # em `cortada_pelo_teto`, e o PDCA acusava o teto diário quando o
         # gargalo era o limite por rodada — subir o teto não teria mudado nada.
@@ -645,6 +711,16 @@ def main() -> int:
         motivos["_teto_usado"] = f"{ja_hoje}/{TETO_DIARIO}"
         motivos["_elegiveis"] = elegiveis
         motivos["_max_por_rodada"] = por_rodada
+        # Quanto a despriorização rendeu NESTA rodada: das que ficaram de fora,
+        # quantas eram repetição. Sem este número eu teria mexido na ordem da
+        # fila sem poder dizer se adiantou — que é o defeito que a calibração de
+        # 03/08 cometeu (mudar parâmetro e medir só volume).
+        entraram = {f["id"] for f in alvo}
+        motivos["_repetidas_adiadas"] = sum(
+            1 for f in todas
+            if f["id"] not in entraram and repetidas.get(f["id"], 0) >= 2)
+        motivos["_repetidas_julgadas"] = sum(
+            1 for f in alvo if repetidas.get(f["id"], 0) >= 2)
     else:
         alvo = [f for f in todas if f["movimento"] > 0]
         if a.limit:
