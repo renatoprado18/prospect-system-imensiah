@@ -76,6 +76,25 @@ def esc(t):
     return (str(t) if t is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_VAZIAS_TITULO = {"para", "com", "sem", "por", "que", "uma", "dos", "das", "sobre",
+                  "apresentar", "fazer", "reuniao", "reunião", "grupo", "modelos"}
+
+
+def _termos_simples(texto):
+    """Palavras significativas de um título, sem acento e sem as genéricas.
+
+    Serve pra reconhecer que "🎓 Alba — Workshop: modelos de sociedade
+    (vesting/cliff) ao grupo" e "[Alba #26] Workshop — apresentar os modelos de
+    sociedade (vesting/cliff) ao grupo" são a MESMA coisa.
+    """
+    import re as _re
+    t = (texto or "").lower()
+    for de, para in (("á","a"),("à","a"),("ã","a"),("â","a"),("é","e"),("ê","e"),
+                     ("í","i"),("ó","o"),("ô","o"),("õ","o"),("ú","u"),("ç","c")):
+        t = t.replace(de, para)
+    return {p for p in _re.findall(r"[a-z]{4,}", t) if p not in _VAZIAS_TITULO}
+
+
 def data_br(d):
     return f"{d.day:02d}/{d.month:02d}"
 
@@ -663,12 +682,30 @@ def render(d, cur_cos, cos_em):
         passados_html = (f'<p class="passou">✓ já passou hoje — {itens}</p>')
 
     # --- ESTA SEMANA (por dia) ----------------------------------------------
+    # A TAREFA QUE JÁ É O COMPROMISSO NÃO APARECE DUAS VEZES (07/08). "É a mesma
+    # tarefa", sobre o workshop da Alba: o evento das 9h e a task de vencimento
+    # 10/08 são a mesma coisa vista de dois cadastros. Não é duplicata de dado —
+    # é agenda + tarefa dizendo o mesmo — mas na tela vira ruído, e ruído no
+    # cockpit é o que faz alguém parar de confiar nele.
+    #
+    # O EVENTO VENCE porque tem hora; a task fica escondida atrás dele com o id,
+    # pra não sumir de vista quem precisar fechá-la.
+    def _mesmo_assunto(titulo_task, resumo_evento):
+        a, b = _termos_simples(titulo_task), _termos_simples(resumo_evento)
+        return len(a & b) >= 2
+
     dias = {}
     for e in d["eventos"]:
         if e["start_datetime"].date() > hoje:
             dias.setdefault(e["start_datetime"].date(), []).append(("e", e))
     for t in sep["semana"]:
-        dias.setdefault(t["data_vencimento"].date(), []).append(("t", t))
+        dia_t = t["data_vencimento"].date()
+        gemeo = next((e for k, e in dias.get(dia_t, [])
+                      if k == "e" and _mesmo_assunto(t["titulo"], e["summary"])), None)
+        if gemeo:
+            t = {**t, "_no_evento": gemeo["id"]}
+            continue
+        dias.setdefault(dia_t, []).append(("t", t))
     semana_html = ""
     for dia in sorted(dias):
         linhas = "".join(evento(x) if k == "e" else item(x, "vence") for k, x in dias[dia])
