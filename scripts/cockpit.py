@@ -925,6 +925,68 @@ def render(d, cur_cos, cos_em):
 </html>""".replace("@@JS@@", JS)
 
 
+def abrir(caminho):
+    """Recarrega a aba que já existe; só abre outra se não houver nenhuma.
+
+    "Cockpit fica abrindo novas abas. Usar sempre a mesma." (Renato, 07/08).
+    `open` do macOS cria uma aba a cada chamada — e este script rodou umas
+    quinze vezes hoje. Página que se atualiza sozinha não deveria multiplicar
+    janelas: o cockpit é UMA superfície, e ter seis cópias dele abertas é a
+    versão em abas do problema que o caminho C acabou de resolver.
+
+    Procura em Chrome e Safari; se nenhum tem a aba (ou o AppleScript falha,
+    p.ex. sem permissão de automação), cai no `open` de sempre — abrir demais é
+    ruim, não abrir seria pior.
+    """
+    url = f"file://{caminho}"
+    script = f'''
+    on reusar(alvo)
+      tell application "System Events"
+        set chromeAberto to (name of processes) contains "Google Chrome"
+        set safariAberto to (name of processes) contains "Safari"
+      end tell
+      if chromeAberto then
+        tell application "Google Chrome"
+          repeat with w in windows
+            set i to 0
+            repeat with t in tabs of w
+              set i to i + 1
+              if URL of t starts with alvo then
+                tell t to reload
+                set active tab index of w to i
+                return true
+              end if
+            end repeat
+          end repeat
+        end tell
+      end if
+      if safariAberto then
+        tell application "Safari"
+          repeat with w in windows
+            repeat with t in tabs of w
+              if URL of t starts with alvo then
+                tell t to do JavaScript "location.reload()"
+                set current tab of w to t
+                return true
+              end if
+            end repeat
+          end repeat
+        end tell
+      end if
+      return false
+    end reusar
+    return reusar("{url}")
+    '''
+    try:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True,
+                           text=True, timeout=15)
+        if r.stdout.strip() == "true":
+            return
+    except Exception:
+        pass
+    subprocess.run(["open", caminho])
+
+
 def main():
     conn = psycopg2.connect(env("DATABASE_URL"))
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -933,7 +995,7 @@ def main():
     open(SAIDA, "w").write(render(d, cur_cos, cos_em))
     print(f"→ {SAIDA}")
     if "--quieto" not in sys.argv:
-        subprocess.run(["open", SAIDA])
+        abrir(SAIDA)
 
 
 if __name__ == "__main__":

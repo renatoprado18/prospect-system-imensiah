@@ -608,6 +608,45 @@ class FathomIntegration:
 # {webhook_id}.{webhook_timestamp}.{raw_body}, HMAC-SHA256, base64-encoded.
 # =============================================================================
 
+def _contato_do_responsavel(raci, matched_contacts):
+    """O contato da tarefa é QUEM TEM A BOLA — não quem apareceu primeiro.
+
+    POR QUE (07/08/2026). Até aqui toda tarefa de uma reunião nascia com
+    `matched_contacts[0]`: o primeiro participante que casou com uma ficha, numa
+    ordem que ninguém escolheu. Medido: em 4 de 4 reuniões com mais de uma
+    tarefa, TODAS foram parar na mesma pessoa (Juliana 4, Alba 4, Israel 3,
+    Marco 2).
+
+    Não é só agrupamento feio. Tarefa com o contato errado **nunca fecha
+    sozinha**: o cruzamento procura resposta de quem não deve nada. Foi o que o
+    Renato encontrou no divórcio da Michele — o sistema esperava a beneficiária
+    responder o que só a advogada responderia.
+
+    E a informação certa já estava a dez linhas de distância: o parser de RACI
+    roda logo abaixo e identifica o responsável, mas o resultado só era usado
+    pra decidir `delegated`. Aqui ele passa a escolher o contato.
+
+    Casa contra os PARTICIPANTES, não contra o CRM inteiro: quem é responsável
+    por uma tarefa de reunião quase sempre esteve nela, e varrer 11 mil fichas
+    por primeiro nome é como se casa com homônimo.
+    """
+    if not raci or not getattr(raci, "responsible", None) or raci.is_renato:
+        return None
+
+    alvo = raci.responsible.strip().lower()
+    primeiro_alvo = alvo.split()[0] if alvo.split() else ""
+    for c in (matched_contacts or []):
+        nome = (c.get("nome") or "").strip().lower()
+        if not nome:
+            continue
+        # nome completo contido, ou primeiro nome batendo com o primeiro nome
+        if alvo in nome or nome in alvo:
+            return c["id"]
+        if primeiro_alvo and nome.split() and nome.split()[0] == primeiro_alvo:
+            return c["id"]
+    return None
+
+
 def verify_webhook_signature(
     secret: str,
     raw_body: bytes,
@@ -799,6 +838,7 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
     skipped_tarefas = 0
     delegadas_count = 0
     primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
+
     if action_items:
         # Import local pra evitar ciclo de boot
         try:
@@ -846,8 +886,12 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 # Memoria: feedback_raci_parsing.md
                 initial_status = "pending"
                 raci_note = ""
+                # Default histórico: o primeiro participante que casou. Só vale
+                # quando o RACI não diz de quem é a bola (ver `_contato_do_responsavel`).
+                contato_da_task = primeiro_contact_id
                 if parse_raci is not None:
                     raci = parse_raci(titulo_short, full_desc)
+                    contato_da_task = _contato_do_responsavel(raci, matched_contacts) or primeiro_contact_id
                     if raci.source != "none" and not raci.is_renato:
                         initial_status = "delegated"
                         delegadas_count += 1
@@ -866,7 +910,7 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                     VALUES (%s, %s, %s, %s, %s, 7, true, 'reuniao_fathom', 'fathom', %s, NOW())
                     RETURNING id
                     """,
-                    (titulo_short, full_desc, initial_status, project_id, primeiro_contact_id, rec_id),
+                    (titulo_short, full_desc, initial_status, project_id, contato_da_task, rec_id),
                 )
                 tid = cur.fetchone()["id"]
                 tarefas_criadas.append({
