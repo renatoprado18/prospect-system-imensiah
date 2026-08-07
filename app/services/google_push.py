@@ -45,9 +45,15 @@ def _digitos(v: str) -> str:
 
 
 def _chave_tel(v: str) -> str:
-    """Últimos 8 dígitos — o que sobrevive a DDI, DDD e ao 9 do celular."""
+    """Últimos 8 dígitos de número COM DDD (10+ dígitos).
+
+    O piso de 10 é o outro lado do conserto de 07/08: telefone sem DDD
+    ("7678-5627") é real e continua na ficha, mas casar por ele junta gente de
+    cidades diferentes que por acaso tem o mesmo número local. Dado incompleto
+    serve pra ligar pra pessoa, não pra afirmar que duas fichas sao a mesma.
+    """
     d = _digitos(v)
-    return d[-8:] if len(d) >= 8 else ""
+    return d[-8:] if len(d) >= 10 else ""
 
 
 async def indice_telefones(token: str) -> Dict[str, Dict]:

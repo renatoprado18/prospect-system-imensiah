@@ -52,6 +52,7 @@ WITH tel AS (
     FROM contacts c
     CROSS JOIN LATERAL jsonb_array_elements(c.telefones) e(j)
    WHERE c.telefones IS NOT NULL AND jsonb_typeof(c.telefones) = 'array'
+     AND length(regexp_replace(e.j->>'number','\\D','','g')) >= 10
 ),
 grupos AS (
   SELECT k FROM tel WHERE length(k) = 8 GROUP BY k HAVING count(DISTINCT id) > 1

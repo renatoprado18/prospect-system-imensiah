@@ -53,8 +53,15 @@ def env(k):
 
 
 def chave(v):
+    """Últimos 8 dígitos — MAS só de número que tenha DDD.
+
+    Exigir 10+ dígitos é o outro lado do conserto de 07/08: telefone sem DDD
+    ("7678-5627") é real e fica na ficha, mas casar por ele junta gente de
+    cidades diferentes que por acaso têm o mesmo número local. Dado incompleto
+    serve pra ligar pra pessoa, não pra afirmar que duas fichas são a mesma.
+    """
     d = re.sub(r"\D", "", v or "")
-    return d[-8:] if len(d) >= 8 else ""
+    return d[-8:] if len(d) >= 10 else ""
 
 
 async def medir(contas: list, limite: int):
