@@ -1166,7 +1166,7 @@ async def list_pending_approval(
         "total": sum(tier_counts.values())
     }
 
-@app.post("/api/admin/approve/{prospect_id}")
+@app.post("/api/admin/approve/{prospect_id}", dependencies=[Depends(require_scaffold_auth)])
 async def approve_prospect(prospect_id: int, approval: ProspectApproval):
     """Aprova ou rejeita um prospect (Renato)"""
     conn = get_db()
@@ -1206,7 +1206,7 @@ async def approve_prospect(prospect_id: int, approval: ProspectApproval):
 
     return {"status": new_status, "prospect_id": prospect_id}
 
-@app.post("/api/admin/approve-bulk")
+@app.post("/api/admin/approve-bulk", dependencies=[Depends(require_scaffold_auth)])
 async def approve_bulk(bulk: BulkApproval):
     """Aprova múltiplos prospects de uma vez"""
     conn = get_db()
@@ -1392,7 +1392,7 @@ async def get_prospect(prospect_id: int):
     }
 
 
-@app.post("/api/prospects")
+@app.post("/api/prospects", dependencies=[Depends(require_scaffold_auth)])
 async def create_prospect(prospect: ProspectCreate):
     """Cria novo prospect e calcula score"""
     conn = get_db()
@@ -1420,7 +1420,7 @@ async def create_prospect(prospect: ProspectCreate):
     return {"id": prospect_id, "score": score, "tier": tier}
 
 
-@app.patch("/api/prospects/{prospect_id}")
+@app.patch("/api/prospects/{prospect_id}", dependencies=[Depends(require_scaffold_auth)])
 async def update_prospect(prospect_id: int, update: ProspectUpdate):
     """Atualiza prospect"""
     conn = get_db()
@@ -1617,7 +1617,7 @@ async def mark_converted(
 
 # ============== API Routes - Meetings ==============
 
-@app.post("/api/meetings")
+@app.post("/api/meetings", dependencies=[Depends(require_scaffold_auth)])
 async def schedule_meeting(meeting: MeetingCreate, background_tasks: BackgroundTasks):
     """Agenda reunião com integração Google Calendar"""
     conn = get_db()
@@ -1735,7 +1735,7 @@ async def get_available_slots(
 
 # ============== API Routes - Feedback & Learning ==============
 
-@app.post("/api/feedback")
+@app.post("/api/feedback", dependencies=[Depends(require_scaffold_auth)])
 async def submit_feedback(feedback: FeedbackSubmit):
     """Submete feedback de reunião para learning"""
     conn = get_db()
@@ -8149,7 +8149,7 @@ async def linkedin_bookmarklet_receive_get(data: str):
         import traceback
         return error_page("Erro no servidor", traceback.format_exc())
 
-@app.post("/api/linkedin/bookmarklet")
+@app.post("/api/linkedin/bookmarklet", dependencies=[Depends(require_scaffold_auth)])
 async def linkedin_bookmarklet_receive(request: Request):
     """
     Recebe dados do LinkedIn extraidos pelo bookmarklet.
@@ -10031,7 +10031,7 @@ async def api_index_folder(folder_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/drive/upload")
+@app.post("/api/drive/upload", dependencies=[Depends(require_scaffold_auth)])
 async def api_upload_file(
     file: UploadFile = File(...),
     folder_id: str = Query(None),
@@ -14079,7 +14079,7 @@ async def update_contact_circulo_legacy(contact_id: int, data: dict):
     return result
 
 
-@app.post("/api/circulos/recalculate")
+@app.post("/api/circulos/recalculate", dependencies=[Depends(require_scaffold_auth)])
 async def recalculate_circulos(force: bool = False, limit: int = None):
     """Recalcula circulos de todos os contatos"""
     result = recalcular_todos_circulos(force=force, limit=limit)
@@ -19183,7 +19183,7 @@ async def subscribe_push(request: Request, subscription: PushSubscription):
     return {"success": success}
 
 
-@app.post("/api/push/unsubscribe")
+@app.post("/api/push/unsubscribe", dependencies=[Depends(require_scaffold_auth)])
 async def unsubscribe_push(request: Request, subscription: PushSubscription):
     """Unsubscribe from push notifications."""
     from services.push_notifications import get_push_service
@@ -26089,7 +26089,7 @@ NAO invente URLs ou links — se quiser referenciar um artigo, deixe em branco."
     return {"status": "success", "post": post}
 
 
-@app.post("/api/share/generate-message")
+@app.post("/api/share/generate-message", dependencies=[Depends(require_scaffold_auth)])
 async def api_generate_share_message(request: Request):
     """Gera mensagem personalizada para compartilhar conteudo com um contato"""
     import httpx as _hx
@@ -26751,7 +26751,7 @@ async def api_dashboard_veiculo(veiculo_id: int):
     return dashboard
 
 
-@app.post("/api/veiculos")
+@app.post("/api/veiculos", dependencies=[Depends(require_scaffold_auth)])
 async def api_criar_veiculo(request: Request):
     """Cria um novo veiculo"""
     data = await request.json()
@@ -29990,7 +29990,7 @@ async def api_intel_chat_history(limit: int = 50):
     return {"messages": get_chat_history(limit=limit)}
 
 
-@app.post("/api/intel-chat")
+@app.post("/api/intel-chat", dependencies=[Depends(require_scaffold_auth)])
 async def api_intel_chat_send(request: Request):
     """Envia mensagem do chat web pro INTEL bot, retorna resposta."""
     from services.intel_bot import handle_chat_message, get_chat_history
