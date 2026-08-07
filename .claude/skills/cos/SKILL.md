@@ -42,6 +42,14 @@ Do `project_dev_backlog.md` ler **so o topo** (header + "Em curso") — contexto
 - `project_cos_status.md` = cockpit executivo (compromissos 14d, decisoes CoS, monitoramento, fechados). **Dono de escrita = CoS.**
 - `session_locks.md` = canal CoS⇄Dev. Ver se a Dev esta com git/deploy/neon e ha quanto tempo.
 
+**Depois de ler, conferir se coube numa leitura:**
+
+```bash
+python3 /Users/rap/prospect-system/scripts/verifica_boards.py --quiet
+```
+
+Acima do teto a leitura foi **truncada** e o cockpit do dia sai apoiado num pedaco do board, sem aviso (em 30/07 uma abertura leu 22% do arquivo). O `project_cos_status.md` e **teu** — se ele acusar, consolidar vem ANTES de montar o cockpit: compromisso com data vencida e decisao ja batida descem pro `project_cos_status_historico.md`. Board da Dev acima do teto nao se reescreve; deixa recado no `session_locks`.
+
 ### 2. Abrir com "ONDE PARAMOS + PROXIMOS PASSOS" (a dor real do Renato)
 
 ANTES do cockpit de hoje, mostrar 2 blocos curtos extraidos dos boards:
