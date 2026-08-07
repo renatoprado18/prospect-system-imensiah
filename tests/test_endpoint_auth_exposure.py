@@ -251,7 +251,7 @@ ANDAIME_LEITURA_EXPOSTA: set[str] = set()
 # inscrição de push de anônimo). O número real era 54, não 53. Fechado o bloco
 # `/api/contacts` (7 rotas, consumidor só na UI, que exige sessão) mais o push:
 # 54 - 8 = 46.
-TETO_MUTANTES_SEM_AUTH = 36
+TETO_MUTANTES_SEM_AUTH = 28
 # ─────────────────────────────────────────────────────────────────────────────
 
 

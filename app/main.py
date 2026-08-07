@@ -23109,7 +23109,7 @@ async def api_list_social_groups():
     return await list_all_social_groups()
 
 
-@app.post("/api/social-groups/sync")
+@app.post("/api/social-groups/sync", dependencies=[Depends(require_scaffold_auth)])
 async def api_sync_social_groups():
     """Forca sync do cache de grupos sociais"""
     from services.social_groups import sync_all_groups_cache
@@ -23138,7 +23138,7 @@ async def api_sync_group_messages():
     return await sync_group_messages(limit_per_group=50)
 
 
-@app.post("/api/social-groups/refresh")
+@app.post("/api/social-groups/refresh", dependencies=[Depends(require_scaffold_auth)])
 async def api_refresh_social_groups(background_tasks: BackgroundTasks, full: bool = False):
     """Refresh do inventario (jid+nome, sem enrichment).
 
@@ -23163,7 +23163,7 @@ async def api_refresh_social_groups(background_tasks: BackgroundTasks, full: boo
     return await refresh_groups_basic(full=False)
 
 
-@app.post("/api/social-groups/messages")
+@app.post("/api/social-groups/messages", dependencies=[Depends(require_scaffold_auth)])
 async def api_get_group_messages(request: Request):
     """Retorna mensagens de um grupo"""
     from services.group_message_sync import get_group_messages
@@ -23173,7 +23173,7 @@ async def api_get_group_messages(request: Request):
     return {"messages": get_group_messages(group_jid, limit=limit)}
 
 
-@app.post("/api/social-groups/toggle-sync")
+@app.post("/api/social-groups/toggle-sync", dependencies=[Depends(require_scaffold_auth)])
 async def api_toggle_group_sync(request: Request):
     """Ativa/desativa sincronizacao de um grupo"""
     from services.social_groups import toggle_group_sync
@@ -27240,7 +27240,7 @@ def api_list_campaigns(
     )
 
 
-@app.post("/api/v1/campaigns")
+@app.post("/api/v1/campaigns", dependencies=[Depends(require_scaffold_auth)])
 def api_create_campaign(data: CampaignCreate):
     """Cria uma nova campanha."""
     campaign_id = _campaign_service.create_campaign(
@@ -27267,7 +27267,7 @@ def api_pending_actions(limit: int = 50):
     return _campaign_service.get_pending_actions(limit=limit)
 
 
-@app.post("/api/v1/campaigns/preview")
+@app.post("/api/v1/campaigns/preview", dependencies=[Depends(require_scaffold_auth)])
 async def api_preview_audience(request: Request):
     """Preview da audiência com os filtros especificados."""
     data = await request.json()
@@ -27284,7 +27284,7 @@ def api_get_campaign(campaign_id: int):
     return campaign
 
 
-@app.put("/api/v1/campaigns/{campaign_id}")
+@app.put("/api/v1/campaigns/{campaign_id}", dependencies=[Depends(require_scaffold_auth)])
 def api_update_campaign(campaign_id: int, data: CampaignUpdate):
     """Atualiza uma campanha (apenas se status = draft)."""
     update_data = {k: v for k, v in data.dict().items() if v is not None}
@@ -27297,7 +27297,7 @@ def api_update_campaign(campaign_id: int, data: CampaignUpdate):
     return {"status": "updated"}
 
 
-@app.delete("/api/v1/campaigns/{campaign_id}")
+@app.delete("/api/v1/campaigns/{campaign_id}", dependencies=[Depends(require_scaffold_auth)])
 def api_delete_campaign(campaign_id: int):
     """Deleta uma campanha (apenas se status = draft)."""
     success = _campaign_service.delete_campaign(campaign_id)
