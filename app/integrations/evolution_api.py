@@ -11,6 +11,7 @@ from services import llm
 import json
 import httpx
 import logging
+import re
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
@@ -638,6 +639,36 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     return result
 
 
+def _telefone_do_vcard(vcard: Optional[str]) -> Optional[str]:
+    """O telefone de dentro de um cartão de contato compartilhado no WhatsApp.
+
+    POR QUE (07/08/2026, pedido da CoS). Contato compartilhado perdia o número:
+    gravava-se `[Contato: Nome]` e `metadata.phone` recebia o telefone de QUEM
+    ENVIOU — não o do cartão. A Sandra Bakker passou quatro contatos (Ovidio,
+    Larisse, Valéria, Lucila) e nenhum número entrou no INTEL, embora o payload
+    trouxesse todos.
+
+    Duas fontes no mesmo campo, e a ordem importa:
+        TEL;type=CELL;type=VOICE;waid=556993630363:+55 69 99363-0363
+    O `waid` já vem canônico (só dígitos, com DDI) — é o que o WhatsApp usa pra
+    endereçar. O texto depois dos dois-pontos é como a pessoa digitou, com
+    espaços e traços. Prefere-se o `waid`; o outro entra como reserva
+    normalizada ([[reference_telefone_br_normalizacao]]: casar por dígitos
+    canônicos, nunca por LIKE de string formatada).
+    """
+    if not vcard:
+        return None
+    m = re.search(r"waid=(\d{10,15})", vcard)
+    if m:
+        return m.group(1)
+    for linha in str(vcard).splitlines():
+        if linha.upper().startswith("TEL"):
+            digitos = re.sub(r"\D", "", linha.split(":", 1)[-1] if ":" in linha else "")
+            if len(digitos) >= 10:
+                return digitos
+    return None
+
+
 def _extract_group_message_content(message_obj: Dict) -> tuple:
     """Espelha a extracao do pull horario (_sync_single_group em
     group_message_sync.py): retorna (content, message_type)."""
@@ -967,10 +998,23 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         message_type = "sticker"
     elif "contactMessage" in message:
         _nome = (message["contactMessage"] or {}).get("displayName") or ""
-        content = f"[Contato: {_nome}]" if _nome else "[Contato]"
+        _tel = _telefone_do_vcard((message["contactMessage"] or {}).get("vcard"))
+        # O NÚMERO NO PRÓPRIO CONTEÚDO (07/08/2026). O vCard chega inteiro no
+        # payload — `TEL;type=CELL;waid=556993630363:+55 69 99363-0363` — e era
+        # jogado fora: gravava-se só o rótulo, e `metadata.phone` guarda o
+        # telefone de QUEM ENVIOU, não o do cartão. Resultado: a Sandra passou
+        # quatro contatos e nenhum número entrou no INTEL.
+        content = (f"[Contato: {_nome}{' · ' + _tel if _tel else ''}]"
+                   if _nome else (f"[Contato: {_tel}]" if _tel else "[Contato]"))
         message_type = "contact"
     elif "contactsArrayMessage" in message:
-        content = "[Contatos]"
+        _cards = (message["contactsArrayMessage"] or {}).get("contacts") or []
+        _nomes = []
+        for _c in _cards:
+            _n = (_c or {}).get("displayName") or ""
+            _t = _telefone_do_vcard((_c or {}).get("vcard"))
+            _nomes.append(f"{_n}{' · ' + _t if _t else ''}".strip(" ·"))
+        content = f"[Contatos: {'; '.join(n for n in _nomes if n)}]" if _nomes else "[Contatos]"
         message_type = "contact"
 
     if not content:
