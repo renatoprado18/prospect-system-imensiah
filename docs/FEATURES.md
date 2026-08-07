@@ -658,6 +658,45 @@ pergunta, não fecha o veredito.
 
     ./scripts/sistema.py
 
+### `scripts/cockpit.py` — cockpit de frentes e tarefas (07/08/2026)
+Gera `~/cockpit/index.html`, a página que o Renato deixa aberta num monitor.
+**Era HTML escrito à mão pela sessão CoS** — e por isso retratava só o instante
+em que ela o escreveu: tarefa fechada, WhatsApp novo e agenda bloqueada às 13h
+ficavam invisíveis até alguém reescrever o arquivo ("bloqueei uma agenda e nada
+apareceu", 06/08). Virou gerador por decisão dele, **com ordem dura: só depois do
+sync de calendar consertado** — cockpit ao vivo lendo agenda velha mente com cara
+de atual.
+
+**Duas camadas, e a costura entre elas é o ponto:**
+- **chão** (gerado): hoje (agenda + vence hoje) · check-G com **o fio, não a
+  amostra** · vencidas · próximos 8 dias · aguardando terceiro (`on_hold` ≤7d
+  não é dívida) · aniversários · sem data por projeto.
+- **julgamento** (da CoS): `~/cockpit/curadoria.json` — `porque`/`prio`/`ocultar`
+  por item (`task:999741`, `evento:6054`, `checkg:26691`) + blocos livres.
+  No HTML ele seria apagado na primeira regeneração; no overlay sobrevive, e
+  **aparece na tela com a própria idade** ("escrita há 3 dias").
+
+Detalhes que não são estilo:
+- **Faixa de frescor dos canos** no topo (agenda/WA/e-mail/grupos/check-G/camada).
+  Cano frio dispara um aviso explícito — a agenda ficou 3 meses parada porque
+  nenhuma superfície mostrava a idade dela.
+- **Chip “você/a Andressa mexeu nisso”** — vem de `atos_que_resolvem` e é
+  **pergunta, nunca veredito**: sinaliza conversa posterior, não conclui que
+  está resolvido. Exclui a ficha do próprio Renato (`users.contact_id`), senão a
+  notificação da camada conta como ato dele.
+- `hoje` vem de BRT no Python: `CURRENT_DATE` no Neon é UTC e erraria toda noite.
+  Hora de evento é lida **raw** (o storage do calendar não é UTC).
+- Corte de lista sempre declarado ("+N na dobra") — truncar calado faria a lista
+  parecer completa.
+
+    ./scripts/cockpit.py            # gera e abre
+    ./scripts/cockpit.py --quieto   # só gera
+
+**Regeneração automática:** `scripts/cockpit.plist` (LaunchAgent, 5 min,
+`RunAtLoad`). Sem ele, "gerador" seria só um nome melhor pra página estática — a
+aba recarrega a cada 1 min e releria o mesmo arquivo velho. Custo: ~0,3s de
+leitura no Neon, zero API.
+
 ### `scripts/duplicatas.py` — fichas repetidas, por prova forte
 Detecta por telefone canônico (só dígitos, 10-13, nunca `LIKE`), e-mail e nome.
 Descarta identificador que aparece em >3 fichas — telefone compartilhado por

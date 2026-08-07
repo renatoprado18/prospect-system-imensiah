@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cockpit de frentes — regeneracao periodica na maquina do Renato.
+
+  Instalar:
+    cp scripts/cockpit.plist ~/Library/LaunchAgents/com.almeidaprado.cockpit.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.cockpit.plist
+  Disparar a mao:
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.cockpit
+  Desligar:
+    launchctl bootout gui/$(id -u)/com.almeidaprado.cockpit
+
+  POR QUE EXISTE. Sem isto, "gerador" seria so um nome mais bonito pra pagina
+  escrita a mao: ela continuaria mostrando o instante em que ALGUEM rodou o
+  script. A pagina recarrega sozinha a cada 1 min — recarregar o mesmo arquivo
+  velho e pior que nao recarregar, porque parece atual.
+
+  5 MINUTOS, e o custo cabe. A geracao inteira e uma leitura de ~0,3s no Neon
+  (nenhuma chamada de LLM, zero custo de API — este cockpit e o par barato do
+  agente local, que custa ~US$6/dia). Alinha com o sync de calendar, que roda a
+  cada 15 min: passar a gerar mais rapido que a fonte nao traria dado novo.
+
+  StartInterval em vez de StartCalendarInterval de proposito: o dado que a pagina
+  mostra muda o dia inteiro (WhatsApp, task fechada, agenda movida), nao em
+  horarios ritualizados como o julgamento do agente.
+
+  SONO DA MAQUINA. Na bateria o Mac dorme em 1 min e nada roda; ao acordar, o
+  launchd dispara na hora. Isso e aceitavel aqui e NAO precisa de `pmset`: a
+  pagina so importa quando ele esta olhando pra ela — e se estiver olhando, a
+  maquina esta acordada. O carimbo no topo e a faixa de frescor dos canos
+  mostram a idade real, entao um atraso aparece em vez de mentir.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.cockpit</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/rap/prospect-system/.venv/bin/python</string>
+    <string>/Users/rap/prospect-system/scripts/cockpit.py</string>
+    <string>--quieto</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <!-- Gera assim que o agente e carregado: abrir o Mac e ja encontrar a pagina
+       atual e o comportamento esperado de um cockpit. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/cockpit.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/cockpit.err</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
