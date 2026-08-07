@@ -273,10 +273,21 @@ def coletar(cur):
                     "fatos_novos": f.get("fatos_novos") or [],
                     "nao_consegui_saber": f.get("nao_consegui_saber") or [],
                 }
-    cur.execute("SELECT run_date, frente FROM cos_portao_veredito "
-                "WHERE run_date > CURRENT_DATE - 7")
-    ja = {(r["run_date"], r["frente"]) for r in cur.fetchall()}
-    d["pendentes"] = [v for k, v in sorted(abertos.items(), reverse=True) if k not in ja]
+    # Casa por (dia, project_id) e NÃO por nome: o nome da frente é texto que
+    # muda (renomear um projeto ressuscitaria portões já avaliados), o id não.
+    cur.execute("""SELECT run_date, project_id, frente, veredito, nota
+                     FROM cos_portao_veredito WHERE run_date > CURRENT_DATE - 7""")
+    linhas = [dict(r) for r in cur.fetchall()]
+    ja = {(r["run_date"], r["frente"]) for r in linhas}
+    ja_id = {(r["run_date"], r["project_id"]) for r in linhas}
+    # O que ele JÁ RESPONDEU, pra página parar de perguntar de novo. Sem isto os
+    # cards da rodada seguiam com os botões vazios depois de avaliados — o
+    # Renato marcou 6 portões em 07/08, mandou, foram gravados, e a página
+    # continuou pedindo os mesmos. "Dou feedback e continua lá", nas palavras
+    # dele. A lista de pendentes já sumia; os cards de cima, não.
+    d["vereditos"] = {(r["run_date"], r["project_id"]): r for r in linhas}
+    d["pendentes"] = [v for k, v in sorted(abertos.items(), reverse=True)
+                      if k not in ja and (k[0], v["project_id"]) not in ja_id]
 
     # 4. AGORA
     cur.execute("""
@@ -427,6 +438,34 @@ pintar();
 
 
 # ------------------------------------------------------------------ render --
+
+ROTULO_VEREDITO = {"certa": "Certa", "errada": "Cobrou à toa", "passou": "Deixou passar"}
+
+
+def _bloco_veredito(d, dia, project_id, frente):
+    """Os botões — ou, se já respondido, o que ele respondeu.
+
+    Perguntar de novo o que já foi respondido é o jeito mais rápido de fazer
+    alguém parar de responder. E some com o campo de nota: a nota já está
+    gravada, e um textarea vazio ao lado de "você já avaliou" sugere que se
+    perdeu.
+    """
+    ja = (d.get("vereditos") or {}).get((dia, project_id))
+    if ja:
+        nota = (f'<span class="v-nota-lida">"{esc(ja["nota"])}"</span>'
+                if ja.get("nota") else "")
+        return (f'<div class="veredito veredito--feito">'
+                f'<span class="v-ok">✓ você já avaliou:</span> '
+                f'<b>{ROTULO_VEREDITO.get(ja["veredito"], esc(ja["veredito"]))}</b>{nota}</div>')
+    return f"""<div class="veredito" data-uid="{esc(dia)}|{project_id}|{esc(frente)}">
+    <span class="v-t">o pedido acima devia ter chegado a você?</span>
+    <button type="button" data-v="certa">Certa</button>
+    <button type="button" data-v="errada">Cobrou à toa</button>
+    <button type="button" data-v="passou">Deixou passar</button>
+    <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
+    <textarea class="v-nota" rows="1" placeholder="por quê? — o motivo é o que vira aprendizado no PDCA"></textarea>
+  </div>"""
+
 
 def render(d):
     ago = datetime.now(timezone.utc)
@@ -579,14 +618,7 @@ def render(d):
   {'<div class="aprendeu"><span class="ap-t">o que ele aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</span><ul>' + fat + '</ul></div>' if fat else ''}
   <details><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(f.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + nao + '</ul></details>' if nao else ''}
-  <div class="veredito" data-uid="{esc(d['rodada']['run_date'])}|{f.get('project_id')}|{esc(f.get('frente'))}">
-    <span class="v-t">o pedido acima devia ter chegado a você?</span>
-    <button type="button" data-v="certa">Certa</button>
-    <button type="button" data-v="errada">Cobrou à toa</button>
-    <button type="button" data-v="passou">Deixou passar</button>
-    <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
-    <textarea class="v-nota" rows="1" placeholder="por quê? — o motivo é o que vira aprendizado no PDCA"></textarea>
-  </div>
+  {_bloco_veredito(d, d['rodada']['run_date'], f.get('project_id'), f.get('frente'))}
 </article>""")
 
     # --- portões pendentes de veredito (mesmo data-uid: o JS e o `--gravar` já servem)
@@ -610,14 +642,7 @@ def render(d):
   {'<div class="aprendeu"><span class="ap-t">o que ele aprendeu — ' + str(len(pd.get('fatos_novos') or [])) + ' fato(s)</span><ul>' + p_fat + '</ul></div>' if p_fat else ''}
   <details><summary>como chegou aí — {len(pd.get('trajetoria') or [])} passos</summary><ol>{p_traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(pd.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + p_nao + '</ul></details>' if p_nao else ''}
-  <div class="veredito" data-uid="{esc(pd['dia'])}|{pd['project_id']}|{esc(pd['frente'])}">
-    <span class="v-t">o pedido acima devia ter chegado a você?</span>
-    <button type="button" data-v="certa">Certa</button>
-    <button type="button" data-v="errada">Cobrou à toa</button>
-    <button type="button" data-v="passou">Deixou passar</button>
-    <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
-    <textarea class="v-nota" rows="1" placeholder="por quê? — o motivo é o que vira aprendizado no PDCA"></textarea>
-  </div>
+  {_bloco_veredito(d, pd['dia'], pd['project_id'], pd['frente'])}
 </article>""")
 
     # --- agora
@@ -729,6 +754,9 @@ ul.nao li{{color:var(--warn)}}
 .veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 .veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
 .raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
+.veredito--feito{{color:var(--calm);font-size:.82rem;align-items:baseline}}
+.v-ok{{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}}
+.v-nota-lida{{flex-basis:100%;color:var(--ink-soft);font-style:italic;margin-top:.2rem}}
 .aprendeu{{margin:.1rem 0 .6rem;padding:.5rem .65rem;background:var(--calm-bg);border-left:3px solid var(--calm);border-radius:3px}}
 .ap-t{{display:block;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--calm);font-weight:600;margin-bottom:.25rem}}
 .aprendeu ul{{margin:0;padding-left:1.1rem;font-size:.84rem;color:var(--ink)}}
