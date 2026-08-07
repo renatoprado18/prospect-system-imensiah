@@ -2220,8 +2220,17 @@
                         <div class="stat-value" id="statProjectsAction">-</div>
                         {# "Projetos" nomeava um numero que nao era a contagem de
                            projetos: era vencidos+proximos somados. O rotulo agora
-                           diz o que o numero mede. #}
-                        <div class="stat-label">Projetos atrasados</div>
+                           diz o que o numero mede.
+
+                           07/08 — CAMINHO C: esta home NAO responde mais "o que
+                           precisa de mim hoje". Quem responde e o cockpit
+                           (~/cockpit/index.html), e por 8 dias tres superficies
+                           responderam a mesma pergunta com listas de intersecao
+                           ZERO. O numero fica (navegar projeto atrasado e uso
+                           legitimo do CRM); o que sai e a linguagem de cobranca
+                           — este card deixa de disputar o portao.
+                           Ver [[project_tres_cockpits_divergentes]]. #}
+                        <div class="stat-label">Projetos com prazo vencido</div>
                     </div>
                     <div class="stat-breakdown" id="statProjectsBreakdown"></div>
                 </div>
@@ -2559,9 +2568,16 @@
                         document.getElementById('statProjectsAction').textContent = atencaoN;
                         const breakdown = document.getElementById('statProjectsBreakdown');
                         if (breakdown) {
+                            // 07/08 (caminho C): pílulas em `muted`, não em
+                            // `danger`/`warning`. Vermelho é vocabulário de
+                            // portão, e o portão agora mora num lugar só. O dado
+                            // continua aqui para navegar; o que sai é o alarme
+                            // — duas telas gritando a mesma urgência com listas
+                            // diferentes foi o que gerou "cobrar Piccino HOJE"
+                            // ao lado de "nada aberto, ela já entregou".
                             breakdown.innerHTML = `
-                                <span class="pill ${atencaoN > 0 ? 'danger' : 'muted'}" title="Precisa de atenção (vencidos)"><i class="bi bi-exclamation-triangle-fill"></i> ${atencaoN}</span>
-                                <span class="pill ${proximosN > 0 ? 'warning' : 'muted'}" title="Próximos 7 dias"><i class="bi bi-clock-history"></i> ${proximosN}</span>
+                                <span class="pill muted" title="Com prazo vencido"><i class="bi bi-clock-history"></i> ${atencaoN}</span>
+                                <span class="pill muted" title="Vencem nos próximos 7 dias"><i class="bi bi-calendar3"></i> ${proximosN}</span>
                             `;
                         }
                     }
