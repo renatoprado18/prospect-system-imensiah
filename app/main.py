@@ -10835,6 +10835,24 @@ async def api_check_g_ledger(request: Request, dias: int = 14):
     return medir(dias=dias)
 
 
+@app.get("/api/cos/task-atos/{task_id}")
+async def api_task_atos(request: Request, task_id: int, dias: int = 45):
+    """"Ele já fez isso?" — atos posteriores à criação da task, das pessoas dela.
+
+    Consumido pela triagem (`papel-cos`) ANTES de propor qualquer coisa. Nasceu
+    do caso #999732 (07/08): o Renato já tinha mandado o regulamento do Concurso
+    ao Reginaldo, o ato estava sob o próprio `contact_id` da task, e a triagem
+    julgou sem olhar porque a descrição nomeava outras pessoas.
+
+    Devolve `atos_no_periodo` junto com os relevantes de propósito: "0 atos" só
+    significa alguma coisa ao lado de quantos existiam pra filtrar — sem o
+    denominador, filtro com vocabulário errado devolve zero com cara de ausência.
+    """
+    require_scaffold_auth(request)
+    from services.atos_task import atos_da_task
+    return atos_da_task(task_id, dias=dias)
+
+
 @app.get("/api/cron/cos-signal-router")
 @track_cron_run
 async def cron_cos_signal_router(request: Request):

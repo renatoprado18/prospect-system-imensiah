@@ -89,6 +89,40 @@ WHERE status='pending'
 ORDER BY criado_em DESC;
 ```
 
+### 2b. ANTES de classificar: "ele ja fez isso?" (OBRIGATORIO)
+
+Para **toda task ou proposta que vai virar `propose`** — ou seja, tudo que vai
+pedir alguma coisa ao Renato — perguntar primeiro se ele ja resolveu:
+
+```bash
+INTEL_API_KEY=$(grep -m1 '^INTEL_API_KEY=' /Users/rap/prospect-system/.env | cut -d= -f2- | tr -d '[:space:]')
+curl -s -H "X-API-Key: $INTEL_API_KEY" \
+  "https://intel.almeida-prado.com/api/cos/task-atos/<TASK_ID>" | python3 -m json.tool
+```
+
+**Por que e obrigatorio.** O sistema so sabe o que a CAMADA cria e e cego ao que
+o Renato faz direto — responder WhatsApp, mandar e-mail, aceitar convite, pagar.
+Sem esta consulta a triagem propoe o que ele ja fez: **5 falhas medidas em
+06/08**. O caso que fechou a decisao (#999732, 07/08): ele ja tinha mandado o
+regulamento do Concurso ao Reginaldo, **o ato estava sob o proprio `contact_id`
+da task**, e a triagem julgou sem olhar porque a descricao nomeava outras
+pessoas. Um `curl` teria evitado.
+
+**Como ler a resposta:**
+- `atos` com `score` alto e `termos_em_comum` do assunto → **ele provavelmente ja
+  agiu**. Nao proponha: leia a evidencia e, se confirmar, o bucket vira fechar/
+  atualizar a task, nao cobrar.
+- `atos: []` **com `atos_no_periodo` > 0** → houve conversa com essas pessoas,
+  mas nada casou com o assunto. Se o titulo usa vocabulario diferente do que
+  eles falam ("regulamento" vs "concurso"), **leia os brutos antes de propor** —
+  filtro com vocabulario errado devolve zero com cara de ausencia
+  ([[feedback_filtro_vocabulario_errado_falha_calado]]).
+- `atos_no_periodo: 0` → nao ha o que cruzar; segue a classificacao normal.
+
+⚠️ E **evidencia, nunca veredito**: o endpoint mostra que houve conversa depois,
+nao que a task esta resolvida. Fechar task por conta disso e desfazer o dado por
+concluido — nunca e acao Auto ([[feedback_cos_autonomy_policy]]).
+
 ### 3. Classificar via heuristica hibrida
 
 **Catalogo de templates** (action_type → bucket). Cobertura ~95% dos casos:
