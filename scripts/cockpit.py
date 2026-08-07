@@ -246,15 +246,27 @@ def separar(d):
     depois de 7 dias. Misturar os dois faz a lista de vencidas gritar sobre coisa
     que está correndo bem, e uma lista que grite à toa deixa de ser lida.
     """
-    hoje, sep = d["hoje"], {"hoje": [], "semana": [], "vencidas": [], "aguardando": [], "sem_data": []}
+    hoje, sep = d["hoje"], {"hoje": [], "semana": [], "vencidas": [], "aguardando": [],
+                            "sem_data": [], "andamento": []}
     limite = hoje + timedelta(days=8)
     for t in d["tasks"]:
         venc = t["data_vencimento"].date() if t["data_vencimento"] else None
         if t["status"] == "on_hold":
-            idade = (datetime.now() - t["on_hold_since"]).days if t["on_hold_since"] else 0
+            # `on_hold_since` é UTC naive; `datetime.now()` é BRT. Subtrair os
+            # dois tirava 3h e produzia "mais antigo -1d" numa task posta em
+            # espera hoje — apareceu na hora em que a visão por pessoa passou a
+            # mostrar a idade. Compara-se em UTC, e nunca abaixo de zero.
+            idade = max(0, (datetime.now(timezone.utc).replace(tzinfo=None)
+                            - t["on_hold_since"]).days) if t["on_hold_since"] else 0
             (sep["vencidas"] if idade > 7 else sep["aguardando"]).append({**t, "atraso": idade})
             continue
-        if venc is None:
+        if t["status"] == "in_progress":
+            # EM ANDAMENTO NÃO É VENCIDA (07/08): "incomoda, não está vencida",
+            # sobre a task de despesas que ele tinha acabado de tocar. Prazo
+            # estourado numa coisa que está em curso não é dívida — é estimativa
+            # errada. Chamar de vencida transforma trabalho em curso em cobrança.
+            sep["andamento"].append(t)
+        elif venc is None:
             sep["sem_data"].append(t)
         elif venc < hoje:
             sep["vencidas"].append({**t, "atraso": (hoje - venc).days})
@@ -338,7 +350,15 @@ section { margin-bottom:34px; }
 .row .txt { font-size:13.5px; flex:1 1 60%; min-width:0; }
 .row .txt b { font-weight:600; }
 .row .note { font-size:12px; color:var(--ink-soft); font-family:var(--mono); }
-.fio { margin:6px 0 0; padding-left:14px; border-left:2px solid var(--panel-edge); font-size:12.5px; color:var(--ink-soft); }
+.pessoa { background:var(--panel); border:1px solid var(--panel-edge); border-radius:10px; padding:11px 14px; box-shadow:var(--shadow); }
+  .pessoa--orfa { border-style:dashed; opacity:.85; }
+  .pessoa header { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .pessoa header b { font-size:14px; }
+  .pessoa header span { font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+  .pessoa ul { margin:7px 0 0; padding-left:16px; font-size:12.5px; color:var(--ink-soft); }
+  .pessoa li { margin-bottom:3px; }
+  .pessoa li i { font-style:normal; color:var(--ink-faint); }
+  .fio { margin:6px 0 0; padding-left:14px; border-left:2px solid var(--panel-edge); font-size:12.5px; color:var(--ink-soft); }
 .fio div { padding:1px 0; }
 .passou { font-size:12px; color:var(--ink-faint); margin:10px 0 0; padding-top:8px; border-top:1px dashed var(--panel-edge); }
   .vazio { font-size:13px; color:var(--ink-faint); font-style:italic; padding:10px 2px; }
@@ -663,13 +683,34 @@ def render(d, cur_cos, cos_em):
                       + "".join(item(t, f"{t['atraso']}d atrás", "p-crit") for t in vencidas[8:])
                       + "</div></details>")
 
-    # --- AGUARDANDO TERCEIRO ------------------------------------------------
-    aguard = "".join(
-        f'<div class="row"><span class="dot"></span><span class="txt">'
-        f'<b>{esc(t["titulo"])[:90]}</b>'
-        f'{" — " + esc(t["on_hold_reason"])[:80] if t["on_hold_reason"] else ""}</span>'
-        f'<span class="note">#{t["id"]} · {t["atraso"]}d</span></div>'
-        for t in sorted(sep["aguardando"], key=lambda x: -x["atraso"]))
+    # --- AGUARDANDO TERCEIRO, POR PESSOA ------------------------------------
+    # Pedido dele (07/08): "seria interessante ter uma visão por pessoa (quem
+    # estou aguardando), consolidando as tarefas". A lista plana respondia "o
+    # que está parado"; agrupada por pessoa responde "a quem eu cobro" — que é
+    # a pergunta que se resolve com UMA mensagem em vez de cinco.
+    #
+    # Ordena por quantidade: três coisas paradas com a mesma pessoa é uma
+    # conversa só, e é a que rende mais.
+    por_pessoa = {}
+    for t in sep["aguardando"]:
+        por_pessoa.setdefault(t["contato"] or "— sem pessoa na ficha", []).append(t)
+    aguard = ""
+    for pessoa, ts in sorted(por_pessoa.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        # A ficha órfã não é detalhe de exibição: task sem `contact_id` não
+        # cruza com WhatsApp nenhum, então ela nunca fecha sozinha. Aqui isso
+        # fica visível em vez de virar uma linha a mais.
+        orfa = pessoa.startswith("—")
+        itens = "".join(
+            f'<li>{esc(t["titulo"])[:88]}'
+            f'{" <i>— " + esc(t["on_hold_reason"])[:70] + "</i>" if t["on_hold_reason"] else ""}'
+            f' <span class="id">#{t["id"]} · {t["atraso"]}d</span></li>'
+            for t in sorted(ts, key=lambda x: -x["atraso"]))
+        mais_velho = max(t["atraso"] for t in ts)
+        aguard += (
+            f'<div class="pessoa{" pessoa--orfa" if orfa else ""}">'
+            f'<header><b>{esc(pessoa)}</b>'
+            f'<span>{len(ts)} item(ns) · mais antigo {mais_velho}d</span></header>'
+            f'<ul>{itens}</ul></div>')
 
     # --- CHEGOU NO WHATSAPP -------------------------------------------------
     # Some sozinha quando zera — o zero-state que, escrito à mão, dependia de
@@ -812,6 +853,11 @@ def render(d, cur_cos, cos_em):
     {f"Mostrando as 12 conversas mais recentes — <b>outras {escondidos} ficaram de fora desta lista</b>." if escondidos else ""}</p>
     <div class="compact">{''.join(wa)}</div>
   </section>''' if wa else ''}
+
+  {f'''<section data-annot>
+    <div class="head"><h2>Em andamento</h2><div class="rule"></div><span class="tag">você já começou</span></div>
+    <div class="items">{''.join(item(t, "em curso") for t in sep["andamento"])}</div>
+  </section>''' if sep["andamento"] else ''}
 
   {f'''<section data-annot>
     <div class="head"><h2>Vencidas</h2><div class="rule"></div><span class="tag">decidir: fazer ou baixar</span></div>
