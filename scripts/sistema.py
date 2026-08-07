@@ -264,6 +264,14 @@ def coletar(cur):
                     "dia": r["run_date"], "frente": f.get("frente"),
                     "project_id": f.get("project_id"),
                     "o_que": pv.get("o_que") or pv.get("pergunta") or "",
+                    # O MESMO contexto dos cards de cima (07/08). Antes o
+                    # pendente trazia só a frase do pedido, e julgar "isto devia
+                    # ter chegado a mim?" sem ver o que o agente aprendeu nem
+                    # como chegou lá é adivinhar. A maior parte dos portões a
+                    # marcar está nesta lista — era onde faltava contexto.
+                    "trajetoria": f.get("trajetoria") or [],
+                    "fatos_novos": f.get("fatos_novos") or [],
+                    "nao_consegui_saber": f.get("nao_consegui_saber") or [],
                 }
     cur.execute("SELECT run_date, frente FROM cos_portao_veredito "
                 "WHERE run_date > CURRENT_DATE - 7")
@@ -550,22 +558,29 @@ def render(d):
        if faltou else '<span class="chip chip--calm">olhou as 8 fontes</span>'}
       {'<span class="chip chip--faint">' + str(q['incertezas']) + ' incerteza(s)</span>' if q['incertezas'] else ''}
     </div>'''
-        traj = "".join(f'<li>{esc(t)[:260]}</li>' for t in (f.get("trajetoria") or [])[:9])
-        nao = "".join(f'<li>{esc(t)[:220]}</li>' for t in (f.get("nao_consegui_saber") or [])[:5])
-        fat = "".join(f'<li>{esc((x or {}).get("fato", x))[:150]}</li>'
-                      for x in (f.get("fatos_novos") or [])[:4])
+        # SEM TRUNCAR (07/08). Os cortes em 260/220/150 caracteres eram herança
+        # de quando isto era um resumo; viraram defeito quando a página passou a
+        # ser a superfície ONDE SE JULGA. O Renato marcou três portões como
+        # "julgou sem olhar tudo" e escreveu o motivo: "truncou o texto do
+        # APRENDEU", "truncou de novo". Pedir veredito sobre texto cortado é
+        # pedir palpite — e o placar do gate se apoia nesses vereditos.
+        # Página local, arquivo local: não há banda a economizar.
+        traj = "".join(f"<li>{esc(t)}</li>" for t in (f.get("trajetoria") or []))
+        nao = "".join(f"<li>{esc(t)}</li>" for t in (f.get("nao_consegui_saber") or []))
+        fat = "".join(f'<li>{esc((x or {}).get("fato", x))}</li>'
+                      for x in (f.get("fatos_novos") or []))
         pv = f.get("precisa_de_voce") or {}
         meta = f.get("_meta") or {}
         cards.append(f"""<article class="frente">
-  <header><span class="nome">{esc(f.get('frente'))[:52]}</span>
+  <header><span class="nome">{esc(f.get('frente'))}</span>
     <span class="lat">{meta.get('duracao_s','?')}s · US${round(meta.get('custo_usd') or 0, 2)}</span></header>
   {barra}
-  {'<p class="portao"><b>precisa de você:</b> ' + esc(pv.get('o_que'))[:300] + '</p>' if pv.get('sim') else '<p class="ok">sem portão nesta frente</p>'}
+  {'<p class="portao"><b>precisa de você:</b> ' + esc(pv.get('o_que')) + '</p>' if pv.get('sim') else '<p class="ok">sem portão nesta frente</p>'}
+  {'<div class="aprendeu"><span class="ap-t">o que ele aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</span><ul>' + fat + '</ul></div>' if fat else ''}
   <details><summary>como chegou aí — {len(f.get('trajetoria') or [])} passos</summary><ol>{traj}</ol></details>
   {'<details><summary>o que NÃO conseguiu saber — ' + str(len(f.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + nao + '</ul></details>' if nao else ''}
-  {'<details><summary>aprendeu — ' + str(len(f.get('fatos_novos') or [])) + ' fato(s)</summary><ul>' + fat + '</ul></details>' if fat else ''}
   <div class="veredito" data-uid="{esc(d['rodada']['run_date'])}|{f.get('project_id')}|{esc(f.get('frente'))}">
-    <span class="v-t">este julgamento</span>
+    <span class="v-t">o pedido acima devia ter chegado a você?</span>
     <button type="button" data-v="certa">Certa</button>
     <button type="button" data-v="errada">Cobrou à toa</button>
     <button type="button" data-v="passou">Deixou passar</button>
@@ -584,12 +599,19 @@ def render(d):
     for pd in d["pendentes"]:
         if f"{pd['dia']}|{pd['project_id']}|{pd['frente']}" in ja_na_pagina:
             continue
+        p_fat = "".join(f'<li>{esc((x or {}).get("fato", x))}</li>'
+                        for x in (pd.get("fatos_novos") or []))
+        p_traj = "".join(f"<li>{esc(t)}</li>" for t in (pd.get("trajetoria") or []))
+        p_nao = "".join(f"<li>{esc(t)}</li>" for t in (pd.get("nao_consegui_saber") or []))
         pendentes.append(f"""<article class="frente frente--pend">
-  <header><span class="nome">{esc(pd['frente'])[:52]}</span>
+  <header><span class="nome">{esc(pd['frente'])}</span>
     <span class="lat">{esc(pd['dia'])}</span></header>
-  <p class="portao"><b>pediu de você:</b> {esc(pd['o_que'])[:300]}</p>
+  <p class="portao"><b>pediu de você:</b> {esc(pd['o_que'])}</p>
+  {'<div class="aprendeu"><span class="ap-t">o que ele aprendeu — ' + str(len(pd.get('fatos_novos') or [])) + ' fato(s)</span><ul>' + p_fat + '</ul></div>' if p_fat else ''}
+  <details><summary>como chegou aí — {len(pd.get('trajetoria') or [])} passos</summary><ol>{p_traj}</ol></details>
+  {'<details><summary>o que NÃO conseguiu saber — ' + str(len(pd.get('nao_consegui_saber') or [])) + '</summary><ul class="nao">' + p_nao + '</ul></details>' if p_nao else ''}
   <div class="veredito" data-uid="{esc(pd['dia'])}|{pd['project_id']}|{esc(pd['frente'])}">
-    <span class="v-t">este julgamento</span>
+    <span class="v-t">o pedido acima devia ter chegado a você?</span>
     <button type="button" data-v="certa">Certa</button>
     <button type="button" data-v="errada">Cobrou à toa</button>
     <button type="button" data-v="passou">Deixou passar</button>
@@ -707,6 +729,10 @@ ul.nao li{{color:var(--warn)}}
 .veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 .veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
 .raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
+.aprendeu{{margin:.1rem 0 .6rem;padding:.5rem .65rem;background:var(--calm-bg);border-left:3px solid var(--calm);border-radius:3px}}
+.ap-t{{display:block;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--calm);font-weight:600;margin-bottom:.25rem}}
+.aprendeu ul{{margin:0;padding-left:1.1rem;font-size:.84rem;color:var(--ink)}}
+.aprendeu li{{margin-bottom:.2rem}}
 .v-nota{{flex-basis:100%;margin-top:.45rem;font:inherit;font-size:.8rem;line-height:1.45;padding:.35rem .5rem;
   border:1px dashed var(--panel-edge);border-radius:3px;background:var(--paper);color:var(--ink);
   resize:vertical;min-height:1.9rem;field-sizing:content}}
@@ -865,8 +891,20 @@ def gravar(texto: str) -> int:
         # parâmetros o portão foi julgado, e o PDCA agrupa a precisão por
         # deb/teto justamente pra comparar calibrações. Ficava NULL — e o
         # `:3d` em None derrubava o bloco inteiro do relatório.
+        # Fonte da calibração: o `run.py` do agente, que é quem de fato a
+        # aplica. Ler só do env fazia os vereditos entrarem como `?/?` (o
+        # `~/.cos-agent/env` não declara estes dois — eles são constantes do
+        # módulo), e o PDCA agrupa precisão POR calibração: sem o par, não dá
+        # pra comparar 90/28 com 60/36, que é a comparação que orienta o ajuste.
         deb = os.getenv("DEBOUNCE_MIN") or None
         teto = os.getenv("TETO_DIARIO") or None
+        if not (deb and teto):
+            try:
+                sys.path.insert(0, f"{ROOT}/scripts/cos_agent")
+                from run import DEBOUNCE_MIN as _d, TETO_DIARIO as _t
+                deb, teto = deb or _d, teto or _t
+            except Exception:
+                pass          # sem calibração é melhor que veredito não gravado
         cur.execute("""
             INSERT INTO cos_portao_veredito
               (run_date, project_id, frente, portao, veredito, nota, motor,
