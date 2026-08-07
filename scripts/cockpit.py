@@ -156,6 +156,18 @@ def coletar(cur, hoje):
     """)
     d["checkg"] = cur.fetchall()
 
+    # --- O PORTÃO DA CAMADA --------------------------------------------------
+    # A peça que faltava (07/08, passo 3 do caminho C). Este cockpit nasceu de
+    # manhã lendo tasks, agenda e WhatsApp — o CHÃO — e o julgamento do agente,
+    # que roda 14×/dia e tem 75% de precisão medida, só aparecia na tonIAH. Com
+    # o contrato novo (esta é a única superfície que responde "o que precisa de
+    # mim hoje"), deixar o portão de fora seria eleger a superfície e tirar dela
+    # justamente o que a camada produz de mais valioso: o porquê.
+    cur.execute("""SELECT run_at, payload,
+                          EXTRACT(EPOCH FROM (now() - run_at))/3600 AS horas
+                     FROM cos_daily_review ORDER BY run_at DESC LIMIT 1""")
+    d["review"] = cur.fetchone()
+
     # --- FRESCOR DOS CANOS ---------------------------------------------------
     # A razão de existir desta faixa: por 3 meses o INTEL julgou sobre agenda de
     # até 24h atrás e NENHUMA superfície mostrava isso. Uma página que se diz ao
@@ -296,6 +308,8 @@ section { margin-bottom:34px; }
 .chip { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; padding:2px 8px; border-radius:999px; background:var(--paper); border:1px solid var(--panel-edge); color:var(--ink-soft); white-space:nowrap; }
 .chip.ato { background:var(--warn-bg); border-color:var(--warn); color:var(--warn); text-transform:none; letter-spacing:0; font-weight:600; }
 .chip.cos { background:var(--calm-bg); border-color:var(--calm); color:var(--calm); }
+  .chip.velho { background:var(--crit-bg); border-color:var(--crit); color:var(--crit); }
+  .why.cos-diz { border-left:2px solid var(--calm); padding-left:8px; margin-top:6px; }
 .due { font-family:var(--mono); font-size:11px; color:var(--ink-soft); white-space:nowrap; }
 .due.over { color:var(--crit); font-weight:600; }
 .prio { font-family:var(--mono); font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:6px; background:var(--calm-bg); color:var(--calm); }
@@ -535,6 +549,59 @@ def render(d, cur_cos, cos_em):
         <div class="aside"><span class="due">agenda</span></div>
       </div>"""
 
+    # --- O PORTÃO (julgamento da camada) -------------------------------------
+    # Idade POR FRENTE, não da rodada: o `fundir` do agente preserva a frente
+    # não re-julgada marcando `_meta.herdado`, então uma rodada de 10 minutos
+    # atrás pode carregar um julgamento de anteontem. Mostrar a idade da rodada
+    # seria vender foto velha como atual — exatamente o defeito que a tonIAH
+    # tinha e que consertei hoje.
+    portao_html, portao_aviso, n_portao = "", "", 0
+    rev = d.get("review")
+    if rev:
+        pay = rev["payload"]
+        if isinstance(pay, str):
+            try:
+                pay = json.loads(pay)
+            except ValueError:
+                pay = {}
+        horas_rev = float(rev["horas"]) if rev["horas"] is not None else None
+        if horas_rev is not None and horas_rev > 20:
+            portao_aviso = (
+                f'<div class="alerta-cano">A camada não julga há <b>{horas_rev/24:.0f} dia(s)</b>. '
+                f'O portão abaixo é o último que ela produziu — trate como histórico, não como hoje. '
+                f'O resto desta página (agenda, tarefas, WhatsApp) não depende dela.</div>')
+        linhas = []
+        for f in (pay.get("frentes") or []):
+            pv = f.get("precisa_de_voce") or {}
+            if not pv.get("sim"):
+                continue
+            c = cos(f"frente:{f.get('project_id')}")
+            if c.get("ocultar"):
+                continue
+            meta = f.get("_meta") or {}
+            idade = ""
+            if meta.get("julgado_em"):
+                try:
+                    q = datetime.fromisoformat(str(meta["julgado_em"]).replace("Z", "+00:00"))
+                    h = (datetime.now(timezone.utc) - q).total_seconds() / 3600
+                    idade = (f'<span class="chip">julgado há {h:.0f}h</span>' if h < 24
+                             else f'<span class="chip velho">julgado há {h/24:.0f}d</span>')
+                except Exception:
+                    pass
+            n_portao += 1
+            linhas.append(f"""<div class="item p-crit">
+        <div class="stripe"></div>
+        <div class="body">
+          <div class="title">{esc(f.get('frente'))}</div>
+          <div class="why">{esc(pv.get('o_que') or pv.get('pergunta') or '')}</div>
+          {f'<div class="why cos-diz">{esc(c["porque"])}</div>' if c.get("porque") else ''}
+          <div class="meta">{idade}{'<span class="chip cos">CoS</span>' if c.get('porque') else ''}
+            <span class="id">#{f.get('project_id')}</span></div>
+        </div>
+        <div class="aside"><span class="due">portão</span></div>
+      </div>""")
+        portao_html = "".join(linhas)
+
     # --- HOJE ---------------------------------------------------------------
     ev_hoje = [e for e in d["eventos"] if e["start_datetime"].date() == hoje]
     hoje_html = "".join([evento(e) for e in ev_hoje]
@@ -681,12 +748,22 @@ def render(d, cur_cos, cos_em):
   {nota}
 
   <div class="summary">
+    <div class="stat{' hot' if n_portao else ''}"><div class="n">{n_portao}</div><div class="l">No portão</div></div>
     <div class="stat{' hot' if n_hoje else ''}"><div class="n">{n_hoje}</div><div class="l">Hoje</div></div>
     <div class="stat"><div class="n">{len(sep['semana']) + len([e for e in d['eventos'] if e['start_datetime'].date() > hoje])}</div><div class="l">Próximos 8 dias</div></div>
     <div class="stat{' hot' if sep['vencidas'] else ''}"><div class="n">{len(sep['vencidas'])}</div><div class="l">Vencidas</div></div>
     <div class="stat"><div class="n">{len(d['checkg'])}</div><div class="l">Chegou no WA</div></div>
     <div class="stat"><div class="n">{len(sep['aguardando'])}</div><div class="l">Aguardando terceiro</div></div>
   </div>
+
+  {portao_aviso}
+  {f'''<section data-annot>
+    <div class="head"><h2>O portão</h2><div class="rule"></div><span class="tag">julgamento da camada · {n_portao}</span></div>
+    <p class="lead">O que a camada concluiu que precisa de você — com o porquê dela. É a única
+    parte desta página que é <b>juízo</b>, não fato: precisão medida de 75%, então leia como
+    recomendação forte, não como ordem.</p>
+    <div class="items">{portao_html}</div>
+  </section>''' if portao_html else ''}
 
   <section data-annot>
     <div class="head"><h2>Hoje</h2><div class="rule"></div><span class="tag">agenda + vence hoje</span></div>
