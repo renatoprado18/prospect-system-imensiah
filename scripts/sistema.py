@@ -241,6 +241,25 @@ def coletar(cur):
                    FROM cos_portao_veredito GROUP BY 1""")
     d["placar"] = {r["frente"]: (r["certas"], r["n"]) for r in cur.fetchall()}
 
+    # O AVALIADO VIRA ESTATÍSTICA (07/08, pedido do Renato: "o que eu já avaliei
+    # deve virar estatística e despoluir a página"). Antes, portão avaliado
+    # continuava ocupando a tela — primeiro pedindo veredito de novo, depois com
+    # um selo. Nenhum dos dois é o que ele precisa ver: o que ele já respondeu é
+    # PLACAR, e o que resta é FILA. Misturar os dois faz a fila parecer maior do
+    # que é e o placar não aparecer em lugar nenhum.
+    cur.execute("""SELECT veredito, count(*) AS n,
+                          count(*) FILTER (WHERE run_date > CURRENT_DATE - 7) AS na_semana
+                     FROM cos_portao_veredito GROUP BY 1""")
+    d["stats"] = {r["veredito"]: r for r in cur.fetchall()}
+    cur.execute("""SELECT min(run_date) AS de, max(run_date) AS ate, count(*) AS n
+                     FROM cos_portao_veredito""")
+    d["stats_janela"] = cur.fetchone()
+    # Os comentários recentes: é o que a contagem não diz. Erros primeiro.
+    cur.execute("""SELECT run_date, frente, veredito, nota FROM cos_portao_veredito
+                    WHERE nota IS NOT NULL AND btrim(nota) <> ''
+                    ORDER BY (veredito <> 'certa') DESC, run_date DESC LIMIT 6""")
+    d["stats_notas"] = cur.fetchall()
+
     # 3b. PORTÕES AGUARDANDO VEREDITO — 7 dias, não só a última rodada.
     #
     # Por que existe (06/08): a página mostrava o raciocínio da ÚLTIMA rodada e
@@ -442,21 +461,14 @@ pintar();
 ROTULO_VEREDITO = {"certa": "Certa", "errada": "Cobrou à toa", "passou": "Deixou passar"}
 
 
-def _bloco_veredito(d, dia, project_id, frente):
-    """Os botões — ou, se já respondido, o que ele respondeu.
+def ja_avaliado(d, dia, project_id):
+    """Ele já respondeu sobre este portão? Então ele não volta pra tela."""
+    return (dia, project_id) in (d.get("vereditos") or {})
 
-    Perguntar de novo o que já foi respondido é o jeito mais rápido de fazer
-    alguém parar de responder. E some com o campo de nota: a nota já está
-    gravada, e um textarea vazio ao lado de "você já avaliou" sugere que se
-    perdeu.
-    """
-    ja = (d.get("vereditos") or {}).get((dia, project_id))
-    if ja:
-        nota = (f'<span class="v-nota-lida">"{esc(ja["nota"])}"</span>'
-                if ja.get("nota") else "")
-        return (f'<div class="veredito veredito--feito">'
-                f'<span class="v-ok">✓ você já avaliou:</span> '
-                f'<b>{ROTULO_VEREDITO.get(ja["veredito"], esc(ja["veredito"]))}</b>{nota}</div>')
+
+def _bloco_veredito(d, dia, project_id, frente):
+    """Os botões. Só existe pra quem AINDA não foi avaliado — quem já foi nem
+    chega aqui: sai da página inteira e vira linha no placar."""
     return f"""<div class="veredito" data-uid="{esc(dia)}|{project_id}|{esc(frente)}">
     <span class="v-t">o pedido acima devia ter chegado a você?</span>
     <button type="button" data-v="certa">Certa</button>
@@ -574,7 +586,14 @@ def render(d):
 
     # --- raciocínio
     cards = []
-    for f in frentes[:6]:
+    # Só o que AINDA precisa de veredito ocupa a tela. Os `[:6]` continuam sendo
+    # o corte de exibição, mas aplicado DEPOIS de tirar os avaliados — senão as
+    # seis vagas se enchiam de portões já respondidos e os novos nunca apareciam.
+    dia_rodada = d["rodada"]["run_date"] if d["rodada"] else None
+    frentes_abertas = [f for f in frentes
+                       if not ja_avaliado(d, dia_rodada, f.get("project_id"))]
+    avaliadas_na_rodada = len(frentes) - len(frentes_abertas)
+    for f in frentes_abertas[:6]:
         q = analisar(f)
         cert, tot = d["placar"].get(f.get("frente"), (None, 0))
         pct = (100 * cert // tot) if tot else None
@@ -626,7 +645,7 @@ def render(d):
     # Fora os que JÁ têm card acima: uid repetido na página faria o botão
     # "Copiar" emitir a mesma linha duas vezes e o contador mentir pra cima.
     ja_na_pagina = {f"{d['rodada']['run_date']}|{f.get('project_id')}|{f.get('frente')}"
-                    for f in frentes[:6]} if d["rodada"] else set()
+                    for f in frentes_abertas[:6]} if d["rodada"] else set()
     pendentes = []
     for pd in d["pendentes"]:
         if f"{pd['dia']}|{pd['project_id']}|{pd['frente']}" in ja_na_pagina:
@@ -663,6 +682,38 @@ def render(d):
     elif tri.get("falhas"):
         bloco_falhas = (f'<div class="alerta"><b>{tri["falhas"]} falha(s)</b> — sem detalhe gravado '
                         f'(rodada anterior ao fix de 06/08; a próxima já traz o motivo).</div>')
+
+    # --- placar do que ele já avaliou -----------------------------------------
+    st = d.get("stats") or {}
+    n_certa = (st.get("certa") or {}).get("n", 0)
+    n_errada = (st.get("errada") or {}).get("n", 0)
+    n_passou = (st.get("passou") or {}).get("n", 0)
+    n_tot = n_certa + n_errada + n_passou
+    prec = (100 * n_certa // n_tot) if n_tot else None
+    jan = d.get("stats_janela") or {}
+    # O gate é explícito na tela porque é a pergunta que este placar existe pra
+    # responder: dá pra executar o caminho A ou não? Deixá-lo implícito faz o
+    # número virar vaidade.
+    bate = prec is not None and prec >= 70 and n_tot >= 15
+    notas_html = "".join(
+        f'<li><b>{ROTULO_VEREDITO.get(r["veredito"], r["veredito"])}</b> · '
+        f'{esc(r["frente"])} <span class="q-nota">"{esc(r["nota"])}"</span></li>'
+        for r in (d.get("stats_notas") or []))
+    placar_html = f"""<div class="resumo">
+    {tile(n_tot, 'avaliados', 'ink')}
+    {tile(n_certa, 'certas', 'calm')}
+    {tile(n_errada, 'cobrou à toa', 'crit' if n_errada else 'calm')}
+    {tile(n_passou, 'deixou passar', 'crit' if n_passou else 'calm')}
+    {tile(f'{prec}%' if prec is not None else '—', 'precisão', 'calm' if bate else 'warn')}
+  </div>
+  <p class="gate {'gate--ok' if bate else ''}">{
+    f'✅ <b>Gate do caminho A batido</b> — {prec}% em {n_tot} portões (piso: ≥70% em ≥15). '
+    'A consolidação dos cockpits deixou de estar bloqueada por falta de número.'
+    if bate else
+    f'Gate do caminho A: <b>≥70% em ≥15 portões</b> — hoje {prec if prec is not None else "—"}% '
+    f'em {n_tot}. Faltam vereditos, não código.'
+  }{f' Janela: {jan["de"]:%d/%m}–{jan["ate"]:%d/%m}.' if jan.get("de") else ''}</p>
+  {f'<details class="dobra-q"><summary>o que você escreveu ao marcar — {len(d.get("stats_notas") or [])}</summary><ul class="q-notas">{notas_html}</ul></details>' if notas_html else ''}"""
 
     modelo_ok = "🟢" in d["modelo_txt"]
     return f"""<!doctype html>
@@ -754,9 +805,14 @@ ul.nao li{{color:var(--warn)}}
 .veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 .veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
 .raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
-.veredito--feito{{color:var(--calm);font-size:.82rem;align-items:baseline}}
-.v-ok{{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}}
-.v-nota-lida{{flex-basis:100%;color:var(--ink-soft);font-style:italic;margin-top:.2rem}}
+.gate{{font-size:.86rem;margin:.5rem 0 0;padding:.55rem .75rem;border-radius:4px;
+  background:var(--warn-bg);border-left:3px solid var(--warn)}}
+.gate--ok{{background:var(--calm-bg);border-left-color:var(--calm)}}
+.dobra-q{{margin:.6rem 0 0}}
+.dobra-q summary{{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--brass);font-weight:600;cursor:pointer}}
+.q-notas{{margin:.5rem 0 0;padding-left:1.2rem;font-size:.84rem;color:var(--ink-soft)}}
+.q-notas li{{margin-bottom:.3rem}}
+.q-nota{{font-style:italic}}
 .aprendeu{{margin:.1rem 0 .6rem;padding:.5rem .65rem;background:var(--calm-bg);border-left:3px solid var(--calm);border-radius:3px}}
 .ap-t{{display:block;font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--calm);font-weight:600;margin-bottom:.25rem}}
 .aprendeu ul{{margin:0;padding-left:1.1rem;font-size:.84rem;color:var(--ink)}}
@@ -821,7 +877,13 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   <tbody>{''.join(cob) or '<tr><td colspan="4">(Evolution não respondeu)</td></tr>'}</tbody></table>
   <p class="nota">O que falta é sticker/reaction/mídia sem texto — não entra nem ao vivo.</p>
 
-  <h2>4 · Raciocínio do agente</h2>
+  <h2>4 · O que você já avaliou</h2>
+  <p class="sub-h2">O portão avaliado sai da fila e vira número aqui. É o único juízo de
+  qualidade que não é o sistema se auto-avaliando — e é o que abre (ou não) o gate do
+  caminho A.</p>
+  {placar_html}
+
+  <h2>5 · Raciocínio do agente <span class="h2-sub">— o que ainda falta avaliar</span></h2>
   <p class="sub-h2"><b>Três leituras, não uma.</b> (a) <b>precisão histórica</b> — do placar que
   VOCÊ preencheu, único juízo que não é o sistema se auto-avaliando; (b) <b>contexto tocado</b> —
   quais das 8 fontes ele consultou, e <b class="risco">quais ignorou</b>: julgar sem olhar o
@@ -845,7 +907,7 @@ pre{{background:var(--panel);border:1px solid var(--panel-edge);border-radius:4p
   </div>
   <textarea id="fb-saida" rows="6" readonly></textarea>
 
-  <h2>5 · O que rodou nas últimas 6h</h2>
+  <h2>6 · O que rodou nas últimas 6h</h2>
   <table><thead><tr><th>job</th><th class="n">runs</th><th class="n">erros</th><th class="n">último</th></tr></thead>
   <tbody>{''.join(crons)}</tbody></table>
 </div>@@JS@@</body></html>""".replace("@@JS@@", JS_FEEDBACK)
