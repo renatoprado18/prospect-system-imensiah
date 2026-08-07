@@ -656,6 +656,21 @@ fontes ele tocou e quais ignorou**, e quantos ids/datas citou.
 ⚠️ A detecção de fonte é heurística (lê a narrativa do próprio agente): levanta a
 pergunta, não fecha o veredito.
 
+**Comentário por portão (07/08)** — cada julgamento dos últimos 7 dias tem, além
+do rótulo (Certa / Cobrou à toa / Deixou passar), um campo de texto: *por quê?*.
+Salva sozinho no `localStorage`, sai no "Copiar para o Claude" como
+`| NOTA: ...` e o `--gravar` persiste em `cos_portao_veredito.nota`. O ciclo só
+fecha porque **o `pdca.py` lê essas notas** (bloco 5b, erros primeiro): o placar
+diz *quantos* erraram, o comentário diz *o quê* mudar — sem ele o PDCA vê a
+precisão cair sem saber a causa, que foi como a calibração de 03/08 derrubou a
+precisão de 70% para 33%. Comentário sem rótulo é avisado e **não** gravado:
+entraria no placar como acerto ou erro.
+
+**Sweep do RACI na tabela de canos (07/08)** — mostra a fila e, sobretudo, a
+idade do último processamento. Veio pra cá porque o monitor mandava WhatsApp
+dizendo "o sweep pode ter travado" sobre um sweep saudável: fila grande com
+movimento é backlog histórico, não defeito.
+
     ./scripts/sistema.py
 
 ### `scripts/cockpit.py` — cockpit de frentes e tarefas (07/08/2026)

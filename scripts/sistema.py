@@ -343,10 +343,27 @@ function pintar() {
       b.setAttribute("aria-pressed", String(!!e && e.v === b.dataset.v)));
     const chk = v.querySelector("[data-raso]");
     if (chk) chk.checked = !!(e && e.raso);
+    const ta = v.querySelector(".v-nota");
+    // Só escreve na textarea se ela não estiver em foco: sobrescrever o campo
+    // enquanto ele digita apaga a frase no meio.
+    if (ta && document.activeElement !== ta) ta.value = (e && e.nota) || "";
     if (e && e.v) n++;
   });
   document.getElementById("fb-n").textContent = n;
 }
+
+// O comentário salva sozinho, sem botão. Um "salvar" a mais entre pensar e
+// registrar é onde o aprendizado se perde.
+document.querySelectorAll(".v-nota").forEach(ta => {
+  ta.addEventListener("input", () => {
+    const uid = ta.closest(".veredito").dataset.uid;
+    if (!salvo[uid]) salvo[uid] = { v: "", raso: false };
+    salvo[uid].nota = ta.value;
+    localStorage.setItem(CHAVE, JSON.stringify(salvo));
+    document.getElementById("fb-n").textContent =
+      Object.values(salvo).filter(x => x && (x.v || (x.nota || "").trim())).length;
+  });
+});
 
 document.querySelectorAll(".veredito button[data-v]").forEach(b => {
   b.addEventListener("click", () => {
@@ -377,11 +394,16 @@ document.getElementById("fb-copiar").addEventListener("click", async () => {
   let c = 0;
   document.querySelectorAll(".veredito").forEach(v => {
     const e = salvo[v.dataset.uid];
-    if (!e || !e.v) return;
+    // Comentário sem veredito TAMBÉM sai: às vezes o julgamento é "não sei
+    // dizer se acertou, mas o portão veio no momento errado" — isso é
+    // aprendizado, e exigir um rótulo pra registrá-lo perde a observação.
+    if (!e || (!e.v && !(e.nota || "").trim())) return;
     c++;
     const p = v.dataset.uid.split("|");
-    const rot = { certa: "CERTA", errada: "COBROU A TOA", passou: "DEIXOU PASSAR" }[e.v];
-    L.push(p[0] + " #" + p[1] + " " + p[2] + " — " + rot + (e.raso ? " | RASO: julgou sem olhar tudo" : ""));
+    const rot = e.v ? { certa: "CERTA", errada: "COBROU A TOA", passou: "DEIXOU PASSAR" }[e.v] : "SEM VEREDITO";
+    L.push(p[0] + " #" + p[1] + " " + p[2] + " — " + rot
+           + (e.raso ? " | RASO: julgou sem olhar tudo" : "")
+           + ((e.nota || "").trim() ? " | NOTA: " + e.nota.trim().replace(/\s+/g, " ") : ""));
   });
   const txt = L.join("\n"), out = document.getElementById("fb-saida");
   const btn = document.getElementById("fb-copiar");
@@ -548,6 +570,7 @@ def render(d):
     <button type="button" data-v="errada">Cobrou à toa</button>
     <button type="button" data-v="passou">Deixou passar</button>
     <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
+    <textarea class="v-nota" rows="1" placeholder="por quê? — o motivo é o que vira aprendizado no PDCA"></textarea>
   </div>
 </article>""")
 
@@ -571,6 +594,7 @@ def render(d):
     <button type="button" data-v="errada">Cobrou à toa</button>
     <button type="button" data-v="passou">Deixou passar</button>
     <label class="raso"><input type="checkbox" data-raso> julgou sem olhar tudo</label>
+    <textarea class="v-nota" rows="1" placeholder="por quê? — o motivo é o que vira aprendizado no PDCA"></textarea>
   </div>
 </article>""")
 
@@ -683,6 +707,11 @@ ul.nao li{{color:var(--warn)}}
 .veredito button:focus-visible{{outline:2px solid var(--brass);outline-offset:2px}}
 .veredito button[aria-pressed="true"]{{background:var(--brass);border-color:var(--brass);color:var(--panel);font-weight:600}}
 .raso{{font-size:.74rem;color:var(--ink-soft);cursor:pointer;display:inline-flex;align-items:center;gap:.25rem}}
+.v-nota{{flex-basis:100%;margin-top:.45rem;font:inherit;font-size:.8rem;line-height:1.45;padding:.35rem .5rem;
+  border:1px dashed var(--panel-edge);border-radius:3px;background:var(--paper);color:var(--ink);
+  resize:vertical;min-height:1.9rem;field-sizing:content}}
+.v-nota:focus{{outline:2px solid var(--brass-soft);outline-offset:1px;border-style:solid}}
+.v-nota::placeholder{{color:var(--ink-faint)}}
 .barra-fb{{position:sticky;bottom:0;margin-top:1.4rem;padding:.8rem 1rem;background:var(--panel);border:1px solid var(--panel-edge);border-radius:4px;display:flex;gap:1rem;justify-content:space-between;align-items:center;flex-wrap:wrap;box-shadow:0 -2px 14px rgba(35,33,28,.08)}}
 .barra-fb button{{font:inherit;font-size:.79rem;padding:.42rem .95rem;cursor:pointer;border-radius:2px;border:1px solid var(--brass);background:var(--brass);color:var(--panel);font-weight:600}}
 .barra-fb button.ghost{{background:transparent;color:var(--ink-faint);border-color:var(--panel-edge);font-weight:400}}
@@ -778,13 +807,23 @@ def gravar(texto: str) -> int:
     """Aplica o veredito colado da página em `cos_portao_veredito`.
 
     Formato de cada linha (o botão "Copiar para o Claude" produz assim):
-        2026-08-06 #48 Luminosità — CERTA | RASO: julgou sem olhar tudo
+        2026-08-06 #48 Luminosità — CERTA | RASO: julgou sem olhar tudo | NOTA: ...
 
     O "RASO" vai pra coluna `nota` em vez de virar veredito novo: o CHECK da
     tabela aceita só certa/errada/passou, e mexer nele exigiria migration pra
     guardar um sinal que é ORTOGONAL ao acerto. Um portão pode estar CERTO e
     ainda assim ter sido julgado sem olhar tudo — inclusive é o caso mais
     perigoso, porque acertou por sorte.
+
+    A NOTA (07/08, pedido do Renato: "quero comentar os portões dos últimos 7
+    dias pra gerar aprendizado") divide a mesma coluna e vem PRIMEIRO nela: o
+    rótulo diz QUANTOS erraram, o comentário diz POR QUÊ — e sem o porquê o PDCA
+    vê a precisão cair sem saber o que mudar. Fica por último NA LINHA porque o
+    texto livre pode conter `|`, e qualquer campo depois dela seria engolido.
+
+    Linha com comentário e SEM rótulo é lida e avisada, mas não gravada:
+    entraria no placar como acerto ou erro, e inventar veredito é pior que
+    perder a observação — que segue no clipboard dele.
     """
     linhas = [l.strip() for l in texto.splitlines()
               if re.match(r"^\d{4}-\d{2}-\d{2}\s+#\d+", l.strip())]
@@ -795,24 +834,52 @@ def gravar(texto: str) -> int:
     cur = conn.cursor()
     ok = raso_n = 0
     for l in linhas:
-        m = re.match(r"^(\d{4}-\d{2}-\d{2})\s+#(\d+)\s+(.+?)\s+—\s+([A-ZÀ-Ú ]+?)(?:\s*\|\s*RASO:(.*))?$", l)
+        # A NOTA vem por último de propósito: o texto livre do Renato pode
+        # conter `|`, e qualquer campo depois dela seria comido pelo comentário.
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})\s+#(\d+)\s+(.+?)\s+—\s+([A-ZÀ-Ú ]+?)"
+                     r"(?:\s*\|\s*RASO:[^|]*)?(?:\s*\|\s*NOTA:\s*(.*))?$", l)
         if not m:
             print(f"  ? não parseou: {l[:70]}")
             continue
-        dia, pid, frente, rot, raso = m.groups()
+        dia, pid, frente, rot, comentario = m.groups()
+        raso = "| RASO:" in l
         ver = ROTULOS.get(rot.strip())
-        if not ver:
+        if not ver and rot.strip() != "SEM VEREDITO":
             print(f"  ? veredito desconhecido '{rot.strip()}'")
             continue
-        nota = "julgou sem olhar todo o contexto disponível" if raso is not None else None
+        # Comentário e RASO cabem na mesma coluna, mas o comentário vem PRIMEIRO:
+        # é o que a pessoa escreveu, e é ele que se lê no PDCA.
+        partes = [(comentario or "").strip()] if (comentario or "").strip() else []
+        if raso:
+            partes.append("[julgou sem olhar todo o contexto disponível]")
+        nota = " ".join(partes) or None
+        if not ver:
+            # Sem rótulo, mas com observação: registrar mesmo assim seria mentir
+            # no placar (entraria como acerto ou erro). Sai como aviso pra não
+            # sumir em silêncio — o texto está no clipboard dele.
+            print(f"  ! sem veredito, só comentário — não entra no placar: "
+                  f"{frente.strip()[:40]} — {nota[:60] if nota else ''}")
+            continue
         # portao = a frente + o dia: é o que identifica o julgamento avaliado
+        # A calibração vigente vai junto: sem ela a linha não diz SOB QUAIS
+        # parâmetros o portão foi julgado, e o PDCA agrupa a precisão por
+        # deb/teto justamente pra comparar calibrações. Ficava NULL — e o
+        # `:3d` em None derrubava o bloco inteiro do relatório.
+        deb = os.getenv("DEBOUNCE_MIN") or None
+        teto = os.getenv("TETO_DIARIO") or None
         cur.execute("""
             INSERT INTO cos_portao_veredito
-              (run_date, project_id, frente, portao, veredito, nota, motor)
-            VALUES (%s,%s,%s,%s,%s,%s,'agente_local')
+              (run_date, project_id, frente, portao, veredito, nota, motor,
+               debounce_min, teto_diario)
+            VALUES (%s,%s,%s,%s,%s,%s,'agente_local',%s,%s)
             ON CONFLICT (run_date, frente, portao)
-            DO UPDATE SET veredito = EXCLUDED.veredito, nota = EXCLUDED.nota
-        """, (dia, int(pid), frente.strip(), f"julgamento da rodada de {dia}", ver, nota))
+            DO UPDATE SET veredito = EXCLUDED.veredito, nota = EXCLUDED.nota,
+                          debounce_min = COALESCE(cos_portao_veredito.debounce_min,
+                                                  EXCLUDED.debounce_min),
+                          teto_diario  = COALESCE(cos_portao_veredito.teto_diario,
+                                                  EXCLUDED.teto_diario)
+        """, (dia, int(pid), frente.strip(), f"julgamento da rodada de {dia}", ver, nota,
+              int(deb) if deb else None, int(teto) if teto else None))
         ok += 1
         raso_n += 1 if nota else 0
     conn.commit()

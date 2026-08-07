@@ -283,6 +283,18 @@ def bloco_precisao(runs: list[dict]) -> None:
                 ORDER BY 3 DESC, 2 DESC
             """)
             reincidentes = cur.fetchall()
+            # O PORQUÊ, que é onde o aprendizado mora (07/08). O placar diz
+            # QUANTOS erraram; só o comentário do Renato diz POR QUE — e sem
+            # isso o PDCA sabe que a precisão caiu mas não o que mudar. Os
+            # erros vêm primeiro: é onde a correção tem retorno.
+            cur.execute("""
+                SELECT run_date, frente, veredito, nota
+                  FROM cos_portao_veredito
+                 WHERE nota IS NOT NULL AND btrim(nota) <> ''
+                 ORDER BY (veredito <> 'certa') DESC, run_date DESC
+                 LIMIT 12
+            """)
+            comentarios = cur.fetchall()
     except Exception as e:
         print(f"   (sem leitura da tabela: {e})")
         return
@@ -300,7 +312,15 @@ def bloco_precisao(runs: list[dict]) -> None:
         n, certas = r["n"], r["certas"]
         pct = 100.0 * certas / n if n else 0
         cor = VERDE if pct >= 70 else (AMARELO if pct >= 55 else VERMELHO)
-        print(f"   {r['debounce_min']:3d}/{r['teto_diario']:<3d}    {n:5d}   {certas:5d}"
+        # `debounce_min`/`teto_diario` podem ser NULL: o `--gravar` do
+        # `sistema.py` não os preenchia, e formatar None com `:3d` derrubava o
+        # bloco INTEIRO — o placar de precisão, que é o gate da decisão dos
+        # cockpits, não saía desde 06/08. Um relatório que morre no primeiro
+        # None não mede nada; calibração desconhecida vira "?/?" e a linha vive.
+        calib = (f"{r['debounce_min']:3d}/{r['teto_diario']:<3d}"
+                 if r["debounce_min"] is not None and r["teto_diario"] is not None
+                 else "  ?/?  ")
+        print(f"   {calib}    {n:5d}   {certas:5d}"
               f"  {r['erradas']:6d}  {r['passou']:5d}"
               f"   {cor} {pct:3.0f}%   {r['de']:%d/%m}-{r['ate']:%d/%m}")
 
@@ -308,6 +328,17 @@ def bloco_precisao(runs: list[dict]) -> None:
         print("\n   FRENTES QUE ERRARAM 2+ VEZES (candidatas a debounce próprio ou saída da fila):")
         for r in reincidentes:
             print(f"      {r['frente'][:44]:46s} {r['erradas']} erro(s) em {r['n']}")
+
+    if comentarios:
+        print("\n   O PORQUÊ — o que o Renato escreveu ao marcar (erros primeiro):")
+        for r in comentarios:
+            marca = {"certa": "✓", "errada": "✗", "passou": "○"}.get(r["veredito"], "·")
+            print(f"      {marca} {r['run_date']:%d/%m} {r['frente'][:34]:36s} {r['nota'][:96]}")
+        print("      ↑ é daqui que sai o ajuste. Contagem diz QUANTO; isto diz O QUÊ.")
+    else:
+        print("\n   (nenhum comentário ainda — os vereditos têm rótulo mas não têm motivo.")
+        print("    O campo está no `sistema.html`, embaixo de cada portão; sem ele o PDCA")
+        print("    enxerga a precisão cair sem saber o que mudar.)")
 
     print("\n   REGRA DE DECISÃO (escrita antes da próxima medição):")
     print("      precisão < 55% em ≥8 portões  → REVERTER o último ajuste de parâmetro.")
