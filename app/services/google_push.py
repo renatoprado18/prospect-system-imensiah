@@ -56,8 +56,61 @@ def _chave_tel(v: str) -> str:
     return d[-8:] if len(d) >= 10 else ""
 
 
+async def contas_conectadas() -> List[str]:
+    """Todas as contas Google conectadas — o dedup precisa das DUAS.
+
+    O Renato tem duas agendas (profissional ~5.900 pessoas, pessoal ~7.350) e a
+    pessoa pode estar em qualquer uma. Indexar só a conta de destino responde
+    "não está lá" sobre metade da fonte.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT email FROM google_accounts ORDER BY email")
+        return [r["email"] for r in cur.fetchall()]
+
+
+async def indice_telefones_todas(contas: Optional[List[str]] = None) -> Dict[str, Dict]:
+    """Índice de telefones de TODAS as agendas conectadas.
+
+    POR QUE ISTO EXISTE (07/08/2026, aprendido caro). O backfill das fichas
+    antigas criou **53 contatos na agenda profissional que já existiam na
+    pessoal** — 53 de 53, nenhuma criação legítima. O dedup respondia "não está
+    no Google" quando a pergunta certa era "não está NESTA agenda". O
+    `paridade_contatos.py` já carregava essa lição na própria docstring ("um
+    verificador que olha metade da fonte não mede — inventa", depois de acusar
+    3.598 ids quebrados falsos), e o caminho de escrita nunca a aplicou.
+
+    Aborta se QUALQUER conta falhar: índice parcial é pior que índice nenhum,
+    porque parece completo.
+    """
+    import integrations.google_contacts as gc
+    contas = contas or await contas_conectadas()
+    if not contas:
+        raise RuntimeError("nenhuma conta Google conectada — sem índice, não se cria nada")
+    idx: Dict[str, Dict] = {}
+    for conta in contas:
+        token = await gc.get_valid_token(conta)
+        if not token:
+            raise RuntimeError(f"sem token para {conta} — abortando: dedup contra parte "
+                               f"da fonte cria duplicata com cara de contato novo")
+        pessoas = await gc.fetch_all_contacts(token)
+        if pessoas is None:
+            raise RuntimeError(f"fetch_all_contacts devolveu None para {conta}")
+        for p in pessoas:
+            for pn in (p.get("phoneNumbers") or []):
+                k = _chave_tel(pn.get("value") or "")
+                if k:
+                    idx.setdefault(k, p)
+    return idx
+
+
 async def indice_telefones(token: str) -> Dict[str, Dict]:
-    """{últimos 8 dígitos → pessoa} de TODA a agenda do Google.
+    """{últimos 8 dígitos → pessoa} de UMA agenda do Google.
+
+    ⚠️ PREFIRA `indice_telefones_todas`. Esta função enxerga uma conta só, e foi
+    exatamente por isso que o backfill de 07/08 criou 53 duplicatas entre as duas
+    agendas do Renato. Continua aqui porque o dedup de uma agenda específica tem
+    uso legítimo — mas nunca como base para decidir CRIAR.
 
     ⚠️ POR QUE NÃO `people:searchContacts` (medido em 07/08, antes de escrever
     qualquer coisa lá): buscar pelo telefone da Daniela — que está na agenda —
@@ -115,6 +168,21 @@ async def push_contato(contact_id: int, conta_email: str, idx: Dict[str, Dict],
         return {"contact_id": contact_id, "nome": ficha["nome"], "status": "sem_telefone",
                 "nota": "sem telefone não há como deduplicar contra o Google — não sobe"}
 
+    # NENHUM número deduplicável (todos sem DDD) é caso diferente de "não achei".
+    # `_chave_tel` devolve "" abaixo de 10 dígitos, e sem esta guarda a busca no
+    # índice não encontra nada — por não ter o que procurar — e o fluxo segue
+    # direto para o `create`. "Não consegui olhar" viraria "não existe lá", que é
+    # precisamente como se fabrica a duplicata que este módulo nasceu pra evitar.
+    # São 39 fichas assim no CRM (medido em 07/08, ao preparar o backfill das
+    # antigas); com a janela de 30 dias do cron elas nunca tinham chegado aqui.
+    if not any(_chave_tel(n) for n in numeros):
+        return {"contact_id": contact_id, "nome": ficha["nome"],
+                "status": "sem_telefone_dedupavel",
+                "telefone": numeros[0],
+                "nota": "todos os telefones têm menos de 10 dígitos (sem DDD): dá pra ligar, "
+                        "não dá pra afirmar que é a mesma pessoa. Não sobe — criar às cegas "
+                        "duplicaria quem já está no Google com o número completo"}
+
     token = await gc.get_valid_token(conta_email)
     if not token:
         return {"contact_id": contact_id, "status": "sem_token", "conta": conta_email}
@@ -159,8 +227,11 @@ async def push_varios(ids: List[int], conta_email: str, aplicar: bool = False) -
     token = await gc.get_valid_token(conta_email)
     if not token:
         return {"conta": conta_email, "erro": "sem token"}
-    # O índice é montado UMA vez pro lote — e se falhar, nada sobe.
-    idx = await indice_telefones(token)
+    # O índice é montado UMA vez pro lote, sobre TODAS as agendas — e se falhar,
+    # nada sobe. `conta_email` diz só ONDE criar; quem responde "já existe?" tem
+    # que olhar as duas, senão cria na profissional quem já está na pessoal (53
+    # casos em 07/08).
+    idx = await indice_telefones_todas()
     out = []
     for cid in ids:
         try:
