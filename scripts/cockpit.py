@@ -160,6 +160,10 @@ def coletar(cur, hoje):
     """)
     d["checkg"] = cur.fetchall()
 
+    cur.execute("SELECT contact_id FROM users WHERE id = 1")
+    r = cur.fetchone()
+    d["eu_contact_id"] = r["contact_id"] if r else None
+
     # --- O PORTÃO DA CAMADA --------------------------------------------------
     # A peça que faltava (07/08, passo 3 do caminho C). Este cockpit nasceu de
     # manhã lendo tasks, agenda e WhatsApp — o CHÃO — e o julgamento do agente,
@@ -691,9 +695,16 @@ def render(d, cur_cos, cos_em):
     #
     # Ordena por quantidade: três coisas paradas com a mesma pessoa é uma
     # conversa só, e é a que rende mais.
+    # A ficha DELE não é um terceiro. Tarefa vinda do Fathom é ligada ao
+    # participante da reunião — que é ele — e caía aqui como "aguardando", ou
+    # seja, ele esperando ele mesmo. Mesma família do eco da camada: quando o
+    # sistema encontra o próprio dono do outro lado da relação, não é relação.
     por_pessoa = {}
     for t in sep["aguardando"]:
-        por_pessoa.setdefault(t["contato"] or "— sem pessoa na ficha", []).append(t)
+        quem = t["contato"]
+        if t.get("contact_id") == d.get("eu_contact_id"):
+            quem = "— sem terceiro definido"
+        por_pessoa.setdefault(quem or "— sem pessoa na ficha", []).append(t)
     aguard = ""
     for pessoa, ts in sorted(por_pessoa.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         # A ficha órfã não é detalhe de exibição: task sem `contact_id` não
