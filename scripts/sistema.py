@@ -191,6 +191,22 @@ def coletar(cur):
                    FROM webhook_audit""")
     d["webhook"] = cur.fetchone()
 
+    # SWEEP DO RACI como cano. Veio parar aqui em 07/08 porque estava no lugar
+    # errado: o monitor mandava WhatsApp ao Renato dizendo "o sweep pode ter
+    # travado" — sobre um sweep saudável (281 processadas em 7 dias, zero
+    # mensagem nova atrasada). O que existe é BACKLOG HISTÓRICO, que não é
+    # urgência e não se resolve pelo celular. Aqui a fila aparece como número e
+    # o que se vigia é o MOVIMENTO: idade do último processamento.
+    cur.execute("""SELECT count(*) FILTER (WHERE gm.raci_processed_at IS NULL) AS fila,
+                          max(gm.raci_processed_at) AS ultima
+                     FROM group_messages gm
+                     JOIN project_whatsapp_groups pwg
+                       ON pwg.group_jid = gm.group_jid AND pwg.ativo
+                    WHERE gm.from_me = FALSE AND gm.content IS NOT NULL
+                      AND length(gm.content) >= 12  -- MIN_TEXT_LEN_FOR_AI
+                 """)
+    d["raci_sweep"] = cur.fetchone()
+
     # cobertura contra a FONTE — o que teria pego os 7 defeitos
     d["cobertura"] = []
     base, key = env("EVOLUTION_API_URL"), env("EVOLUTION_API_KEY")
@@ -458,6 +474,21 @@ def render(d):
     linhas_cano.append(
         f'<tr><td><b>fatos</b> destilados <span class="sub">{d["fatos"]["verificados"]} verificados por você</span></td>'
         f'<td class="n">{d["fatos"]["n"]:,}</td><td class="n">—</td></tr>'.replace(",", "."))
+    # RACI: o que se vigia é o MOVIMENTO, não o tamanho da fila. Fila grande com
+    # sweep andando é backlog histórico (assunto de sessão); fila com sweep
+    # parado é defeito. Só o segundo fica vermelho.
+    rs = d["raci_sweep"]
+    idr = (ago.replace(tzinfo=None) - rs["ultima"]).total_seconds() / 3600 if rs["ultima"] else None
+    # `.replace` só no NÚMERO — aplicá-lo à linha inteira come a vírgula da
+    # frase e escreve "histórico. não atraso". O arquivo já avisava disso mais
+    # acima; cai-se nele mesmo assim.
+    fila_fmt = f"{rs['fila']:,}".replace(",", ".")
+    linhas_cano.append(
+        f'<tr><td><b>sweep do RACI</b> <span class="sub">{fila_fmt} na fila — histórico, '
+        f'não atraso: o fluxo do dia sai em dia</span></td>'
+        f'<td class="n">{fila_fmt}</td><td class="n">'
+        f'<span class="dot dot--{"calm" if idr is not None and idr < 12 else ("warn" if idr is not None and idr < 24 else "crit")}"></span>'
+        f'{("há %.0fh" % idr) if idr is not None else "nunca"}</td></tr>')
 
     # --- cobertura
     cob = []

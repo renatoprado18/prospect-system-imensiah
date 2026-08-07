@@ -15670,32 +15670,65 @@ async def playbook_proposal_dismiss(note_id: int, request: Request):
     return playbook_rules.dismiss_proposal(note_id)
 
 
-# ── Monitor de backlog nao-processado (fix 22/07) ────────────────────────────
-# Alerta quando group_messages com raci_processed_at IS NULL envelhecem, sinal de
-# que o sweep travou (como o stall das 5.548). Read-only. PENDENTE: wiring do cron
-# em vercel.json/Railway fica pro gate (ver relatorio).
+# ── Monitor de backlog nao-processado (fix 22/07 · recalibrado 07/08) ────────
+#
+# O QUE ELE MEDIA ERRADO. A versao original alertava quando EXISTIA mensagem
+# velha nao-processada, e chamava isso de "o sweep travou". Sao coisas
+# diferentes: medido em 07/08, o sweep estava PERFEITO — 281 processadas em 7
+# dias, ZERO mensagem nova deixada pra tras, 14 runs todos `success`. As ~4.000
+# paradas sao BACKLOG HISTORICO (a mais antiga de 21/12/2025), que nunca entrou
+# no sweep e nao some sozinho.
+#
+# Ou seja: um alarme que (a) dava diagnostico errado sobre um cano saudavel e
+# (b) ia disparar pra sempre, porque a condicao dele nunca deixa de ser
+# verdadeira. Alarme perpetuo nao ensina vigilancia — ensina a ignorar alarme.
+#
+# CRITERIO NOVO: stall e FLUXO PARADO — ha fila e nada foi processado nas
+# ultimas `stall_hours`. Com este criterio, hoje ele fica verde, e no dia em que
+# o sweep realmente parar ele acusa em horas, nao em dias.
+#
+# E NAO NOTIFICA MAIS O RENATO. Ele nao tem ação manual pra isso: nao se
+# desentope fila de sweep pelo WhatsApp. O destino certo e a superficie de
+# sessao (`~/cockpit/sistema.html` e a abertura do `/dev`), a mesma decisao que
+# ele tomou em 03/08 pro verificador de modelo — "divergencia de arquitetura nao
+# e urgencia, e assunto de sessao; WhatsApp pra isso vira ruido"
+# ([[feedback_notifications]], [[feedback_wa_silencio_produtor]]).
 @app.get("/api/cron/raci-unprocessed-monitor")
 @track_cron_run
 async def cron_raci_unprocessed_monitor(request: Request):
-    """Cron: alerta o Renato se ha msgs de grupo RACI paradas ha > stale_days.
-    Nao processa nada — so mede o backlog e notifica em caso de stall."""
+    """Cron: mede o backlog do sweep RACI e distingue fila de PARADA.
+
+    Read-only, e agora tambem mudo: devolve o veredito pra quem consulta (o
+    `sistema.html` e a abertura do `/dev`) em vez de mandar WhatsApp.
+    """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
     from services.raci_group_shadow import unprocessed_backlog_stats
     stale_days = int(request.query_params.get("stale_days", 3))
-    alert_threshold = int(request.query_params.get("threshold", 50))
+    stall_hours = int(request.query_params.get("stall_hours", 12))
     stats = unprocessed_backlog_stats(stale_days=stale_days)
-    if stats.get("stale", 0) >= alert_threshold:
-        try:
-            from services.intel_bot import send_intel_notification
-            await send_intel_notification(
-                f"⚠️ RACI sweep pode ter travado: {stats['stale']} msg(s) de grupo "
-                f"nao-processadas ha > {stale_days}d (backlog total {stats['unprocessed']}, "
-                f"mais antiga {stats.get('oldest')})."
-            )
-            stats["alerted"] = True
-        except Exception:
-            logging.exception("raci monitor: falha notificando Renato")
+
+    # A pergunta certa: com fila na mesa, o sweep ANDOU nas ultimas horas?
+    # A idade e calculada NO BANCO de proposito: `raci_processed_at` e naive e
+    # `now_utc()` e aware — subtrair os dois estoura, e `utcnow()` esta proibido
+    # pela convencao de TZ do projeto. O Postgres resolve sem ambiguidade.
+    with get_db() as _c:
+        _cur = _c.cursor()
+        _cur.execute("""SELECT max(raci_processed_at) AS ult,
+                               EXTRACT(EPOCH FROM (now() AT TIME ZONE 'UTC'
+                                       - max(raci_processed_at))) / 3600 AS horas
+                          FROM group_messages""")
+        _row = _cur.fetchone()
+    ultimo = (_row["ult"] if isinstance(_row, dict) else _row[0]) if _row else None
+    horas = float(_row["horas"] if isinstance(_row, dict) else _row[1]) if (_row and (_row["horas"] if isinstance(_row, dict) else _row[1]) is not None) else None
+
+    stats["ultimo_processamento"] = ultimo.isoformat() if ultimo else None
+    stats["horas_desde_ultimo"] = round(horas, 1) if horas is not None else None
+    stats["parado"] = bool(stats.get("unprocessed", 0) > 0
+                           and (horas is None or horas > stall_hours))
+    # O historico fica VISIVEL em vez de virar alarme: e trabalho de sessao
+    # decidir se processa em lote ou aposenta, nao urgencia de WhatsApp.
+    stats["backlog_historico"] = stats.get("stale", 0)
     return stats
 
 
