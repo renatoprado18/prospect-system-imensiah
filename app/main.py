@@ -10835,6 +10835,56 @@ async def api_check_g_ledger(request: Request, dias: int = 14):
     return medir(dias=dias)
 
 
+@app.get("/api/cron/push-google-contacts")
+@track_cron_run
+async def cron_push_google_contacts(request: Request):
+    """Sobe pro Google as fichas novas que ainda não estão lá.
+
+    POR QUE EXISTE (07/08/2026). O write-back nasceu de manhã e ficou sem
+    gatilho: função pronta, nenhum consumidor — o padrão que este dia inteiro
+    passou caçando. Sem ele, ficha criada aqui só chega ao celular do Renato se
+    alguém rodar o script à mão, e o número volta a aparecer sem nome no
+    WhatsApp — que é o problema original.
+
+    CONSERVADOR DE PROPÓSITO, porque escreve na agenda pessoal dele:
+      · só ficha com NOME de verdade — "Desconhecido +55…" não sobe, senão a
+        agenda enche de número sem identidade (o problema que se quer resolver);
+      · só ficha criada nos últimos 30 dias — o histórico inteiro é decisão dele,
+        não efeito colateral de um cron;
+      · TETO de 20 por rodada. Um lote grande escrevendo sozinho na agenda de
+        alguém é o tipo de coisa que se descobre tarde demais;
+      · o dedup é do `google_push`: índice das duas agendas antes de criar, e o
+        `resourceName` volta pra ficha na mesma execução. Sem isso a próxima
+        rodada recria tudo — a duplicata nasceria do próprio cron.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    limite = int(request.query_params.get("limite", 20))
+    dias = int(request.query_params.get("dias", 30))
+    from services.google_push import push_varios
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id FROM contacts
+             WHERE google_contact_id IS NULL
+               AND telefones IS NOT NULL AND jsonb_typeof(telefones) = 'array'
+               AND jsonb_array_length(telefones) > 0
+               AND nome IS NOT NULL AND nome NOT LIKE 'Desconhecido%%'
+               AND criado_em > now() - make_interval(days => %s)
+             ORDER BY criado_em DESC LIMIT %s
+        """, (dias, limite))
+        ids = [r["id"] for r in cur.fetchall()]
+    if not ids:
+        return {"status": "ok", "job": "push-google-contacts", "candidatas": 0}
+    r = await push_varios(ids, "renato@almeida-prado.com", aplicar=True)
+    por_status = {}
+    for x in r.get("resultados", []):
+        por_status[x["status"]] = por_status.get(x["status"], 0) + 1
+    return {"status": "ok", "job": "push-google-contacts",
+            "candidatas": len(ids), "por_status": por_status,
+            "contatos_no_google": r.get("contatos_no_google")}
+
+
 @app.get("/api/cos/task-atos/{task_id}")
 async def api_task_atos(request: Request, task_id: int, dias: int = 45):
     """"Ele já fez isso?" — atos posteriores à criação da task, das pessoas dela.

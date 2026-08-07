@@ -307,6 +307,13 @@ _SCHEDULER_JOBS = [
     ("run-daily-ai", "/api/cron/run-daily-ai", CronTrigger(hour=5, minute=15)),
     ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=5, minute=25)),
     ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),
+    # Write-back INTEL → Google Contacts (07/08/2026). Ficha criada aqui só
+    # chega ao celular do Renato pelo Google — sem este job, o número segue
+    # aparecendo sem nome no WhatsApp dele mesmo com a pessoa cadastrada. Roda
+    # 1×/dia porque escreve na agenda PESSOAL: cadência baixa é margem pra
+    # perceber estrago antes de ele virar 500 contatos. Teto de 20/rodada e só
+    # ficha com nome de verdade — ver o endpoint.
+    ("push-google-contacts", "/api/cron/push-google-contacts", CronTrigger(hour=6, minute=30)),
     ("sync-conselhoos-raci", "/api/cron/sync-conselhoos-raci", CronTrigger(hour=6, minute=0)),
     ("sync-whatsapp-history", "/api/cron/sync-whatsapp-history", CronTrigger(hour=6, minute=0)),
     ("index-drive-documents", "/api/cron/index-drive-documents", CronTrigger(hour=7, minute=0)),
