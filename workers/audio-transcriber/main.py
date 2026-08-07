@@ -309,11 +309,23 @@ _SCHEDULER_JOBS = [
     ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),
     # Write-back INTEL → Google Contacts (07/08/2026). Ficha criada aqui só
     # chega ao celular do Renato pelo Google — sem este job, o número segue
-    # aparecendo sem nome no WhatsApp dele mesmo com a pessoa cadastrada. Roda
-    # 1×/dia porque escreve na agenda PESSOAL: cadência baixa é margem pra
-    # perceber estrago antes de ele virar 500 contatos. Teto de 20/rodada e só
-    # ficha com nome de verdade — ver o endpoint.
-    ("push-google-contacts", "/api/cron/push-google-contacts", CronTrigger(hour=6, minute=30)),
+    # aparecendo sem nome no WhatsApp dele mesmo com a pessoa cadastrada.
+    #
+    # DE HORA EM HORA, e não 1×/dia como na primeira versão: ele perguntou por
+    # que cron e não gatilho na criação, e tinha razão no essencial — 24h de
+    # latência era conservadorismo meu, não necessidade. As guardas que
+    # importam (teto de 20, só ficha com nome, janela de 30 dias) não dependem
+    # da frequência; o custo é ~10s de índice por rodada.
+    #
+    # POR QUE AINDA É CRON, e não um gatilho em cada INSERT: são 9 pontos que
+    # criam contato em 7 arquivos, e dois deles são o PRÓPRIO sync do Google —
+    # gatilho ali produziria eco (baixa do Google, cria ficha, empurra de volta).
+    # Outro é o webhook do WhatsApp, que cria "Desconhecido +55…", que não deve
+    # subir. Cada ponto precisaria da sua cópia da política: 9 chances de
+    # divergirem, que é o problema dos 3 cockpits em outra escala.
+    # O caminho manual (POST /api/contacts) tem gatilho imediato — lá o Renato
+    # cria e espera ver no celular; aqui fica a rede pro que nasce de automação.
+    ("push-google-contacts", "/api/cron/push-google-contacts", CronTrigger(minute=40)),
     ("sync-conselhoos-raci", "/api/cron/sync-conselhoos-raci", CronTrigger(hour=6, minute=0)),
     ("sync-whatsapp-history", "/api/cron/sync-whatsapp-history", CronTrigger(hour=6, minute=0)),
     ("index-drive-documents", "/api/cron/index-drive-documents", CronTrigger(hour=7, minute=0)),

@@ -8822,7 +8822,30 @@ async def create_contact(contact: ContactCreate):
     conn.commit()
     conn.close()
 
-    return {"id": contact_id, "status": "created"}
+    # SOBE PRO GOOGLE NA HORA (07/08/2026). Este é o caminho MANUAL — o Renato
+    # cadastra alguém e espera ver o nome no celular, não no dia seguinte. Os
+    # outros 8 pontos que criam contato (sync do Google, webhook do WhatsApp,
+    # importações) ficam com o cron: dois deles produziriam eco se empurrassem
+    # de volta, e o do WhatsApp cria "Desconhecido +55…", que não deve subir.
+    #
+    # NUNCA DERRUBA A CRIAÇÃO. Se o Google estiver fora, a ficha já está salva e
+    # o cron da hora seguinte a pega — o push é consequência, não pré-requisito.
+    google_push = None
+    try:
+        if contact.nome and not str(contact.nome).startswith("Desconhecido") \
+           and contact.telefones and not contact.google_contact_id:
+            from services.google_push import push_contato, indice_telefones
+            import integrations.google_contacts as gc
+            token = await gc.get_valid_token("renato@almeida-prado.com")
+            if token:
+                idx = await indice_telefones(token)
+                r = await push_contato(contact_id, "renato@almeida-prado.com", idx, aplicar=True)
+                google_push = r.get("status")
+    except Exception as e:
+        logger.warning(f"create_contact: push pro Google falhou (o cron pega): {e}")
+        google_push = "adiado"
+
+    return {"id": contact_id, "status": "created", "google": google_push}
 
 
 # Mapeamento de relacionamentos inversos
