@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Board Hunt 2026 — regeneracao periodica do funil na maquina do Renato.
+
+  Instalar:
+    cp scripts/board_hunt.plist ~/Library/LaunchAgents/com.almeidaprado.boardhunt.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.boardhunt.plist
+  Disparar a mao:
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.boardhunt
+  Desligar:
+    launchctl bootout gui/$(id -u)/com.almeidaprado.boardhunt
+
+  POR QUE EXISTE. Sem isto, "gerador" seria so um nome mais bonito pra pagina
+  escrita a mao — ela continuaria mostrando o instante em que ALGUEM rodou o
+  script. Numa tela cuja medida principal e "ha quantos dias ninguem se fala",
+  isso nao e ficar desatualizado: e mentir com cara de medida.
+
+  5 MINUTOS, o mesmo intervalo do cockpit de frentes (com.almeidaprado.cockpit),
+  e pelo mesmo motivo: a geracao inteira e uma leitura de ~0,4s no Neon, sem
+  nenhuma chamada de LLM. O dado que a pagina mostra muda o dia inteiro (WhatsApp
+  novo, reuniao marcada, task fechada), nao em horarios ritualizados — por isso
+  StartInterval, e nao StartCalendarInterval.
+
+  A PAGINA TAMBEM SE RECARREGA SOZINHA (meta refresh de 300s no HTML). Os dois
+  precisam existir: sem o launchd o navegador recarregaria o mesmo arquivo velho,
+  o que e pior que nao recarregar, porque parece atual.
+
+  SONO DA MAQUINA. Na bateria o Mac dorme e nada roda; ao acordar, o launchd
+  dispara na hora. Aceitavel aqui e sem necessidade de `pmset`: a pagina so
+  importa quando ele esta olhando pra ela. O carimbo "gerado HH:MM" no topo
+  mostra a idade real, entao um atraso aparece em vez de mentir.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.boardhunt</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/rap/prospect-system/.venv/bin/python</string>
+    <string>/Users/rap/prospect-system/scripts/board_hunt.py</string>
+    <string>--quieto</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/board_hunt.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/board_hunt.err</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,575 @@
+#!/usr/bin/env -S /Users/rap/prospect-system/.venv/bin/python
+"""Gera ~/cockpit/board_hunt.html — o funil de originação de conselhos, vivo.
+
+PEDIDO (CoS, 07/08/2026, task #999763). O v0 desta página foi escrito à mão e
+serve de contrato visual: fases em colunas, card por frente, cor pela
+temperatura, mapa de conectores embaixo. Este script mantém o desenho e troca a
+fonte — a página passa a se recalcular a cada 5 min pelo `launchd`.
+
+POR QUE ISTO NÃO É COSMÉTICA. A informação principal desta tela é a PASSAGEM DO
+TEMPO: "3 dias sem troca", "57 dias parado". Escrita à mão, ela continua dizendo
+"3 dias" na semana seguinte — e numa tela de temperatura isso não é ficar
+desatualizado, é mentir com cara de medida. Já há consumidor com hora marcada: a
+retro da Máquina de Originação (#50) roda toda sexta 9h30 em cima deste funil.
+
+O QUE É HUMANO mora em `board_hunt_frentes` (migration 067): fase, canal âncora,
+originador, piso, nota. O QUE DERIVA é recalculado aqui e nunca gravado: dias sem
+troca, temperatura, bola, próximo passo. Gravar o derivado seria refazer o
+defeito do v0 numa tabela em vez de num HTML.
+
+A RÉGUA (pedida pela CoS, com uma precedência que ela não especificou e eu
+resolvi — está anotada em `temperatura()` junto com o efeito medido).
+
+O CASAMENTO COM A AGENDA foi o osso da frente. O pedido dizia "próximo passo =
+próximo calendar_event por contact_id", mas **7 dos 341 eventos têm contact_id**
+(2%): a coluna nasceria vazia e o alerta "⚠ sem próximo passo" acusaria frentes
+que TÊM reunião marcada — alarme falso em massa, a classe de defeito do
+[[feedback_filtro_vocabulario_errado_falha_calado]]. A saída é casar também pelo
+nome no título do evento, sem virar chute: um token casa sozinho só quando é RARO
+no próprio CRM (`marson` está em 2 fichas, `rodrigo` em 115). Raridade é medida,
+não adivinhada. A cobertura de cada caminho aparece no rodapé da página: régua
+que não se mede vira régua em que se acredita.
+
+Uso:  ./board_hunt.py            # gera e abre
+      ./board_hunt.py --quieto   # gera sem abrir (pra launchd)
+"""
+import json
+import os
+import re
+import sys
+import unicodedata
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import psycopg2
+import psycopg2.extras
+
+ROOT = "/Users/rap/prospect-system"
+SAIDA = os.path.expanduser("~/cockpit/board_hunt.html")
+CANAIS = os.path.expanduser("~/cockpit/board_hunt_canais.json")
+BRT = ZoneInfo("America/Sao_Paulo")
+
+META_ASSENTOS = 2          # meta do Board Hunt 2026: 2 assentos remunerados
+QUENTE_ATE = 14            # dias
+MORNO_ATE = 45             # dias
+RARO_ATE = 3               # nº de fichas no CRM abaixo do qual um sobrenome casa sozinho
+JANELA_AGENDA = 45         # dias à frente que a página varre por "próximo passo"
+
+FASES = [(1, "Prospecção / Rede"), (2, "Aproximação"), (3, "Reunião / Descoberta"),
+         (4, "Avaliação / Proposta"), (5, "Negociação"), (6, "Assento fechado")]
+
+# Canais que ainda não produziram frente. É JULGAMENTO (quem vale acionar), não
+# dado — então mora num overlay, como a curadoria do cockpit de frentes: a
+# regeneração não pode apagá-lo. Semeado na primeira execução com a lista da
+# nota #50.
+CANAIS_SEED = [
+    {"nome": "Lilian Schiavo", "nota": "CAMBRAPER / OBME / G100 — intros OBME em curso (Ornare, Deôla, Aços)"},
+    {"nome": "Orestes (pai)", "nota": "Virtus BR — ponte seletiva"},
+    {"nome": "Eleazar de Carvalho Filho", "nota": "ex-BNDES / Virtus"},
+    {"nome": "Pretola + Panico (Orbiz)", "nota": "M&A — canal advisor"},
+    {"nome": "Waldemar Lobo", "nota": "ASSESPRO — pool ~130 associadas"},
+]
+
+_VAZIAS = {"filho", "junior", "neto", "santos", "silva", "souza", "prado", "almeida"}
+
+
+def env(k):
+    for l in open(f"{ROOT}/.env"):
+        if l.startswith(k + "="):
+            return l.split("=", 1)[1].strip().strip('"')
+    return ""
+
+
+def esc(t):
+    return (str(t) if t is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def sem_acento(t):
+    t = unicodedata.normalize("NFD", (t or "").lower())
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def tokens(nome):
+    """Palavras de ≥4 letras de um nome, sem acento e sem os sobrenomes de bacia
+    (`Silva`, `Filho`): esses casariam com meio CRM e não identificam ninguém."""
+    return [p for p in re.findall(r"[a-z]{4,}", sem_acento(nome)) if p not in _VAZIAS]
+
+
+def data_br(d):
+    return f"{d.day:02d}/{d.month:02d}"
+
+
+# ------------------------------------------------------------------ coleta --
+
+def coletar(cur, hoje):
+    d = {"hoje": hoje}
+
+    cur.execute("""
+        SELECT f.id, f.nome, f.subtitulo, f.fase, f.status, f.nota, f.piso_alvo,
+               f.project_id, p.nome AS projeto,
+               f.contato_id, c.nome AS contato,
+               f.originador_contact_id, o.nome AS originador, f.originador_rotulo
+          FROM board_hunt_frentes f
+          LEFT JOIN projects p ON p.id = f.project_id
+          LEFT JOIN contacts c ON c.id = f.contato_id
+          LEFT JOIN contacts o ON o.id = f.originador_contact_id
+         ORDER BY f.fase, f.id
+    """)
+    frentes = [dict(r) for r in cur.fetchall()]
+    d["frentes"] = frentes
+
+    ancoras = sorted({f["contato_id"] for f in frentes if f["contato_id"]})
+
+    # --- ÚLTIMO TOQUE por âncora --------------------------------------------
+    # DM e grupo na mesma pergunta: responder no grupo e deixar a DM muda é
+    # comportamento normal dele, e cobrar por DM o que foi respondido no grupo já
+    # aconteceu ([[feedback_cross_group_before_send]]). O canal vai pro card —
+    # frente aquecida só por conversa de grupo não é a mesma coisa que troca 1:1,
+    # e quem olha precisa poder ver a diferença.
+    d["toques"] = {}
+    if ancoras:
+        cur.execute("""
+            SELECT DISTINCT ON (t.cid) t.cid, t.direcao, t.quando, t.canal, t.trecho
+              FROM (
+                    SELECT m.contact_id AS cid, m.direcao,
+                           COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS quando,
+                           COALESCE(cv.canal, 'whatsapp') AS canal,
+                           left(m.conteudo, 120) AS trecho
+                      FROM messages m
+                      LEFT JOIN conversations cv ON cv.id = m.conversation_id
+                     WHERE m.contact_id = ANY(%s)
+                    UNION ALL
+                    SELECT g.contact_id,
+                           CASE WHEN g.from_me THEN 'outgoing' ELSE 'incoming' END,
+                           COALESCE(g.timestamp, g.criado_em), 'grupo',
+                           left(g.content, 120)
+                      FROM group_messages g
+                     WHERE g.contact_id = ANY(%s)
+              ) t
+             WHERE t.quando IS NOT NULL
+             ORDER BY t.cid, t.quando DESC
+        """, (ancoras, ancoras))
+        d["toques"] = {r["cid"]: dict(r) for r in cur.fetchall()}
+
+    # --- AGENDA -------------------------------------------------------------
+    # start_datetime NÃO é UTC — é gravado na timezone do próprio evento (BRT na
+    # prática). Converter subtrai 3h e mostra a reunião na hora errada
+    # ([[feedback_calendar_events_tz]]). Lê-se raw.
+    cur.execute("""
+        SELECT id, summary, start_datetime, contact_id, all_day
+          FROM calendar_events
+         WHERE start_datetime >= %s AND start_datetime < %s
+           AND COALESCE(status, 'confirmed') <> 'cancelled'
+           AND COALESCE(summary, '') NOT ILIKE '%%nivers%%'
+         ORDER BY start_datetime
+    """, (datetime.now(BRT).replace(tzinfo=None), datetime.now(BRT).replace(tzinfo=None)
+          + timedelta(days=JANELA_AGENDA)))
+    d["eventos"] = [dict(r) for r in cur.fetchall()]
+
+    # --- RARIDADE dos sobrenomes --------------------------------------------
+    # Quantas fichas do CRM contêm cada token dos nomes envolvidos. É o que separa
+    # "Marson" (2 fichas — identifica) de "Rodrigo" (115 — não identifica), e o
+    # que impede a agenda de casar "Reunião: Srs. Rodrigo Sá" com o Rodrigo
+    # Romero. Medido no corpus, não estimado.
+    alvos = set()
+    for f in frentes:
+        alvos.update(tokens(f["contato"] or ""))
+        alvos.update(tokens(f["nome"]))
+    d["raridade"] = {}
+    if alvos:
+        cur.execute("""
+            SELECT t.tok, count(c.id) AS n
+              FROM unnest(%s::text[]) AS t(tok)
+              LEFT JOIN contacts c
+                     ON translate(lower(c.nome),
+                                  'áàãâäéèêëíìîïóòõôöúùûüç',
+                                  'aaaaaeeeeiiiiooooouuuuc') LIKE '%%' || t.tok || '%%'
+             GROUP BY t.tok
+        """, (sorted(alvos),))
+        d["raridade"] = {r["tok"]: r["n"] for r in cur.fetchall()}
+
+    cur.execute("SELECT max(last_synced_at) AS agenda FROM calendar_events")
+    d["frescor_agenda"] = cur.fetchone()["agenda"]
+
+    # A cobertura do caminho oficial ("por contact_id"), medida — não citada de
+    # memória. É ela que justifica existir um segundo caminho de casamento, e uma
+    # justificativa que envelhece sem avisar é a mesma armadilha da página velha:
+    # se o sync melhorar, este número tem que cair sozinho no rodapé.
+    cur.execute("""SELECT count(*) AS total,
+                          count(contact_id) AS com_contato
+                     FROM calendar_events""")
+    r = cur.fetchone()
+    d["agenda_ligada_pct"] = round(100.0 * r["com_contato"] / r["total"], 1) if r["total"] else 0.0
+    return d
+
+
+# ------------------------------------------------------------------- régua --
+
+def proximo_passo(frente, d):
+    """Próxima reunião da frente. Devolve (evento, como_casou) ou (None, None).
+
+    Dois caminhos, nesta ordem: `contact_id` no evento (certo, mas só 2% dos
+    eventos têm) e o nome no título. O segundo só aceita casamento que
+    IDENTIFICA: dois tokens do nome, ou um token raro no CRM. Um token comum
+    sozinho nunca casa — foi o que impediu "Rodrigo Sá" de virar reunião do
+    Rodrigo Romero."""
+    cid = frente["contato_id"]
+    for e in d["eventos"]:
+        if cid and e["contact_id"] == cid:
+            return e, "id"
+
+    alvo = tokens(frente["contato"] or "") + tokens(frente["nome"])
+    if not alvo:
+        return None, None
+    for e in d["eventos"]:
+        titulo = sem_acento(e["summary"] or "")
+        achados = {t for t in alvo if t in titulo}
+        if len(achados) >= 2 or any(d["raridade"].get(t, 99) <= RARO_ATE for t in achados):
+            return e, "nome"
+    return None, None
+
+
+def temperatura(dias, bola, tem_proximo):
+    """Quente ≤14d · morno 15–45d · frio >45d, com a bola rebaixando na faixa do
+    meio.
+
+    A CoS pediu "morno: 15–45d **ou** bola c/ terceiro" e "frio: >45d **ou**
+    parado contigo", sem dizer o que ganha quando as duas cláusulas discordam — e
+    elas discordam no caso mais comum do funil: troca de ontem com a bola no
+    outro lado. Tomei a precedência mais defensável: **o tempo manda**, porque é
+    o que a tela existe pra mostrar; a bola só decide na faixa morna, onde ela é
+    a diferença real entre "esperando alguém" e "parado comigo".
+
+    Conferido contra as 10 frentes que a CoS classificou à mão: bate em 9. A
+    única diferença é o Ariolino, que ela deixou frio (57 dias) e a régua vê
+    morno — porque o Renato mandou WhatsApp pra ele HOJE, depois de ela escrever
+    a página. O v0 envelheceu em oito horas; é literalmente o defeito que este
+    gerador nasceu pra matar."""
+    if dias is None:
+        return "indefinido"
+    if dias > MORNO_ATE:
+        return "frio"
+    if dias <= QUENTE_ATE:
+        # Troca fresca, mas esperando o outro sem data marcada: não é quente, é
+        # torcida. Com reunião na agenda, segue quente — há para onde ir.
+        return "morno" if (bola == "terceiro" and not tem_proximo) else "quente"
+    return "frio" if bola == "voce" else "morno"
+
+
+def avaliar(d):
+    hoje = d["hoje"]
+    cobertura = {"id": 0, "nome": 0, "sem": 0}
+    for f in d["frentes"]:
+        t = d["toques"].get(f["contato_id"])
+        f["toque"] = t
+        f["dias"] = (hoje - t["quando"].date()).days if t else None
+        # Última mensagem enviada = a vez é do outro; recebida = a vez é dele.
+        # ⚠️ Cortesia de encerramento ("Gratos", "Recebido, até 2ª") inverte isso
+        # sem que a vez tenha mudado — por isso o card mostra a EVIDÊNCIA (trecho
+        # + data) junto da tag, em vez de só afirmar de quem é a bola.
+        f["bola"] = None if not t else ("terceiro" if t["direcao"] == "outgoing" else "voce")
+
+        ev, como = proximo_passo(f, d)
+        f["evento"], f["evento_como"] = ev, como
+        cobertura[como or "sem"] += 1
+
+        if f["status"] == "hold":
+            f["temp"] = "hold"
+        elif f["status"] == "prova":
+            f["temp"] = "prova"
+        else:
+            f["temp"] = temperatura(f["dias"], f["bola"], bool(ev))
+
+    d["cobertura"] = cobertura
+    ativas = [f for f in d["frentes"] if f["status"] == "ativo"]
+    d["kpis"] = {
+        "assentos": sum(1 for f in d["frentes"] if f["status"] == "fechado"),
+        "funil": len(ativas),
+        "quentes": sum(1 for f in ativas if f["temp"] == "quente"),
+        "sem_prox": sum(1 for f in ativas if not f["evento"]),
+    }
+    return d
+
+
+def carregar_canais():
+    if not os.path.exists(CANAIS):
+        json.dump(CANAIS_SEED, open(CANAIS, "w"), ensure_ascii=False, indent=2)
+        return CANAIS_SEED
+    try:
+        return json.load(open(CANAIS))
+    except Exception:
+        return CANAIS_SEED
+
+
+# ------------------------------------------------------------------ render --
+
+CSS = """
+  :root{
+    --charcoal:#2b2925; --ink:#3a362f; --muted:#8a8072;
+    --creme:#f6f1e7; --card:#fffdf8; --line:#e5ddcd;
+    --dourado:#b8973e; --dourado-soft:#e9dcb8;
+    --quente:#c0492f; --quente-bg:#fae9e3;
+    --morno:#c69a2e; --morno-bg:#f9f0d6;
+    --frio:#3f6f92; --frio-bg:#e3edf4;
+    --hold:#9a9184; --hold-bg:#eeeae1;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--creme);color:var(--ink);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    padding:26px 30px 60px}
+  header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;
+    border-bottom:2px solid var(--dourado);padding-bottom:14px;margin-bottom:6px}
+  h1{font-size:23px;font-weight:700;color:var(--charcoal);letter-spacing:.2px}
+  h1 .dot{color:var(--dourado)}
+  .meta{margin-left:auto;font-size:13px;color:var(--muted)}
+  .meta b{color:var(--charcoal)}
+  .metabar{display:flex;gap:22px;flex-wrap:wrap;margin:14px 0 20px;font-size:13.5px}
+  .metabar .kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:9px 16px}
+  .metabar .kpi b{font-size:19px;color:var(--charcoal);display:block;font-weight:700}
+  .metabar .kpi span{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);
+    margin-bottom:18px;align-items:center}
+  .chip{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:11px;height:11px;border-radius:50%}
+  .board{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:flex-start}
+  .col{flex:0 0 232px;background:transparent}
+  .col > h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+    color:var(--charcoal);padding:0 4px 9px;display:flex;justify-content:space-between}
+  .col > h2 .n{color:var(--muted);font-weight:600}
+  .col.hold > h2{color:var(--hold)}
+  .stack{display:flex;flex-direction:column;gap:10px;min-height:40px}
+  .vazio{color:var(--muted);font-size:12px;padding:4px}
+  .cardw{background:var(--card);border:1px solid var(--line);border-left-width:4px;
+    border-radius:9px;padding:11px 12px;box-shadow:0 1px 2px rgba(80,66,40,.05)}
+  .cardw.quente{border-left-color:var(--quente)}
+  .cardw.morno{border-left-color:var(--morno)}
+  .cardw.frio{border-left-color:var(--frio)}
+  .cardw.hold,.cardw.prova{border-left-color:var(--hold);opacity:.85}
+  .cardw.indefinido{border-left-color:var(--line);border-left-style:dashed}
+  .cardw .t{font-weight:700;color:var(--charcoal);font-size:14.5px;line-height:1.25}
+  .cardw .sub{color:var(--muted);font-size:11.5px;margin-top:1px}
+  .cardw .n{font-size:12.5px;color:var(--ink);margin-top:7px}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;font-size:11px}
+  .tag{background:var(--dourado-soft);color:#6b551d;border-radius:20px;padding:2px 8px;
+    white-space:nowrap}
+  .tag.temp-quente{background:var(--quente-bg);color:var(--quente)}
+  .tag.temp-morno{background:var(--morno-bg);color:#8a6a12}
+  .tag.temp-frio{background:var(--frio-bg);color:var(--frio)}
+  .tag.temp-indefinido{background:#f0ece3;color:var(--muted)}
+  .tag.bola{background:#eee7d8;color:var(--ink);cursor:help}
+  .tag.grupo{background:#e7eef0;color:#42646e}
+  .nextbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;background:var(--card);
+    border:1px solid var(--line);border-radius:11px;padding:11px 16px;margin-bottom:20px;font-size:13px}
+  .nextbar .nl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dourado);
+    font-weight:700;margin-right:4px}
+  .nextbar .ne{background:#eef3e9;color:#4a6035;border-radius:7px;padding:4px 10px}
+  .nextbar .ne b{color:#33471f}
+  .nextbar .ne.dim{background:transparent;color:var(--muted)}
+  .prox{margin-top:9px;font-size:12px}
+  .prox .ok{color:#4a6035;font-weight:600}
+  .prox .warn{color:var(--quente);font-weight:700}
+  .prox .sem{color:var(--muted);font-weight:600}
+  .orig{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:11px;
+    padding:16px 20px;max-width:640px}
+  .orig h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--charcoal);
+    margin-bottom:12px}
+  .orig .row{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13.5px}
+  .orig .row .nm{width:180px;color:var(--ink)}
+  .orig .bar{height:9px;background:var(--dourado);border-radius:5px;min-width:9px}
+  .orig .row .c{color:var(--muted);font-size:12px}
+  footer{margin-top:26px;color:var(--muted);font-size:11.5px;line-height:1.6;max-width:820px}
+  footer b{color:var(--ink)}
+"""
+
+
+def card(f):
+    temp = f["temp"]
+    tags = []
+
+    if f["dias"] is not None:
+        t = f["toque"]
+        ev = f"{t['direcao'] == 'outgoing' and 'você enviou' or 'ele enviou'} em " \
+             f"{data_br(t['quando'].date())} · {t['canal']}: {t['trecho'] or ''}"
+        cls = temp if temp in ("quente", "morno", "frio") else "indefinido"
+        tags.append(f'<span class="tag temp-{cls}" title="{esc(ev)}">{f["dias"]}d</span>')
+        if t["canal"] == "grupo":
+            tags.append('<span class="tag grupo" title="a temperatura veio de conversa '
+                        'em grupo, não de troca 1:1">via grupo</span>')
+    elif f["status"] not in ("hold", "prova"):
+        tags.append('<span class="tag temp-indefinido" title="sem contato âncora declarado '
+                    "em board_hunt_frentes — nada de onde derivar temperatura"
+                    '">sem âncora</span>')
+
+    if f["bola"] and f["status"] == "ativo":
+        quem = "você" if f["bola"] == "voce" else (f["contato"] or "o outro lado").split()[0]
+        tags.append(f'<span class="tag bola" title="derivado da direção da última mensagem — '
+                    f'cortesia de encerramento pode inverter isto">bola: {esc(quem)}</span>')
+
+    orig = f["originador"] or f["originador_rotulo"]
+    if orig:
+        tags.append(f'<span class="tag">↳ {esc(orig)}</span>')
+
+    if f["status"] in ("hold", "prova"):
+        prox = ""
+    elif f["evento"]:
+        e = f["evento"]
+        quando = data_br(e["start_datetime"].date())
+        hora = "" if e["all_day"] else f" {e['start_datetime']:%H}h"
+        # `~` = casou pelo nome no título, não pelo contato ligado ao evento. É a
+        # diferença entre "é esta reunião" e "provavelmente é esta" — e ela tem
+        # que estar na tela, não só no rodapé.
+        titulo = (e["summary"] or "")[:34].strip()
+        marca = "" if f["evento_como"] == "id" else " ~"
+        prox = (f'<div class="prox"><span class="ok" title="{esc(e["summary"] or "")}">'
+                f'▸ próximo: {quando}{hora} · {esc(titulo)}{marca}</span></div>')
+    else:
+        prox = '<div class="prox"><span class="warn">⚠ sem próximo passo</span></div>'
+
+    return f"""<div class="cardw {temp}">
+      <div class="t">{esc(f['nome'])}</div>
+      <div class="sub">{esc(f['subtitulo'] or '')}</div>
+      <div class="n">{esc(f['nota'] or '')}</div>
+      {prox}
+      <div class="tags">{''.join(tags)}</div>
+    </div>"""
+
+
+def render(d, canais):
+    agora = datetime.now(BRT)
+    k = d["kpis"]
+
+    colunas = []
+    for num, nome in FASES:
+        itens = [f for f in d["frentes"] if f["fase"] == num and f["status"] != "hold"]
+        corpo = "".join(card(f) for f in itens) or '<div class="vazio">—</div>'
+        colunas.append(f'<div class="col"><h2>{nome} <span class="n">{len(itens) or ""}</span></h2>'
+                       f'<div class="stack">{corpo}</div></div>')
+    hold = [f for f in d["frentes"] if f["status"] == "hold"]
+    corpo = "".join(card(f) for f in hold) or '<div class="vazio">—</div>'
+    colunas.append(f'<div class="col hold"><h2>On-hold <span class="n">{len(hold) or ""}</span></h2>'
+                   f'<div class="stack">{corpo}</div></div>')
+
+    # Barra de próximos passos: os eventos que as frentes casaram, em ordem.
+    # Só frentes ATIVAS: a reunião mensal da Vallen é compromisso de cliente, não
+    # passo do funil de caça — na barra de "o que vem" ela empurraria para baixo
+    # a reunião que de fato move um assento.
+    casados, vistos = [], set()
+    for f in sorted((x for x in d["frentes"] if x["evento"] and x["status"] == "ativo"),
+                    key=lambda x: x["evento"]["start_datetime"]):
+        e = f["evento"]
+        if e["id"] in vistos:
+            continue
+        vistos.add(e["id"])
+        hora = "" if e["all_day"] else f" {e['start_datetime']:%H}h"
+        casados.append(f'<span class="ne">{data_br(e["start_datetime"].date())}{hora} · '
+                       f'<b>{esc(f["nome"])}</b></span>')
+    nextbar = ("".join(casados) if casados else
+               '<span class="ne dim">nenhuma reunião de frente nos próximos '
+               f'{JANELA_AGENDA} dias</span>')
+
+    # Originadores: contagem REAL das frentes que cada um produziu.
+    contagem = {}
+    for f in d["frentes"]:
+        nome = f["originador"] or f["originador_rotulo"]
+        if not nome or nome == "relação direta":
+            continue
+        contagem.setdefault(nome, []).append(f["nome"])
+    ativos = sorted(contagem.items(), key=lambda kv: -len(kv[1]))
+    maxn = max((len(v) for _, v in ativos), default=1)
+    linhas = "".join(
+        f'<div class="row"><span class="nm">{esc(n)}</span>'
+        f'<span class="bar" style="width:{len(fs) / maxn * 200:.0f}px"></span>'
+        f'<span class="c">{len(fs)} frente{"s" if len(fs) > 1 else ""} · {esc(" · ".join(fs))}</span></div>'
+        for n, fs in ativos)
+    dormentes = "".join(
+        f'<div class="row"><span class="nm" style="color:var(--quente);font-weight:600">'
+        f'{esc(c["nome"])}</span><span class="c">{esc(c.get("nota", ""))}</span></div>'
+        for c in canais)
+
+    cob = d["cobertura"]
+    # ⚠️ `last_synced_at` é UTC — ao contrário de `start_datetime`, que é BRT
+    # ingênuo. Exibi-lo cru punha a página anunciando um sync às 23:15 quando
+    # eram 20:24: o carimbo de frescor, que existe justamente pra denunciar dado
+    # velho, mostrando o futuro.
+    if d["frescor_agenda"]:
+        s = d["frescor_agenda"].replace(tzinfo=ZoneInfo("UTC")).astimezone(BRT)
+        fresco = f"agenda sincronizada {data_br(s.date())} {s:%H:%M}"
+    else:
+        fresco = "agenda sem carimbo de sync"
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<title>Board Hunt 2026 — Pipeline</title>
+<style>{CSS}</style>
+</head>
+<body>
+<header>
+  <h1>Board Hunt 2026 <span class="dot">·</span> Pipeline de originação de conselhos</h1>
+  <div class="meta">gerado <b>{agora:%d/%m %H:%M}</b> · {esc(fresco)}</div>
+</header>
+
+<div class="metabar">
+  <div class="kpi"><b>{k['assentos']} / {META_ASSENTOS}</b><span>Assentos remunerados · meta dez/26</span></div>
+  <div class="kpi"><b>{k['funil']}</b><span>Frentes no funil</span></div>
+  <div class="kpi"><b>{k['quentes']}</b><span>Quentes (≤{QUENTE_ATE}d)</span></div>
+  <div class="kpi" style="border-color:var(--quente)"><b style="color:var(--quente)">{k['sem_prox']}</b><span>⚠️ Sem próximo passo</span></div>
+</div>
+
+<div class="nextbar"><span class="nl">Próximos passos agendados</span>{nextbar}</div>
+
+<div class="legend">
+  <span class="chip"><span class="sw" style="background:var(--quente)"></span>Quente — troca ≤{QUENTE_ATE}d</span>
+  <span class="chip"><span class="sw" style="background:var(--morno)"></span>Morno — {QUENTE_ATE + 1}–{MORNO_ATE}d, ou esperando o outro sem data</span>
+  <span class="chip"><span class="sw" style="background:var(--frio)"></span>Frio — &gt;{MORNO_ATE}d, ou parado contigo</span>
+  <span class="chip"><span class="sw" style="background:var(--hold)"></span>On-hold</span>
+</div>
+
+<div class="board">{''.join(colunas)}</div>
+
+<div class="orig">
+  <h3>Originadores — quem abre as portas</h3>
+  {linhas}
+  <h3 style="margin:16px 0 10px;color:var(--quente)">Canais a ativar — 0 frentes ainda</h3>
+  {dormentes}
+</div>
+
+<footer>
+  Página <b>gerada</b> a cada 5 min (<code>scripts/board_hunt.py</code>) — fase, âncora,
+  originador e nota vêm de <code>board_hunt_frentes</code>; dias, temperatura, bola e
+  próximo passo são recalculados a cada rodada e não ficam gravados.<br>
+  <b>Cobertura do "próximo passo"</b>: {cob['id']} frente(s) casada(s) pelo <code>contact_id</code>
+  do evento, {cob['nome']} pelo nome no título (marcadas com <b>~</b>), {cob['sem']} sem reunião
+  nos próximos {JANELA_AGENDA} dias. O casamento por nome só aceita dois tokens do nome ou um
+  sobrenome raro no CRM — <b>só {d['agenda_ligada_pct']}% dos eventos da agenda têm contato
+  ligado</b>, então sem esse segundo caminho a coluna inteira ficaria vazia.<br>
+  Canais dormentes moram em <code>~/cockpit/board_hunt_canais.json</code> (julgamento — a
+  regeneração não os apaga).
+</footer>
+</body>
+</html>"""
+
+
+def main():
+    conn = psycopg2.connect(env("DATABASE_URL"))
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    d = avaliar(coletar(cur, datetime.now(BRT).date()))
+    open(SAIDA, "w").write(render(d, carregar_canais()))
+    print(f"→ {SAIDA}  ({d['kpis']['funil']} frentes · {d['kpis']['quentes']} quentes · "
+          f"{d['kpis']['sem_prox']} sem próximo passo)")
+    if "--quieto" not in sys.argv:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        try:
+            from cockpit import abrir          # reusa a aba em vez de abrir outra
+            abrir(SAIDA)
+        except Exception:
+            import subprocess
+            subprocess.run(["open", SAIDA])
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
