@@ -326,7 +326,8 @@ section { margin-bottom:34px; }
 .row .note { font-size:12px; color:var(--ink-soft); font-family:var(--mono); }
 .fio { margin:6px 0 0; padding-left:14px; border-left:2px solid var(--panel-edge); font-size:12.5px; color:var(--ink-soft); }
 .fio div { padding:1px 0; }
-.vazio { font-size:13px; color:var(--ink-faint); font-style:italic; padding:10px 2px; }
+.passou { font-size:12px; color:var(--ink-faint); margin:10px 0 0; padding-top:8px; border-top:1px dashed var(--panel-edge); }
+  .vazio { font-size:13px; color:var(--ink-faint); font-style:italic; padding:10px 2px; }
 details.dobra { margin-top:10px; }
 details.dobra summary { cursor:pointer; font-size:12px; font-family:var(--mono); color:var(--brass); }
 details.dobra .compact { margin-top:8px; }
@@ -603,9 +604,23 @@ def render(d, cur_cos, cos_em):
         portao_html = "".join(linhas)
 
     # --- HOJE ---------------------------------------------------------------
+    # O QUE JÁ PASSOU SAI DA FRENTE (07/08). Ele marcou como "FEITO" as quatro
+    # reuniões do dia que já tinham acontecido — não porque houvesse algo a
+    # fazer nelas, mas porque estavam ocupando a tela. Compromisso das 10h às
+    # 17h não é informação: é entulho entre ele e o que ainda falta. Fica numa
+    # linha só, porque sumir de vez tiraria a memória do dia.
     ev_hoje = [e for e in d["eventos"] if e["start_datetime"].date() == hoje]
-    hoje_html = "".join([evento(e) for e in ev_hoje]
+    agora_naive = agora.replace(tzinfo=None)
+    ev_passados = [e for e in ev_hoje
+                   if not e["all_day"] and e["start_datetime"] < agora_naive]
+    ev_futuros = [e for e in ev_hoje if e not in ev_passados]
+    hoje_html = "".join([evento(e) for e in ev_futuros]
                         + [item(t, "hoje", "p-crit") for t in sep["hoje"]])
+    passados_html = ""
+    if ev_passados:
+        itens = " · ".join(f"{e['start_datetime']:%H:%M} {esc(e['summary'])[:38]}"
+                           for e in ev_passados)
+        passados_html = (f'<p class="passou">✓ já passou hoje — {itens}</p>')
 
     # --- ESTA SEMANA (por dia) ----------------------------------------------
     dias = {}
@@ -724,7 +739,10 @@ def render(d, cur_cos, cos_em):
         nota = (f'<div class="nota-cos"><span class="quem">leitura da CoS · {idade}</span>'
                 f'{esc(cur_cos["nota_do_dia"])}</div>')
 
-    n_hoje = len(ev_hoje) + len(sep["hoje"])
+    # Conta o que FALTA, não o que o dia teve: o statcard existe pra decidir,
+    # não pra relatar. Somar reunião das 10h às 17h infla o número que ele usa
+    # pra saber se ainda tem dia pela frente.
+    n_hoje = len(ev_futuros) + len(sep["hoje"])
     return f"""<!doctype html>
 <html lang="pt-BR" data-theme="light">
 <head>
@@ -749,7 +767,7 @@ def render(d, cur_cos, cos_em):
 
   <div class="summary">
     <div class="stat{' hot' if n_portao else ''}"><div class="n">{n_portao}</div><div class="l">No portão</div></div>
-    <div class="stat{' hot' if n_hoje else ''}"><div class="n">{n_hoje}</div><div class="l">Hoje</div></div>
+    <div class="stat{' hot' if n_hoje else ''}"><div class="n">{n_hoje}</div><div class="l">Falta hoje</div></div>
     <div class="stat"><div class="n">{len(sep['semana']) + len([e for e in d['eventos'] if e['start_datetime'].date() > hoje])}</div><div class="l">Próximos 8 dias</div></div>
     <div class="stat{' hot' if sep['vencidas'] else ''}"><div class="n">{len(sep['vencidas'])}</div><div class="l">Vencidas</div></div>
     <div class="stat"><div class="n">{len(d['checkg'])}</div><div class="l">Chegou no WA</div></div>
@@ -767,7 +785,8 @@ def render(d, cur_cos, cos_em):
 
   <section data-annot>
     <div class="head"><h2>Hoje</h2><div class="rule"></div><span class="tag">agenda + vence hoje</span></div>
-    <div class="items">{hoje_html or '<p class="vazio">Nada na agenda e nada vencendo hoje.</p>'}</div>
+    <div class="items">{hoje_html or '<p class="vazio">Nada mais na agenda e nada vencendo hoje.</p>'}</div>
+    {passados_html}
   </section>
 
   {f'''<section data-annot>
