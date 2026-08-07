@@ -1936,7 +1936,7 @@ async def whatsapp_status():
     return status
 
 
-@app.post("/api/whatsapp/send")
+@app.post("/api/whatsapp/send", dependencies=[Depends(require_scaffold_auth)])
 async def send_whatsapp_message(request: Request):
     """
     Send a WhatsApp message
@@ -2167,7 +2167,7 @@ async def get_whatsapp_qr():
             raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/whatsapp/disconnect")
+@app.post("/api/whatsapp/disconnect", dependencies=[Depends(require_scaffold_auth)])
 async def disconnect_whatsapp():
     """Disconnect WhatsApp instance"""
     import httpx
@@ -2350,7 +2350,7 @@ async def export_whatsapp_conversation(
         conn.close()
 
 
-@app.post("/api/whatsapp/sync")
+@app.post("/api/whatsapp/sync", dependencies=[Depends(require_scaffold_auth)])
 async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50, offset: int = 0):
     """
     Sync WhatsApp message history from Evolution API.
@@ -2641,7 +2641,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50, o
     }
 
 
-@app.post("/api/whatsapp/relink")
+@app.post("/api/whatsapp/relink", dependencies=[Depends(require_scaffold_auth)])
 async def relink_whatsapp_messages():
     """
     Re-link WhatsApp messages to contacts based on phone number.
@@ -22221,7 +22221,7 @@ REGRAS:
         return {"error": str(e)}
 
 
-@app.post("/api/projects")
+@app.post("/api/projects", dependencies=[Depends(require_scaffold_auth)])
 async def api_create_project(request: Request):
     """Cria novo projeto."""
     data = await request.json()
@@ -22231,7 +22231,7 @@ async def api_create_project(request: Request):
     return {"status": "success", "project": project}
 
 
-@app.post("/api/projects/enrich")
+@app.post("/api/projects/enrich", dependencies=[Depends(require_scaffold_auth)])
 async def api_enrich_project(request: Request):
     """
     Enriquece descrição de projeto usando IA.
@@ -22256,7 +22256,7 @@ async def api_enrich_project(request: Request):
     return result
 
 
-@app.put("/api/projects/{project_id}")
+@app.put("/api/projects/{project_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_update_project(project_id: int, request: Request):
     """Atualiza projeto existente."""
     data = await request.json()
@@ -22266,7 +22266,7 @@ async def api_update_project(project_id: int, request: Request):
     return {"status": "success", "project": project}
 
 
-@app.delete("/api/projects/{project_id}")
+@app.delete("/api/projects/{project_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_delete_project(project_id: int):
     """Deleta projeto."""
     if delete_project(project_id):
@@ -23584,7 +23584,7 @@ async def api_add_project_task(project_id: int, request: Request):
     # all-tasks moved before {project_id} routes
 
 
-@app.put("/api/projects/tasks/{task_id}")
+@app.put("/api/projects/tasks/{task_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_update_project_task(task_id: int, request: Request):
     """Atualiza tarefa do projeto e sincroniza com Google Tasks."""
     data = await request.json()
@@ -23615,7 +23615,7 @@ async def api_update_project_task(task_id: int, request: Request):
     return {"status": "success", "task": result.get("task", {}), "synced_to_google": True}
 
 
-@app.delete("/api/projects/tasks/{task_id}")
+@app.delete("/api/projects/tasks/{task_id}", dependencies=[Depends(require_scaffold_auth)])
 async def api_delete_project_task(task_id: int):
     """Deleta tarefa do projeto e do Google Tasks."""
     tasks_service = get_tasks_sync_service()
