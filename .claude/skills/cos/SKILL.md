@@ -147,6 +147,14 @@ lastdir AS (    -- de quem esta a bola: ultima msg de cada contato
   WHERE contact_id IS NOT NULL AND criado_em > NOW() - INTERVAL '14 days'
   ORDER BY contact_id, criado_em DESC
 ),
+dispensadas AS ( -- ⛔ O QUE ELE JA MANDOU IGNORAR NAO VOLTA (fix 07/08)
+  -- A migration 066 criou `dispensado_em` e o cockpit passou a le-lo, mas ESTA
+  -- query nunca leu: a decisao dele existia gravada no banco e o check
+  -- re-oferecia assim mesmo. Ele reagiu na abertura de 07/08 — 6 itens ja
+  -- tratados, "alguns varias vezes". Nao era falta de dado, era um consumidor
+  -- que nunca nasceu. Sao 104 dispensas gravadas contra 85 mostrados.
+  SELECT message_id FROM check_g_ledger WHERE dispensado_em IS NOT NULL
+),
 qual AS (
   -- ⚠️ NAO FILTRA MAIS POR VOCABULARIO. Ate 05/08 havia aqui um regex
   -- ('reuni|agend|proposta|prazo...') e o que nao casava SUMIA: zero linha,
@@ -170,6 +178,15 @@ qual AS (
   FROM messages m LEFT JOIN att a ON a.message_id = m.external_id
   WHERE m.direcao='incoming' AND m.contact_id IS NOT NULL
     AND m.criado_em > NOW() - INTERVAL '4 days'
+    AND m.id NOT IN (SELECT message_id FROM dispensadas)   -- ⛔ ele ja disse "ignora"
+    -- Remetente que ele ja classificou como cold-seller ou notificacao
+    -- automatica: e a NATUREZA de quem manda, nao o assunto — por isso pode ser
+    -- gate sem cair no gato-e-rato de vocabulario que foi removido em 05/08.
+    -- Quando ele diz "ignora, e cold", a CoS marca a tag NA HORA, sem clique
+    -- dele ([[feedback_ferramenta_nao_vira_tarefa_do_renato]]).
+    AND NOT EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.id = m.contact_id
+                      AND (ct2.tags::text ILIKE '%cold-seller%'
+                        OR ct2.tags::text ILIKE '%notifica%autom%'))
 ),
 cand AS (
   SELECT q.* FROM qual q
@@ -185,7 +202,8 @@ cand AS (
   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id=q.contact_id AND t.data_criacao > q.criado_em)          -- GATE: ja virou task (criada depois)
   AND NOT EXISTS (SELECT 1 FROM calendar_events e WHERE e.contact_id=q.contact_id AND e.criado_em > q.criado_em)   -- GATE: ja virou evento
   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id=q.contact_id AND t.status='completed' AND t.atualizado_em > q.criado_em)  -- GATE (fix 29/07): task DO PROPRIO contato (casada por contact_id) foi CONCLUIDA depois da msg = ja tratado. Preciso: so olha as tasks DELE, nao de colega de projeto. Pegou a Priscila (contrato #999678 completed) DEPOIS de linkar #999678 a ficha #4734 — o defeito era o contact_id NULL, nao o gate.
-)
+),
+agg AS (
 SELECT c.contact_id, ct.nome, max(c.criado_em) ultima, bool_or(c.has_doc) tem_doc,
        max(c.fname) FILTER (WHERE c.has_doc) anexo,
        bool_and(c.ack) so_ack,   -- true = tudo que ele mandou foi "ok/feito/obrigado": REBAIXE (nao suma)
@@ -203,9 +221,40 @@ SELECT c.contact_id, ct.nome, max(c.criado_em) ultima, bool_or(c.has_doc) tem_do
        (array_agg(c.conteudo ORDER BY (c.has_doc)::int DESC, c.criado_em DESC))[1] amostra
 FROM cand c LEFT JOIN contacts ct ON ct.id=c.contact_id
 GROUP BY c.contact_id, ct.nome
-ORDER BY bool_and(c.ack) ASC,    -- o que PEDE algo primeiro; encerramento no fim
-         bool_or(c.has_doc) DESC, ultima DESC;
+)
+SELECT a.*,
+       -- 🔀 O FIO NAS DUAS DIRECOES (fix 07/08). O `fio` acima so tem INCOMING —
+       -- e um monologo do contato. Lendo so ele, o que ELE respondeu no meio da
+       -- conversa fica invisivel, e o item reaparece como se ninguem tivesse
+       -- feito nada. Aqui vem a conversa como ela e: quem falou, quando, o que.
+       f2.conversa,
+       -- E o que ele fez DEPOIS da ultima msg, por qualquer canal (view 062):
+       -- e-mail, grupo, RSVP de convite. "Ele ja fez isso?" tem UMA fonte.
+       ato.o_que AS ato_depois, ato.canal AS ato_canal, ato.quando AS ato_quando
+FROM agg a
+LEFT JOIN LATERAL (
+    SELECT array_agg(x.linha ORDER BY x.quando DESC) AS conversa FROM (
+        SELECT (CASE WHEN m2.direcao='incoming' THEN '← ' ELSE '→ ' END)
+               || to_char(m2.criado_em,'DD/MM HH24:MI') || ' ' || left(m2.conteudo,110) AS linha,
+               m2.criado_em AS quando
+          FROM messages m2
+         WHERE m2.contact_id = a.contact_id
+           AND m2.criado_em > NOW() - INTERVAL '6 days'
+         ORDER BY m2.criado_em DESC LIMIT 6
+    ) x
+) f2 ON true
+LEFT JOIN LATERAL (
+    SELECT o_que, canal, quando FROM acao_do_renato
+     WHERE pessoa_id = a.contact_id AND quando > a.ultima
+     ORDER BY quando DESC LIMIT 1
+) ato ON true
+ORDER BY a.so_ack ASC,    -- o que PEDE algo primeiro; encerramento no fim
+         a.tem_doc DESC, a.ultima DESC;
 ```
+**`ato_depois` PREENCHIDO = ele ja agiu depois da ultima mensagem do contato.**
+Nao suprime sozinho (a acao pode ser sobre outro assunto), mas **rebaixa**: leia
+`conversa` antes de oferecer. Oferecer o que ele acabou de fazer foi o defeito de
+06/08, cinco vezes numa sessao ([[feedback_checar_acao_renato_antes_de_oferecer]]).
 **LER O FIO, NAO A ANCORA.** `msgs > 1` significa que ha conversa: o pedido
 acionavel pode ser o irmao da mensagem que aparece em `amostra` — anexo nao e
 o assunto, e o envelope. Com `msgs > 3` o `fio` tambem esta truncado: abra a

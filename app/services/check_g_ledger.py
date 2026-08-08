@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # Os gates, na ordem em que matam. A ordem importa: uma mensagem sem ficha e
 # fora da janela é registrada pelo PRIMEIRO motivo, e é esse que se conta.
 GATE_SEM_FICHA   = "sem_ficha"          # contact_id NULL — nem entra na query da /cos
+GATE_COLD_SELLER = "cold_seller"        # remetente que ELE já classificou como tal
 GATE_BOLA_DELE   = "bola_com_terceiro"  # o Renato já respondeu por último
 GATE_RUIDO       = "ruido_comercial"
 GATE_JA_TASK     = "ja_virou_task"
@@ -70,6 +71,23 @@ SELECT
     left(m.conteudo, 160) AS trecho,
     CASE
         WHEN m.contact_id IS NULL THEN %(sem_ficha)s
+        -- Espelha o gate novo da /cos (07/08): remetente que ele já marcou como
+        -- cold-seller ou notificação automática. É a NATUREZA de quem manda, não
+        -- o assunto — por isso pode ser gate sem recair no filtro por vocabulário
+        -- que foi removido em 05/08 depois de comer 83 por cento do inbound
+        -- legítimo.
+        --
+        -- ⚠️ NENHUM SINAL DE PORCENTAGEM NESTE BLOCO, nem em comentário. O
+        -- psycopg2 não sabe o que é comentário SQL: ele varre o texto inteiro
+        -- atrás de placeholders e recusa a query com "argument formats can't be
+        -- mixed" — sem dizer a linha. Aconteceu duas vezes aqui em 07/08, a
+        -- segunda com o comentário que avisava sobre a primeira.
+        -- Os padrões de LIKE vêm por PARÂMETRO, nunca como literal escapado:
+        -- ver o aviso acima.
+        WHEN EXISTS (SELECT 1 FROM contacts c2 WHERE c2.id = m.contact_id
+                       AND (c2.tags::text ILIKE %(pat_cold)s
+                         OR c2.tags::text ILIKE %(pat_notif)s))
+             THEN %(cold_seller)s
         WHEN COALESCE(l.direcao, 'outgoing') <> 'incoming' THEN %(bola_dele)s
         WHEN length(m.conteudo) <= 600 AND m.conteudo ~*
              'desconto|promo[çc]|black friday|imperd|clique aqui|link na bio|inscri[çc]|newsletter|cancelar|no-?reply|unsubscribe'
@@ -95,6 +113,8 @@ WHERE m.direcao = 'incoming'
 _PARAMS = {
     "sem_ficha": GATE_SEM_FICHA, "bola_dele": GATE_BOLA_DELE, "ruido": GATE_RUIDO,
     "ja_task": GATE_JA_TASK, "ja_evento": GATE_JA_EVENTO, "ja_resolvida": GATE_JA_RESOLVIDA,
+    "cold_seller": GATE_COLD_SELLER,
+    "pat_cold": "%cold-seller%", "pat_notif": "%notifica%autom%",
 }
 
 
@@ -207,7 +227,15 @@ def medir(dias: int = 14) -> Dict:
                    count(*) FILTER (WHERE desfecho = 'virou_task')  AS virou_task,
                    count(*) FILTER (WHERE desfecho = 'agiu')        AS agiu,
                    count(*) FILTER (WHERE desfecho = 'virou_ficha') AS virou_ficha,
-                   count(*) FILTER (WHERE desfecho = 'nao_medido')  AS nao_medido
+                   count(*) FILTER (WHERE desfecho = 'nao_medido')  AS nao_medido,
+                   -- FALSO POSITIVO, que esta medicao não enxergava (fix 07/08).
+                   -- `desfecho` responde "o check deixou passar o que importava?"
+                   -- — só falso NEGATIVO. Quando o Renato dispensa um item, ele
+                   -- está dizendo o contrário: apareceu o que não devia. Eram 104
+                   -- dispensas gravadas contra 85 mostrados, e nenhuma entrava em
+                   -- conta nenhuma. Um medidor que só sabe errar para um lado
+                   -- reporta metade da qualidade e chama de qualidade.
+                   count(dispensado_em)                             AS dispensados
               FROM check_g_ledger
              WHERE msg_em > now() - make_interval(days => %s)
              GROUP BY 1, 2 ORDER BY 3 DESC
