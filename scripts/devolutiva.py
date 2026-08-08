@@ -235,6 +235,61 @@ def render(d):
 </html>"""
 
 
+def fechar_loop(portoes):
+    """Grava o write-back dos portões marcados com `resolve`.
+
+    POR QUE VIVE AQUI, e não numa etapa separada (08/08/2026). O cockpit da
+    tonIAH continuou exibindo os três portões DEPOIS de o Renato os ter
+    resolvido — ele reclamou, com razão. O write-back só existia no botão
+    "Feito" do card; pelo caminho novo (instrução → terminal → devolutiva)
+    ninguém avisava a camada. Eu construí a entrada e esqueci a saída, que é a
+    mesma classe de defeito do check-G re-oferecendo o dispensado.
+
+    Juntar as duas coisas num ato só é o conserto: gerar a devolutiva É fechar o
+    loop. Enquanto forem dois passos, um dia esquece-se o segundo — e a
+    superfície volta a cobrar o que já foi feito, que é o jeito mais rápido de
+    perder a confiança dela.
+
+    A nota grava a EVIDÊNCIA (o que de fato aconteceu), não só "resolvido":
+    quem ler depois precisa saber por quê.
+    """
+    feitos = []
+    try:
+        import psycopg2, psycopg2.extras
+    except ImportError:
+        return feitos
+    url = ""
+    for l in open("/Users/rap/prospect-system/.env"):
+        if l.startswith("DATABASE_URL="):
+            url = l.split("=", 1)[1].strip().strip('"')
+    if not url:
+        return feitos
+
+    alvos = [p for p in portoes if p.get("resolve") and p.get("project_id")]
+    if not alvos:
+        return feitos
+    agora = datetime.now(BRT).strftime("%d/%m/%Y %H:%M")
+    with psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor) as conn:
+        conn.autocommit = True
+        cur = conn.cursor()
+        for p in alvos:
+            acao = str(p["resolve"]).lower()
+            label = {"feito": "RESOLVIDO", "adiar": "ADIADO"}.get(acao, acao.upper())
+            ev = p.get("desfecho") or ""
+            notas = " · ".join(p.get("notas") or [])
+            conteudo = (f'Renato marcou {label} o portão de hoje: '
+                        f'"{p.get("titulo") or p.get("pedido") or ""}" '
+                        f'({agora}, via terminal CoS). Instrução: "{p.get("pedido","")}". '
+                        f'Evidência: {ev}. {notas} '
+                        f'A camada não deve re-surfaçar este portão hoje.')
+            cur.execute(
+                """INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor)
+                   VALUES (%s, 'portao_acao', %s, %s, 'terminal-cos') RETURNING id""",
+                (int(p["project_id"]), f"Portão {label.lower()}", conteudo))
+            feitos.append((p["project_id"], cur.fetchone()["id"]))
+    return feitos
+
+
 def main():
     bruto = sys.stdin.read()
     try:
@@ -244,6 +299,11 @@ def main():
         return 1
     open(SAIDA, "w").write(render(d))
     n = len(d.get("portoes") or [])
+
+    fechados = fechar_loop(d.get("portoes") or [])
+    if fechados:
+        print(f"  loop fechado em {len(fechados)} portão(ões): " +
+              ", ".join(f"#{pid}→nota {nid}" for pid, nid in fechados))
     print(f"→ devolutiva: open {SAIDA}  ({n} portões)")
     if "--quieto" not in sys.argv:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
