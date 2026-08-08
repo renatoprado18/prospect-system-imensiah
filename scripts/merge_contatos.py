@@ -76,8 +76,81 @@ def parse_decisoes(texto: str):
     return merges, naos
 
 
+def consolidar_google_ids(cur, fica: int, absorvidas: list, aplicar: bool) -> int:
+    """Junta na ficha que fica os vinculos Google das que serao apagadas.
+
+    POR QUE (07/08/26). Ate aqui o merge cuidava das 32 FKs e ignorava
+    `google_contact_id`, que nao e FK — e uma coluna escalar POR CONTA. O Renato
+    tem duas agendas, e o passivo do import de 02/05 e exatamente esse: a mesma
+    pessoa com uma ficha por agenda, cada uma com seu gid. Apagar a segunda sem
+    guardar o gid dela deixa aquele vinculo orfao, e o sync daquela conta volta a
+    tratar a pessoa como desconhecida — o merge viraria enxugar gelo, com a ficha
+    renascendo no ciclo seguinte ([[feedback_livelock_reprocessamento]]).
+
+    O mapa multi-conta (`empresa_dados._google_contact_ids`) e onde a cascata de
+    identidade procura primeiro; grava-se no formato novo `{conta: [gids]}`, que
+    a leitura ja aceita junto com o legado `{conta: "gid"}`.
+
+    220 fichas tem gid escalar sem entrada no mapa — dessas nao da pra saber a
+    conta, entao o gid vai pra chave `_orfaos`. Nao e chute de conta: e registro
+    de que o vinculo existiu, disponivel pra quem for reconciliar depois.
+    """
+    cur.execute("""SELECT id, google_contact_id, COALESCE(empresa_dados,'{}'::jsonb) AS ed
+                     FROM contacts WHERE id = ANY(%s)""", ([fica] + absorvidas,))
+    fichas = {r["id"]: r for r in cur.fetchall()}
+    if fica not in fichas:
+        return 0
+
+    mapa, orfaos = {}, []
+    for cid, r in fichas.items():
+        blob = r["ed"] if isinstance(r["ed"], dict) else json.loads(r["ed"] or "{}")
+        atual = blob.get("_google_contact_ids") or {}
+        vistos = set()
+        for conta, gids in (atual.items() if isinstance(atual, dict) else []):
+            valores = [gids] if isinstance(gids, str) else (gids if isinstance(gids, list) else [])
+            for g in valores:
+                if g:
+                    mapa.setdefault(str(conta), [])
+                    if str(g) not in mapa[str(conta)]:
+                        mapa[str(conta)].append(str(g))
+                    vistos.add(str(g))
+        g_escalar = r["google_contact_id"]
+        if g_escalar and str(g_escalar) not in vistos:
+            orfaos.append(str(g_escalar))
+
+    if orfaos:
+        mapa.setdefault("_orfaos", [])
+        for g in orfaos:
+            if g not in mapa["_orfaos"]:
+                mapa["_orfaos"].append(g)
+    if not mapa:
+        return 0
+
+    # O gid escalar da absorvida NAO pode ser adotado aqui: as duas fichas ainda
+    # coexistem neste ponto (o DELETE vem depois) e `google_contact_id` tem
+    # indice UNICO — atribuir agora derruba o grupo inteiro com "duplicate key".
+    # Foi o que aconteceu no lote de 150 em 08/08: 118 de 150 grupos abortaram,
+    # todos aqueles em que a ficha mantida tinha gid NULL. Devolvo o candidato
+    # pro chamador aplicar DEPOIS do DELETE.
+    candidato = next((str(fichas[i]["google_contact_id"]) for i in absorvidas
+                      if fichas.get(i) and fichas[i]["google_contact_id"]), None)
+    if aplicar:
+        cur.execute(
+            """UPDATE contacts
+                  SET empresa_dados = COALESCE(empresa_dados,'{}'::jsonb)
+                                      || jsonb_build_object('_google_contact_ids', %s::jsonb),
+                      atualizado_em = now()
+                WHERE id = %s""",
+            (json.dumps(mapa, ensure_ascii=False), fica))
+    return sum(len(v) for v in mapa.values()), candidato
+
+
 def merge(cur, fica: int, absorvidas: list, aplicar: bool) -> dict:
     movidos = defaultdict(int)
+    # ANTES de qualquer DELETE: o vinculo Google nao e FK e some junto com a linha.
+    n_gids, gid_candidato = consolidar_google_ids(cur, fica, absorvidas, aplicar)
+    if n_gids:
+        movidos["google_ids(consolidados)"] = n_gids
     for tabela, col in FKS:
         try:
             if tabela in CONFLITO:
@@ -98,6 +171,16 @@ def merge(cur, fica: int, absorvidas: list, aplicar: bool) -> dict:
     if aplicar:
         cur.execute("DELETE FROM contacts WHERE id = ANY(%s)", (absorvidas,))
         movidos["contacts(apagadas)"] = cur.rowcount
+        # AGORA o gid escalar pode ser adotado: a linha que o detinha nao existe
+        # mais, entao o indice unico esta livre. Ficha do import antigo (sem
+        # vinculo) herda o da agenda — sem isto ela fica sem gid escalar e so o
+        # mapa multi-conta a liga ao Google.
+        if gid_candidato:
+            cur.execute("""UPDATE contacts SET google_contact_id = %s, atualizado_em = now()
+                            WHERE id = %s AND google_contact_id IS NULL""",
+                        (gid_candidato, fica))
+            if cur.rowcount:
+                movidos["gid_escalar(adotado)"] = cur.rowcount
     return dict(movidos)
 
 
