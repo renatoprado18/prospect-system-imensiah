@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Planning semanal — regenera ~/cockpit/raci.html antes do ritual.
+
+  Instalar:
+    cp scripts/raci_semanal.plist ~/Library/LaunchAgents/com.almeidaprado.raci.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.raci.plist
+  Disparar a mao:
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.raci
+
+  SEGUNDA 7h30, meia hora antes do evento das 8h. Diferente do cockpit e do
+  board hunt, que rodam a cada 5 min: esta pagina e de RITUAL, nao de consulta
+  continua. Regenerar o dia inteiro nao acrescenta nada — o que ela mostra muda
+  em dias, e o momento em que precisa estar certa e um so.
+
+  StartCalendarInterval (e nao StartInterval) justamente por isso: o gatilho e a
+  hora do ritual, nao a passagem do tempo.
+
+  SE O MAC ESTIVER DORMINDO as 7h30, o launchd dispara ao acordar — e a pagina
+  carimba a hora em que foi gerada, entao um atraso aparece em vez de mentir.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.raci</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/rap/prospect-system/.venv/bin/python</string>
+    <string>/Users/rap/prospect-system/scripts/raci_semanal.py</string>
+    <string>--quieto</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system</string>
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/raci.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/raci.err</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
