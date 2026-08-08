@@ -92,16 +92,30 @@ So exibir se count > 0.
 
 **E. Cost tracker (se ultima sessao >24h):**
 ```sql
-SELECT SUM(amount_usd) FROM platform_costs WHERE data_referencia = CURRENT_DATE - 1
+SELECT provider, amount_usd, max(fetched_at)::date atualizado
+FROM platform_costs WHERE period_start = date_trunc('month', CURRENT_DATE)::date
+GROUP BY provider, amount_usd ORDER BY amount_usd DESC
 ```
-So alertar se acima do baseline.
+So alertar se acima do baseline (~US$76/mes). Medido em 08/08: US$25,71 no mes.
 
-**F. Reconciliacao WA×tasks (PROTECAO anti cos_action_blindness):**
-O sistema so reconcilia quando o BOT age; quando o Renato age direto no WA ou uma nota e criada, a task fica aberta = drift. Cruzar tasks pending × atividade real (~96h):
+⚠️ **Consertado em 08/08 — estava quebrado desde sempre.** A query anterior filtrava
+`data_referencia = CURRENT_DATE - 1`, e essa coluna **nao existe**: `platform_costs` e
+**mensal por provider** (`period_start`/`period_end`), nao diaria. O erro de SQL nao
+aparecia como erro — a secao simplesmente nao saia, e secao ausente aqui le-se como
+"custo normal". Alerta que falha calado e pior que alerta nenhum, porque certifica o
+que nunca olhou ([[feedback_filtro_vocabulario_errado_falha_calado]]).
+
+**F. Reconciliacao conversa×tasks (PROTECAO anti cos_action_blindness):**
+O sistema so reconcilia quando o BOT age; quando o Renato age direto ou uma nota e criada, a task fica aberta = drift. Cruzar tasks × atividade real (~96h):
+
+⚠️ **NAO diga "WA" ao mostrar isto.** WhatsApp e e-mail moram na MESMA `messages`, separados por `conversations.canal` — F1 nunca filtrou canal, entao **sempre leu os dois**. Medido em 08/08: das 33 tasks candidatas, **11 casavam por e-mail**. Anunciar "parece resolvida no WA" manda o Renato conferir no WhatsApp uma conversa que aconteceu no e-mail; ele nao acha, e passa a desconfiar do check inteiro. **Mostre o canal que casou** — e por isso a query abaixo tem `canais`.
 ```sql
--- (F1) task pending cujo CONTATO teve WA recente (inclui outgoing do Renato)
-SELECT t.id, t.titulo, c.nome, max(m.criado_em) ultima, string_agg(DISTINCT m.direcao,',') dirs
-FROM tasks t JOIN messages m ON m.contact_id=t.contact_id LEFT JOIN contacts c ON c.id=t.contact_id
+-- (F1) task pending cujo CONTATO teve conversa recente — WhatsApp E/OU e-mail
+SELECT t.id, t.titulo, c.nome, max(m.criado_em) ultima,
+       string_agg(DISTINCT cv.canal,',') canais, string_agg(DISTINCT m.direcao,',') dirs
+FROM tasks t JOIN messages m ON m.contact_id=t.contact_id
+JOIN conversations cv ON cv.id=m.conversation_id
+LEFT JOIN contacts c ON c.id=t.contact_id
 WHERE t.status='pending' AND m.criado_em > NOW() - INTERVAL '96 hours'
 GROUP BY t.id, t.titulo, c.nome ORDER BY ultima DESC;
 -- (F2) task pending cujo PROJETO teve nota nova recente
@@ -131,6 +145,43 @@ Le a lista, reconhece o que fecha o que, e confirma com o Renato.
 antes de 06/08; 14 foram ligadas pelo titulo com `scripts/tasks_liga_contato.py`).
 Task sem contato e invisivel pra F1, F2, F3 e pro check G. Quando criar ou fechar
 task, LINKE ao contato — e as 60 orfas seguem fora de qualquer cruzamento.
+
+**(F4) A TASK QUE ESPERA TERCEIRO NAO ESTA EM `pending` — ela esta `on_hold` (08/08).**
+F1/F2/F3 filtram `status='pending'`, e a regra de 04/08 ([[feedback_aguardar_terceiro_on_hold]])
+manda parquear como `on_hold` exatamente a task que aguarda retorno. Resultado: **as 24
+`on_hold` ficavam 100% fora do check F** — e sao justamente aquelas cuja condicao de saida
+e "o terceiro respondeu". Nao era o e-mail que faltava no cruzamento: era o *status*.
+Medido em 08/08: **16 das 24 tinham incoming nos ultimos 14 dias** — o retorno chegou e
+ninguem viu. (Sao 100% linkadas a contato, ao contrario das `pending`, so 46%.)
+
+```sql
+-- on_hold cujo RETORNO chegou depois do parqueio E que ele ainda nao respondeu
+WITH ult AS (
+  SELECT t.id AS task_id, t.titulo, t.contact_id, t.on_hold_since,
+         max(m.criado_em) FILTER (WHERE m.direcao='incoming') AS ult_in,
+         max(m.criado_em) FILTER (WHERE m.direcao='outgoing') AS ult_out
+  FROM tasks t JOIN messages m ON m.contact_id = t.contact_id
+  WHERE t.status = 'on_hold'
+  GROUP BY t.id, t.titulo, t.contact_id, t.on_hold_since
+)
+SELECT u.task_id, u.titulo, c.nome, u.on_hold_since::date parqueada, u.ult_in::date retorno,
+       (SELECT cv.canal FROM messages m JOIN conversations cv ON cv.id=m.conversation_id
+         WHERE m.contact_id=u.contact_id AND m.criado_em=u.ult_in LIMIT 1) canal
+FROM ult u JOIN contacts c ON c.id=u.contact_id
+WHERE u.ult_in > COALESCE(u.on_hold_since, '-infinity'::timestamp)
+  AND (u.ult_out IS NULL OR u.ult_out < u.ult_in)
+ORDER BY u.ult_in DESC;
+```
+⚠️ **As duas condicoes do WHERE sao a regra — nao as simplifique.** Sem `ult_out < ult_in`
+a query devolve **8** candidatas em vez de **3**, e o extra e falso positivo do tipo que
+queima confianca: a #999738 (Daniela) aparecia porque ela respondeu 07/08 10:07 — mas o
+Renato **respondeu de volta as 20:42**, entao a bola voltou pra ela e a task segue esperando
+com razao. Incoming nao significa "chegou a vez dele"; significa isso **so se ele nao falou
+depois**. Mesma inversao de bola medida no board hunt em 07/08.
+
+⚠️ **Nao trate `on_hold` vencida como atraso.** Vencimento passado e o normal nesse estado
+(regra 2 do prompt do agente). O que F4 detecta nao e o prazo — e o **fim da condicao do
+parqueio**. Oferecer: "o retorno que ela esperava chegou (canal, data) — reabre ou fecha?".
 
 Calibracao (13/07): **verbo de acao** (FUP/contatar/planejar/revisar/enviar) → o entregavel E A ACAO; se a acao foi feita (outgoing do Renato, nota criada, gate batido) = **RESOLVIDA, procurar a evidencia ativamente e fechar** (NAO devolver pro Renato quando a evidencia existe — [[feedback_nao_perguntar_age]]). **"Aguardar X retornar"** so fecha com `incoming` do terceiro. Ignorar tasks dev/backlog. So exibir se houver candidatas; NAO fechar auto — Renato confirma.
 
@@ -343,8 +394,9 @@ _Abrir, revisar a matriz, "Enviar no grupo" (o texto e editavel antes de sair)._
 ## 🚨 Atencao
 [APENAS itens > 0: feedback WA, memos drift, tasks overdue, custo anomalo]
 
-## 🔄 Parecem resolvidas no WA/nota — fecho? (check F, so se houver)
-[id · titulo · evidencia de 1 linha — Renato confirma]
+## 🔄 Parecem resolvidas — fecho? (check F, so se houver)
+[id · titulo · **canal que casou (WA/e-mail/nota)** · evidencia de 1 linha — Renato confirma]
+[F4 vem rotulada a parte: "o retorno chegou" — task `on_hold` cuja espera acabou]
 
 ## 📎 Chegou no WA/email e nao virou nada — vira task/evento? (check G, so se houver)
 [contato · 1 linha do que pediu · anexo? — Renato confirma ou ignora (o ato calibra)]
@@ -376,6 +428,55 @@ Ela une o que ele fez DIRETO em qualquer canal: WhatsApp e e-mail enviados,
 mensagem no grupo, **e RSVP de convite** — este ultimo nao era lido por consulta
 nenhuma antes de 06/08. Nao decide nada: mostra o ato, com data e evidencia; o
 julgamento de se aquilo cumpre o pedido continua seu.
+
+### O outro lado: rascunho pendente NAO e e-mail enviado
+
+`acao_do_renato` so mostra o rascunho que **virou envio** (`status='sent'`). O
+inverso — o rascunho criado e que **ninguem mandou** — tem tabela (`email_drafts`,
+061), funcao (`pending_drafts`) e endpoint (`GET /api/admin/email-drafts/pending`)
+desde 06/08. Sem ler isto, "esta pronto no rascunho" e *suposicao* — foi o que
+produziu o caso de 04/08 (e-mail ao pai relatado como pronto no rascunho quando
+ele ja tinha enviado as 16h29).
+
+🚨 **CRIE O RASCUNHO PELO PROXY DO INTEL, NAO PELO MCP DO GMAIL.** Este e o passo
+que faz o resto existir. Medido em 08/08: o cano funciona ponta a ponta (registra,
+lista, e reconcilia casando por `thread_id` mesmo com o message id trocado) e a
+tabela esta **VAZIA** — zero linhas em dois dias. Nao e bug do cano: e que o
+rascunho vinha nascendo pelo **MCP do Gmail**, que fala direto com o Google e
+**nunca passa pelo INTEL**. Produtor fora do processo nao aparece em grep nenhum
+([[feedback_consumidor_externo_invisivel_ao_grep]]) — e um loop cujo produtor real
+esta fora dele nunca fecha, por mais correto que seja por dentro.
+
+```bash
+curl -s -X POST https://intel.almeida-prado.com/api/admin/gmail-proxy \
+  -H "X-API-Key: $INTEL_API_KEY" -H "Content-Type: application/json" \
+  -d '{"account":"professional","action":"create_draft",
+       "params":{"to":"...","subject":"...","body":"...","contact_id":123,
+                 "source":"cos_skill","thread_id":"<se for resposta>"}}'
+```
+Passe `contact_id` e `thread_id` sempre que souber: sem `contact_id` o rascunho
+nao liga a pessoa nenhuma nos cruzamentos, e sem `thread_id` o Gmail abre thread
+nova e a reconciliacao perde a ancora. O rascunho sai igual no Gmail dele — a
+unica diferenca e que passa a existir para o sistema.
+
+**Antes de afirmar QUALQUER coisa sobre um e-mail que a camada montou:**
+```sql
+SELECT id, subject, to_emails, source, criado_em, thread_id
+FROM email_drafts WHERE status='pending' ORDER BY criado_em DESC LIMIT 20;
+```
+Como ler o resultado:
+- **linha presente** = o rascunho existe e **NAO foi enviado**. Diga "esta no
+  rascunho, falta voce mandar" — nunca "mandei" nem "foi enviado".
+- **linha ausente** para uma thread que voce esperava = **tres** coisas possiveis,
+  nao uma: nunca houve rascunho · ele ja foi reconciliado como enviado · ou o
+  rascunho foi criado por fora do INTEL (MCP do Gmail) e o sistema nunca soube.
+  Enquanto a tabela estiver vazia, o terceiro caso e o mais provavel. Confirme em
+  `acao_do_renato` antes de afirmar; **ausencia nao prova envio**.
+- Rascunho pendente **ha varios dias** e sinal pra oferecer ("segue parado no
+  rascunho desde X — mando, reescrevo ou descarto?"), nao pra cobrar.
+
+⚠️ **A ancora e `thread_id`, nunca o message id** — o Gmail troca o id da
+mensagem ao enviar, e casar por ele falha calado (zero linhas, zero erro).
 
 Existe porque em 06/08 foram **cinco falhas numa sessao so**, todas oferecendo o
 que ele ja tinha feito — Michele, Orestes, parabens ao Marson, RSVP da Phisalia,

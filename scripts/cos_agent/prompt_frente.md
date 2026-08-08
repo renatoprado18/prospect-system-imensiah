@@ -28,6 +28,14 @@ Tabelas (schema `public`):
   WHERE pessoa_id = <id> AND quando > '<data da cobrança>' ORDER BY quando DESC LIMIT 5;
   ```
   Existe porque em 06/08 a camada errou **cinco vezes na mesma sessão** propondo o que ele já tinha feito: Michele ("pode mandar sim", 04/08 21:48), Orestes (retorno no WA), parabéns ao Marson (05/08 18:07), convite da Phisalia já respondido. **Nenhuma exigia dado novo — exigia um lugar pra perguntar.**
+- ✉️ **`email_drafts` (subject, to_emails, status, thread_id, criado_em, contact_id)** — rascunho que a CAMADA montou no Gmail. `status='sent'` = ele mandou (ja entra na `acao_do_renato`); **`status='pending'` = escrito e NAO enviado**. As duas leituras importam e sao opostas:
+  ```sql
+  SELECT subject, to_emails, criado_em FROM email_drafts
+  WHERE status='pending' AND (contact_id = <id> OR contact_id IS NULL)
+  ORDER BY criado_em DESC LIMIT 5;
+  ```
+  **Rascunho pendente NAO cumpre portao** — o texto existe, o ato nao aconteceu. Se a frente depende de um e-mail sair e ha rascunho `pending`, a trava e "falta ele mandar", nao "falta escrever": diga isso na `trava`, com o assunto e a data. E **nunca relate rascunho como enviado** — foi assim que em 04/08 a camada afirmou "pronto no rascunho" um e-mail que o Renato ja tinha despachado as 16h29. Ancore por `thread_id`; o message id MUDA no envio.
+  ⚠️ **Tabela vazia NAO prova que nao ha rascunho.** Em 08/08 ela tinha zero linhas: o cano funciona, mas o rascunho vinha sendo criado por fora do INTEL (MCP do Gmail, que fala direto com o Google). Enquanto estiver vazia, trate a ausencia como **desconhecido**, nunca como "nao existe rascunho" — e diga em `nao_consegui_saber` se a frente dependia disso.
 - `copilot.emails` — **view pronta de e-mail**, mais rica que `messages` crua: `(subject, from_email, from_name, content, priority, classification, timestamp)`. Você já tem SELECT nela. Use quando o **assunto** ou o **remetente** importarem — em `messages` o corpo está em `conteudo`, mas o assunto vive em `metadata->>'subject'`.
 - `project_notes` (project_id, tipo, titulo, conteudo, criado_em) — `conteudo` pode ser longo; **leia inteiro quando importar**
 - `project_whatsapp_groups` + `group_messages` (group_jid, sender_name, content, from_me, timestamp)
