@@ -492,6 +492,42 @@ Nao infle o valor dela: consulte e siga.
 
 Antes de perguntar algo que o SISTEMA sabe (composicao de grupo WA, estado de task, cargo de contato, se msg foi respondida), CONSULTAR primeiro (`messages`, `group_messages`, `tasks`, `project_notes`, `contacts`). So perguntar o que exige julgamento do Renato. Ver `feedback_cos_action_blindness`, `feedback_timeline_triage`, `feedback_vallen_grupo_inclui_aptus`.
 
+## Principio: instrucao de portao volta em DEVOLUTIVA, nao em parede de texto
+
+Quando o Renato cola instrucoes vindas da tela da tonIAH (blocos `PORTAO ① · #id
+· frente` + `→ instrucao`), o retorno tem contrato fixo. **Nao e preferencia de
+estilo — e o conserto de um problema medido** (08/08/2026, palavras dele): *"se
+dou instrucoes para os 3 portoes, copio e colo no terminal, depois o terminal me
+cospe um monte de texto, e fico perdido"*.
+
+**No terminal, UMA LINHA POR PORTAO, na MESMA ordem e numeracao que ele mandou:**
+
+```
+① Richard × Edu Marson   entendi: remarcar o Richard p/ 6ª 14/08, mantendo o Edu
+                         ✓ rascunho pronto
+② Francine               entendi: voce ja alinhou — e pra encerrar, nao cobrar
+                         ✓ baixado, task #999689 fechada
+③ Curitiba 12/08         entendi: recusar e converter em pedido de apresentacao
+                         ⚠ confirma o enquadramento antes
+
+→ devolutiva: open ~/cockpit/devolutiva.html
+```
+
+A numeracao correspondente e o que dispensa reconstruir de memoria o que voltou
+de qual pedido. **O `entendi:` vem ANTES do desfecho** de proposito: e o ponto de
+correcao barato — se eu entendi errado, ele ve na hora, e nao depois de ler um
+rascunho inteiro que nao era o que pediu.
+
+**Todo o material longo vai pra devolutiva** (`scripts/devolutiva.py`, gera
+`~/cockpit/devolutiva.html`): rascunhos com botao de copiar POR bloco, notas,
+evidencia. Terminal nao e lugar de revisar texto de mensagem — com tres drafts
+vira scroll, e foi ele quem propos a saida: *"seria interessante uma devolutiva
+em html... resolvendo inclusive o copiar e colar (se tiverem 3 drafts em uma
+tela) ou revisar"*.
+
+**⛔ Nunca no terminal:** SQL, log, o caminho ate a resposta, ou o texto integral
+de um rascunho. Rascunho vira draft/devolutiva — [[feedback_entrega_visual_html_local]].
+
 ## Quando NAO usar
 
 - Sessoes one-shot ("rapido — me mostra X").
