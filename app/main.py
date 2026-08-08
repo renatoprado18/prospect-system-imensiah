@@ -10843,6 +10843,38 @@ async def cron_check_g_ledger(request: Request):
         return {"status": "error", "job": "check-g-ledger", "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/cron/jabo-pipeline-sheet")
+@track_cron_run
+async def cron_jabo_pipeline_sheet(request: Request):
+    """Cron semanal: lê a planilha de torrefações do Jabô e grava o retrato no #28.
+
+    O INTEL era cego a ela — a Andressa e o Renato trabalham o pipeline numa
+    planilha e o sistema não sabia nem quantos nomes existiam. Agora o projeto
+    #28 carrega o número, e sobretudo a IDADE: na primeira leitura a planilha
+    estava parada havia 23 dias. Pipeline parado é informação; pipeline parado
+    invisível não é nada.
+
+    NÃO cria contato e NÃO normaliza status (texto livre, 12 grafias em 49
+    linhas). Ver services/jabo_pipeline_sheet.py.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.jabo_pipeline_sheet import sincronizar
+
+    try:
+        r = await sincronizar(gravar=True)
+        return {"status": r["status"], "job": "jabo-pipeline-sheet",
+                "nota_id": r.get("nota_id"), "dias_parada": r.get("dias_parada"),
+                "total": (r.get("retrato") or {}).get("total"),
+                "sem_status": (r.get("retrato") or {}).get("sem_status"),
+                "erro": r.get("erro")}
+    except Exception as e:
+        logger.exception("cron_jabo_pipeline_sheet: exception fatal")
+        return {"status": "error", "job": "jabo-pipeline-sheet",
+                "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/api/cos/check-g-ledger")
 async def api_check_g_ledger(request: Request, dias: int = 14):
     """Leitura do ledger: falso negativo por gate, com o não-medido à vista.

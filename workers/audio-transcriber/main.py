@@ -220,6 +220,15 @@ _SCHEDULER_JOBS = [
     # na medicao de 06/08. NAO notifica (respeita a decisao "ii"): e memoria pra
     # medir, nao alarme. 9h UTC = 6h BRT, antes do review das 10h.
     ("check-g-ledger", "/api/cron/check-g-ledger", CronTrigger(hour=9, minute=0)),
+    # 07/08/26 — PLANILHA DE TORREFACOES do Jabo (#28). O pipeline comercial do
+    # cafe vive numa planilha que a Andressa e o Renato tocam a mao, e o INTEL
+    # nao sabia nem quantos nomes existiam. Semanal (segunda 11h UTC = 8h BRT)
+    # porque a planilha muda em dias, nao em horas — na primeira leitura estava
+    # parada havia 23 dias, e ler de hora em hora so repetiria o mesmo retrato.
+    # Grava nota no projeto; NAO cria contato e NAO normaliza status (texto
+    # livre: 12 grafias em 49 linhas).
+    ("jabo-pipeline-sheet", "/api/cron/jabo-pipeline-sheet",
+     CronTrigger(day_of_week="mon", hour=11, minute=0)),
     # 28/06/26 — F3.1 WA Triage sweep. Janela 4h batched Sonnet classifica
     # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
     # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
