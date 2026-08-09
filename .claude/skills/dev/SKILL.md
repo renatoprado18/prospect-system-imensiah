@@ -84,6 +84,20 @@ curl -s https://intel.almeida-prado.com/api/playbook/proposals | python3 -m json
 
 `{"pending": [...]}` — cada item e um `project_note` com `id` (o **PLAYBOOK-N**), `titulo`, `metadata.rules` (as regras extraidas). Lista vazia = nada esperando. **Se houver pendentes ha varios dias**, mencionar no bloco "Proximos passos" (o Renato pode ter esquecido de aprovar — o merge no Google Doc so acontece com o "aprovo playbook" dele). Nunca aplicar pela sessao Dev.
 
+### 2d. Fila de demandas de codigo (projeto "Sistema / Dev")
+
+A migration 068 (08/08/26) criou o projeto **"Sistema / Dev"** como caixa de ENTRADA de demanda de codigo — qualquer um joga ali (o Renato, a sessao CoS, a tonIAH) — e a justificativa dela ja dizia que "a abertura /dev le a fila e promove o que cabe". **O leitor nao existia**: a fila nasceu com 2 tarefas dentro e nenhum consumidor, no mesmo dia ([[feedback_consumidor_morto_wiring]]). Ler a fila:
+
+```bash
+cd /Users/rap/prospect-system && set -a && source .env && set +a && \
+  DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 python3 scripts/fila_dev.py
+```
+
+- **FILA ≠ BOARD.** A fila e a caixa de entrada; o `project_dev_backlog.md` continua sendo o board da sessao (o que esta em curso + prioridades). **Promover** = escolher uma, pegar os locks, levar pro board — e ela sai da fila.
+- Levar as abertas pro bloco "Proximos passos" da Etapa 3, com a **idade**: demanda parada ha semanas e' sinal, nao inventario.
+- **Nao promover tambem e decisao** — mas entao diga ao Renato por que ficou, senao a fila vira deposito.
+- ⚠️ Projeto ausente no alvo = **a 068 nao rodou ali**, nao "fila vazia". O script distingue os dois casos de proposito: dizer "nada esperando" quando o projeto nem existe seria mentir por omissao.
+
 ### 3. Abrir com "ONDE PARAMOS + PROXIMOS PASSOS" (a dor real do Renato)
 
 ANTES de propor frente, mostrar 2 blocos curtos:
