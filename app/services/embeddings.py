@@ -33,7 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 # ---- Config (centralizada aqui pra facilitar troca de provider/modelo) ----
-VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
+#
+# DOIS endpoints, e a chave decide qual serve — nao sao intercambiaveis:
+#   `pa-…`  criada em dashboard.voyageai.com  -> SO api.voyageai.com
+#   `al-…`  criada no MongoDB Atlas           -> SO ai.mongodb.com/v1/embeddings
+# Chave no endpoint errado devolve 403.
+#
+# Por que isto virou env (08/08/26): a URL estava fixa no codigo, entao o INTEL
+# ficou preso na chave `pa-` de uma conta SEM cartao — 3 RPM e 10K TPM. O cartao
+# existe desde 09/07, numa org do Atlas em tier pago (medido hoje: 12 chamadas
+# seguidas, 12x 200; no free a 4a ja falha), e a chave `al-` esta em
+# ~/.voyage_atlas_key. So a tonIAH tinha migrado; o INTEL ficou marcado como
+# "follow-up nao urgente" e foi esse teto que embiquou o backfill de hoje,
+# deixou tres historicos sem vetor e fez os embeddings se acumularem calados.
+#
+# O default continua no endpoint antigo pra que a troca seja UMA variavel de
+# ambiente, nao um deploy: setar VOYAGE_API_KEY=al-… junto com VOYAGE_API_URL.
+VOYAGE_API_URL = (os.getenv("VOYAGE_API_URL", "").strip()
+                  or "https://api.voyageai.com/v1/embeddings")
 VOYAGE_MODEL = "voyage-4-lite"      # $0.02/1M tokens, 1024 dims, multilingual
 VOYAGE_DIMS = 1024
 VOYAGE_TIMEOUT_S = 15.0
