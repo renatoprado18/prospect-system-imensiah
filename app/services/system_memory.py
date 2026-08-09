@@ -338,6 +338,47 @@ def _search_semantic(query: str, limit: int) -> List[Dict]:
     return merged[:limit]
 
 
+# Quantos resultados do topo contam como "puxada". Ver migration 070: contar
+# TODOS os retornados inflaria o ruido — o que sempre volta em 5o lugar
+# acumularia contador e o auto-aparo passaria a proteger o que nao serve.
+RECALL_TOP_N = 3
+
+
+def _registrar_recall(rows: List[Dict], via: str = "intel") -> None:
+    """Marca no banco que estas memorias voltaram no topo de uma busca.
+
+    Best-effort DE PROPOSITO: telemetria nunca derruba a leitura que a produz.
+    Falhou, engole — perde-se um ponto de dado, nao a resposta do usuario.
+
+    So conta `system_memories` (ids inteiros). O silo `tonia_memories` entra na
+    mesma lista com id `tonia:N` e fica de fora: e outra tabela, com outro ciclo
+    de vida, e o auto-aparo do MEMORY.md nao decide nada sobre ela.
+    """
+    ids = []
+    for r in rows[:RECALL_TOP_N]:
+        rid = r.get("id")
+        if isinstance(rid, int):
+            ids.append(rid)
+    if not ids:
+        return
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE system_memories
+                   SET recall_count = recall_count + 1,
+                       ultimo_recall_em = NOW(),
+                       ultimo_recall_via = %s
+                 WHERE id = ANY(%s)
+                """,
+                (via, ids),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.debug(f"_registrar_recall (ignorado): {e}")
+
+
 def search_memories(query: str, limit: int = 10, mode: str = "hybrid") -> List[Dict]:
     """
     Busca memorias persistentes.
@@ -355,10 +396,14 @@ def search_memories(query: str, limit: int = 10, mode: str = "hybrid") -> List[D
     mode = (mode or "hybrid").lower()
 
     if mode == "keyword":
-        return _search_keyword(query, limit)
+        out = _search_keyword(query, limit)
+        _registrar_recall(out)
+        return out
 
     if mode == "semantic":
-        return _search_semantic(query, limit)
+        out = _search_semantic(query, limit)
+        _registrar_recall(out)
+        return out
 
     # hybrid
     kw_results = _search_keyword(query, limit)
@@ -373,4 +418,6 @@ def search_memories(query: str, limit: int = 10, mode: str = "hybrid") -> List[D
         seen_ids.add(r["id"])
         if len(merged) >= limit:
             break
-    return merged[:limit]
+    out = merged[:limit]
+    _registrar_recall(out)
+    return out

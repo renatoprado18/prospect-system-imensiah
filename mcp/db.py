@@ -315,12 +315,42 @@ def get_document(document_id: int) -> Optional[Dict[str, Any]]:
     return doc
 
 
+# Telemetria de recall (migration 070). Este e o SEGUNDO caminho de leitura de
+# memoria — o outro e `app/services/system_memory.py`, com implementacao propria.
+# Os dois apontam pro mesmo Neon; instrumentar so um mede metade do denominador
+# e devolve um numero com cara de inteiro. `via` distingue quem puxou.
+RECALL_TOP_N = 3
+
+
+def _registrar_recall(rows: List[Dict[str, Any]]) -> None:
+    """Marca que estas memorias voltaram no topo. Best-effort: telemetria nunca
+    derruba a leitura que a produz. `copilot.memories` e view sobre
+    `system_memories` e preserva o id, entao o UPDATE vai direto na tabela."""
+    ids = [r["id"] for r in rows[:RECALL_TOP_N] if isinstance(r.get("id"), int)]
+    if not ids:
+        return
+    try:
+        with _conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """UPDATE system_memories
+                          SET recall_count = recall_count + 1,
+                              ultimo_recall_em = NOW(),
+                              ultimo_recall_via = 'mcp'
+                        WHERE id = ANY(%s)""",
+                    (ids,),
+                )
+            # `_conn` ja commita na saida sem excecao.
+    except Exception as e:
+        logger.debug("_registrar_recall ignorado: %s", e)
+
+
 def search_memories(query: str, k: int = 6) -> List[Dict[str, Any]]:
     """Semantica (voyage cosine em copilot.memories) com fallback keyword."""
     vec = embed(query, input_type="query")
     if vec is not None:
         try:
-            return _rows(
+            out = _rows(
                 """SELECT id, name, content, type, tags, source, created_at,
                           (embedding <=> %s::vector) AS distance
                    FROM copilot.memories
@@ -329,17 +359,21 @@ def search_memories(query: str, k: int = 6) -> List[Dict[str, Any]]:
                    LIMIT %s""",
                 (_pg_vector(vec), _pg_vector(vec), k),
             )
+            _registrar_recall(out)
+            return out
         except Exception as e:
             logger.error("busca semantica falhou (%s); keyword fallback", e)
     # Fallback keyword
     like = f"%{query}%"
-    return _rows(
+    out = _rows(
         """SELECT id, name, content, type, tags, source, created_at
            FROM copilot.memories
            WHERE name ILIKE %s OR content ILIKE %s
            ORDER BY created_at DESC LIMIT %s""",
         (like, like, k),
     )
+    _registrar_recall(out)
+    return out
 
 
 def search_group_messages(group: Optional[str] = None, query: Optional[str] = None,
