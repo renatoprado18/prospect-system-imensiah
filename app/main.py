@@ -12773,9 +12773,17 @@ async def api_system_memories_sync_file(request: Request):
         except Exception as e:
             logger.warning(f"sync-file: embed falhou pra {filename}: {e}")
 
-    # UPSERT atomico via ON CONFLICT no indice parcial (titulo) WHERE
-    # fonte='claude_code_migration'. xmax=0 distingue insert (xmax sempre 0
-    # pra row recem-inserida) de update.
+    # UPSERT atomico. A identidade e o ARQUIVO (tags->>0), nao o titulo —
+    # migration 069. Antes conflitava por titulo, e como o titulo vem do `name:`
+    # do frontmatter (prosa, reescrita a esmo), renomear NAO batia o conflito:
+    # nascia um registro novo e o velho ficava vivo e buscavel. Deu 5 pares, um
+    # deles o board dev de 194 KB de 30/07, e o recall chegava a devolver a
+    # equipe da Vallen de junho na frente da de agosto.
+    #
+    # `titulo` entrou no DO UPDATE (antes nunca era atualizado) e na condicao do
+    # WHERE: renomear so o `name:`, mantendo o corpo, tem que atualizar a linha —
+    # senao volta 'unchanged' e o titulo velho persiste.
+    # xmax=0 distingue insert (xmax sempre 0 pra row recem-inserida) de update.
     with get_db() as conn:
         cur = conn.cursor()
         if embedding_literal:
@@ -12783,13 +12791,15 @@ async def api_system_memories_sync_file(request: Request):
                 """
                 INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte, embedding)
                 VALUES (%s, %s, %s, %s::jsonb, %s, %s::vector)
-                ON CONFLICT (titulo) WHERE fonte='claude_code_migration'
+                ON CONFLICT ((tags->>0)) WHERE fonte='claude_code_migration'
                 DO UPDATE SET
+                    titulo = EXCLUDED.titulo,
                     conteudo = EXCLUDED.conteudo,
                     tipo = EXCLUDED.tipo,
                     tags = EXCLUDED.tags,
                     embedding = EXCLUDED.embedding
                 WHERE system_memories.conteudo IS DISTINCT FROM EXCLUDED.conteudo
+                   OR system_memories.titulo IS DISTINCT FROM EXCLUDED.titulo
                 RETURNING id, (xmax = 0) AS inserted
                 """,
                 (titulo, conteudo, tipo, tags_json, fonte, embedding_literal),
@@ -12802,12 +12812,14 @@ async def api_system_memories_sync_file(request: Request):
                 """
                 INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte)
                 VALUES (%s, %s, %s, %s::jsonb, %s)
-                ON CONFLICT (titulo) WHERE fonte='claude_code_migration'
+                ON CONFLICT ((tags->>0)) WHERE fonte='claude_code_migration'
                 DO UPDATE SET
+                    titulo = EXCLUDED.titulo,
                     conteudo = EXCLUDED.conteudo,
                     tipo = EXCLUDED.tipo,
                     tags = EXCLUDED.tags
                 WHERE system_memories.conteudo IS DISTINCT FROM EXCLUDED.conteudo
+                   OR system_memories.titulo IS DISTINCT FROM EXCLUDED.titulo
                 RETURNING id, (xmax = 0) AS inserted
                 """,
                 (titulo, conteudo, tipo, tags_json, fonte),
@@ -12816,14 +12828,17 @@ async def api_system_memories_sync_file(request: Request):
         conn.commit()
 
     if result is None:
-        # Conteudo igual ao DB — RETURNING vazio quando WHERE do DO UPDATE
-        # falha. Pega o id pra resposta.
+        # Conteudo E titulo iguais ao DB — RETURNING vazio quando o WHERE do DO
+        # UPDATE falha. Pega o id pra resposta. Busca pelo ARQUIVO, nao pelo
+        # titulo: se buscasse por titulo, um memo renomeado devolveria id=None
+        # (nao existe linha com o titulo novo) e o hook logaria 'unchanged' sem
+        # id — parecendo perda de registro onde nao houve nenhuma.
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id FROM system_memories "
-                "WHERE titulo=%s AND fonte=%s LIMIT 1",
-                (titulo, fonte),
+                "WHERE tags->>0 = %s AND fonte=%s LIMIT 1",
+                (filename, fonte),
             )
             existing = cur.fetchone()
         return {
