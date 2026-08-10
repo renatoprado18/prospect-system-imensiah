@@ -86,7 +86,15 @@ def triar(ro_url: str, limite: int, contato: int = 0) -> list[dict]:
               FROM contacts
              WHERE circulo <= 2
                AND (resumo_ai IS NULL OR resumo_ai = ''
-                    OR ultimo_enriquecimento < NOW() - INTERVAL '30 days')
+                    OR ultimo_enriquecimento < NOW() - INTERVAL '30 days'
+                    -- Quem FALHOU volta à fila, em vez de ficar 30 dias
+                    -- carimbado. Medido em 10/08: 10 contatos parados em
+                    -- `error: API_ERROR`, e não por acaso — eram os de maior
+                    -- volume (27 mil interações), que estouravam o pacote fixo
+                    -- de contexto da versão da API. Sem esta linha eles só
+                    -- voltariam em setembro, e o agente que resolve o caso
+                    -- nunca os veria.
+                    OR enriquecimento_status LIKE 'error%%')
              ORDER BY circulo ASC, ultimo_enriquecimento ASC NULLS FIRST,
                       ultimo_contato DESC NULLS LAST
              LIMIT %s

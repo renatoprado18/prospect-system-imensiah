@@ -99,10 +99,51 @@ def test_fila_ordena_contra_o_livelock():
     )
 
 
-def test_plist_nao_colide_com_o_cos_agent():
-    """Dois agentes na mesma cota do Max: se rodarem no mesmo minuto, brigam."""
-    assert "<key>Hour</key><integer>6</integer>" in _PLIST
-    assert "<key>Minute</key><integer>40</integer>" in _PLIST
+def test_quem_falhou_volta_para_a_fila():
+    """Os 10 travados em `error: API_ERROR` tinham `ultimo_enriquecimento` de
+    hoje (o cron carimba ao falhar), então a régua dos 30 dias os deixaria fora
+    até setembro — e o agente que resolve exatamente esse caso nunca os veria.
+
+    O desempate por `ultimo_enriquecimento ASC` impede que voltar à fila vire
+    monopólio: quem falhou hoje vai para o fim.
+    """
+    assert "enriquecimento_status LIKE 'error%%'" in _RUNNER, (
+        "quem falhou fica 30 dias fora da fila"
+    )
+
+
+def _horario_plist(texto: str) -> tuple:
+    import re
+    bloco = texto[texto.index("<key>StartCalendarInterval</key>"):]
+    h = int(re.search(r"<key>Hour</key><integer>(\d+)</integer>", bloco).group(1))
+    m = int(re.search(r"<key>Minute</key><integer>(\d+)</integer>", bloco).group(1))
+    return h, m
+
+
+def test_plist_roda_depois_do_pmset_e_do_cos_agent():
+    """Três restrições reais, e o número sozinho não as expressa:
+
+    · depois do `pmset wakeorpoweron 07:10`, que é o que acorda a máquina — na
+      bateria o Mac dorme em 1 minuto e job antes disso simplesmente não roda;
+    · depois do cos-agent das 07:12, que leva ~10 min e consome a MESMA cota do
+      Max que o Renato usa pra trabalhar;
+    · antes do cron das 09:00 BRT, senão a fila chega vazia ao Mac.
+    """
+    h, m = _horario_plist(_PLIST)
+    minutos = h * 60 + m
+    assert minutos >= 7 * 60 + 10, "roda antes do pmset acordar a máquina"
+    assert minutos >= 7 * 60 + 22, "sobrepõe o cos-agent (07:12 + ~10min)"
+    assert minutos < 9 * 60, "roda depois do cron — a fila chega vazia"
+
+
+def test_cron_roda_depois_do_mac():
+    """A ordem é o que faz o fallback significar algo. Com o cron às 02:25 ele
+    esvaziava a fila antes de o Mac acordar, e o job do Mac batia ponto todo dia
+    sobre trabalho nenhum — saudável na aparência, inútil no efeito."""
+    worker = (_ROOT / "workers" / "audio-transcriber" / "main.py").read_text(encoding="utf-8")
+    i = worker.index('("run-auto-enrich"')
+    linha = worker[i:worker.index("\n", i)]
+    assert "hour=12" in linha, f"cron cedo demais para o fallback significar algo: {linha}"
 
 
 def test_fatos_exigem_origem():

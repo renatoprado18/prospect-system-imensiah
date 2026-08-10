@@ -10,17 +10,18 @@
   Desligar:
     launchctl bootout gui/$(id -u)/com.almeidaprado.enrich-agent
 
-  HORARIO: 06:40 BRT (09:40 UTC). Duas razoes, e as duas importam:
+  HORARIO: 07:40 BRT. Tres restricoes, nesta ordem:
 
-  · O cron `run-auto-enrich` do Railway roda 05:25 UTC (02:25 BRT). Rodar DEPOIS
-    dele deixaria a fila vazia todo dia e o Mac nao teria o que fazer — o job
-    pareceria saudavel batendo ponto sobre trabalho nenhum. Com o fallback
-    condicional (o cron so assume se o Mac nao rodou), a ordem se inverte: o Mac
-    roda primeiro, e o cron das 02h vira rede de seguranca. Por isso 06:40 e uma
-    escolha PROVISORIA: quando o cron passar a ser condicional de fato, este job
-    deve subir pra antes dele.
-  · 32 minutos antes do cos-agent das 07:12, pra os dois nao brigarem pela cota
-    do Max no mesmo minuto.
+  · DEPOIS do `pmset repeat wakeorpoweron 07:10`, que e o que acorda a maquina.
+    Um job agendado antes disso so roda se o Mac ja estiver acordado — e na
+    bateria ele dorme em 1 minuto.
+  · DEPOIS do cos-agent das 07:12, que leva ~10 min. Os dois consomem a MESMA
+    cota do Max, que e a mesma que o Renato usa pra trabalhar; sobrepor os dois
+    e disputar com ele.
+  · ANTES do cron `run-auto-enrich`, movido para 12:00 UTC (09:00 BRT) no mesmo
+    commit. A ordem importa: enquanto o cron rodava as 02:25 ele esvaziava a
+    fila antes de o Mac acordar, e este job bateria ponto todo dia sobre
+    trabalho nenhum — saudavel na aparencia, inutil no efeito.
 
   `--limit 5`: a fila real e de ~53 contatos em circulo 1-2, re-enriquecidos a
   cada 30 dias — cerca de 2 por dia em regime permanente. O teto de 5 cobre o
@@ -29,8 +30,7 @@
 
   SONO DA MAQUINA: mesma armadilha do cos-agent. Na bateria o Mac dorme em 1
   minuto e o job nao acontece. O `pmset repeat wakeorpoweron 07:10` que ja existe
-  cobre o cos-agent, NAO este job (06:40 e antes). Sem ajustar o pmset pra 06:38,
-  este job so roda quando a maquina ja estiver acordada.
+  cobre este job, que roda 30 min depois — nao e preciso mexer no pmset.
 
   COMO SE SABE QUE NAO RODOU: batimento em `cron_heartbeats`
   (job_id=enrich-agent-local). A deteccao mora no SERVIDOR — vigia que mora na
@@ -49,7 +49,7 @@
   </array>
 
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>40</integer></dict>
+  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>40</integer></dict>
 
   <key>RunAtLoad</key>
   <false/>

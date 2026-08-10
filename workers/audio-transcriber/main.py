@@ -334,7 +334,12 @@ _SCHEDULER_JOBS = [
     # webhook WA que parou 3h: o mecanismo nao entregava e nada avisava.
     ("sync-calendar", "/api/cron/sync-calendar", CronTrigger(minute="*/15")),
     ("run-daily-ai", "/api/cron/run-daily-ai", CronTrigger(hour=5, minute=15)),
-    ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=5, minute=25)),
+    # 10/08/26 — movido de 05:25 para 12:00 UTC (09:00 BRT). O enriquecimento
+    # migrou pro agente local, que roda 07:40 BRT; enquanto este cron rodasse às
+    # 02:25 ele esvaziaria a fila ANTES do Mac acordar, e o job do Mac bateria
+    # ponto todo dia sobre trabalho nenhum — parecendo saudável. Agora ele roda
+    # DEPOIS e só assume se o batimento `enrich-agent-local` não apareceu hoje.
+    ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=12, minute=0)),
     ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),
     # Write-back INTEL → Google Contacts (07/08/2026). Ficha criada aqui só
     # chega ao celular do Renato pelo Google — sem este job, o número segue
