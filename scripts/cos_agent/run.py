@@ -286,6 +286,10 @@ def julgar(frente: dict, ro_url: str) -> dict:
         # erro do enriquecimento morria uma linha depois de ser produzido. Toda
         # fronteira entre funções é um lugar onde dado some sem avisar.
         "fatos_novos": d.get("fatos_novos") or [],
+        # 10/08 — mesma armadilha da linha acima: se `atualizacoes` não estiver
+        # listada aqui, o agente propõe, o `persistir_atualizacoes` espera, e a
+        # fronteira come no meio sem erro nenhum.
+        "atualizacoes": d.get("atualizacoes") or [],
         "_meta": {"duracao_s": dur, "custo_usd": custo, "motor": "agente_local",
                   "julgado_em": agora},
     }
@@ -457,6 +461,71 @@ def fundir(anterior: dict, novos: list[dict], triagem: dict) -> dict:
                 if not (d.get("precisa_de_voce") or {}).get("sim")]
     return {"frentes": frentes, "precisa": precisa,
             "vigilias": vigilias, "cobertas": cobertas}
+
+
+def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
+    """Aplica o que o agente propôs mudar no cadastro. Devolve o placar.
+
+    POR QUE O RUNNER, e não o agente. Mesma razão dos fatos: a credencial do
+    agente (`cos_agent_ro`) nega escrita no Postgres. Dar a ele a credencial de
+    escrita para "simplificar" acabaria com a única garantia dura do desenho —
+    ele passaria a poder escrever por psql, fora do portão e fora do
+    livro-razão. Ele PROPÕE no JSON; aqui a proposta passa pela lista fechada.
+
+    A REGRA DE VALIDAÇÃO NÃO MORA AQUI de propósito. `services/agent_write.py`
+    é quem conhece as operações, os campos e o piso de confiança; este runner só
+    injeta a conexão. Reimplementar a lista aqui seria a duplicação que esta
+    auditoria vem catalogando — duas cópias divergem no primeiro `git pull`, e a
+    que diverge em silêncio é a que escreve no banco.
+
+    Recusa não é erro: `PropostaPendente` (confiança baixa) e
+    `OperacaoNaoPermitida` (campo ou operação fora da lista) são resultados
+    esperados, contados e relatados. O que NÃO pode acontecer é uma proposta
+    sumir sem aparecer em lugar nenhum.
+    """
+    sys.path.insert(0, str(BASE.parent.parent / "app"))
+    from services import agent_write  # noqa: E402
+
+    placar = {"escritas": 0, "propostas": 0, "recusadas": 0, "detalhe": []}
+    candidatos = [(d, u) for d in debriefs for u in (d.get("atualizacoes") or [])[:3]]
+    if not candidatos:
+        return placar
+
+    with _conn(rw_url) as conexao:
+        for d, u in candidatos:
+            op = (u.get("operacao") or "").strip()
+            dados = u.get("dados") or {}
+            motivo = (u.get("motivo") or "").strip()
+            try:
+                conf = float(u.get("confianca") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+
+            try:
+                rid = agent_write.escrever(
+                    op, dados,
+                    motivo=motivo, confianca=conf,
+                    agente="cos_agent_local",
+                    fato_origem=(u.get("fato_origem") or "").strip() or None,
+                    registro_id=u.get("registro_id"),
+                    conn=conexao,
+                )
+                placar["escritas"] += 1
+                placar["detalhe"].append(
+                    {"frente": d.get("frente"), "operacao": op, "id": rid, "status": "escrito"})
+            except agent_write.PropostaPendente as p:
+                # O ambíguo tem destino: vira pergunta. Abster aqui recriaria o
+                # caso Orbiz — o desencontro visto e ninguém avisado.
+                placar["propostas"] += 1
+                placar["detalhe"].append(
+                    {"frente": d.get("frente"), "operacao": op, "status": "proposta",
+                     "confianca": p.confianca, "motivo": p.motivo, "dados": p.payload})
+            except Exception as e:                        # noqa: BLE001
+                placar["recusadas"] += 1
+                placar["detalhe"].append(
+                    {"frente": d.get("frente"), "operacao": op, "status": "recusada",
+                     "erro": str(e)[:200]})
+    return placar
 
 
 def persistir_fatos(owner_url: str, ro_url: str, debriefs: list[dict]) -> int:
@@ -795,6 +864,26 @@ def main() -> int:
     n_fatos = persistir_fatos(owner_url, ro_url, ok)
     if n_fatos:
         print(f"[cos-agent] {n_fatos} fato(s) novo(s) gravados em contact_facts")
+
+    # 10/08 — o conhecimento passa a ser ATUALIZADO, não só julgado. Diretriz do
+    # Renato: "se eu envio uma msg de WA para o Pretola, a inteligência deve
+    # interpretar e atualizar o conhecimento; se houver dúvida, deve me acionar".
+    # Sem COS_RW_URL a camada segue como antes (só julga) — e DIZ que seguiu,
+    # porque o modo degradado silencioso é como se descobre em novembro que
+    # nada foi escrito desde agosto.
+    rw_url = (os.getenv("COS_RW_URL") or "").strip()
+    if rw_url:
+        pl = persistir_atualizacoes(rw_url, ok)
+        if pl["escritas"] or pl["propostas"] or pl["recusadas"]:
+            print(f"[cos-agent] cadastro: {pl['escritas']} escrita(s), "
+                  f"{pl['propostas']} proposta(s) pra decisão, {pl['recusadas']} recusada(s)")
+            for det in pl["detalhe"]:
+                print(f"[cos-agent]   {det.get('status'):9s} {det.get('operacao','?')} "
+                      f"— {det.get('frente','?')}", file=sys.stderr)
+    elif any(d.get("atualizacoes") for d in ok):
+        n = sum(len(d.get("atualizacoes") or []) for d in ok)
+        print(f"[cos-agent] ⚠️ {n} atualização(ões) propostas e DESCARTADAS: "
+              f"COS_RW_URL ausente (ver ~/.cos-agent/env)", file=sys.stderr)
 
     # Funde com a foto anterior: quem não se mexeu mantém o julgamento de ontem.
     # Sem isto o payload sairia PARCIAL e viraria o oficial (ver `herdar`).

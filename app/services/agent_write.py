@@ -30,6 +30,7 @@ existir, ele deve conceder acesso APENAS às tabelas desta lista. Enquanto isso,
 este módulo é a disciplina — e disciplina sem trava vale enquanto todo mundo
 chamar por aqui.
 """
+import contextlib
 import json
 import logging
 from dataclasses import dataclass
@@ -141,6 +142,7 @@ def escrever(
     run_id: Optional[str] = None,
     fato_origem: Optional[str] = None,
     registro_id: Optional[int] = None,
+    conn=None,
 ) -> int:
     """Executa UMA operação da lista fechada e grava o livro-razão.
 
@@ -150,6 +152,12 @@ def escrever(
 
     `motivo` é obrigatório e vai para a auditoria em português: o livro-razão
     tem que ser julgável por um humano sem ler código.
+
+    `conn` existe para o runner do agente local (`scripts/cos_agent/run.py`),
+    que roda fora do app e tem a própria conexão via COS_RW_URL. A alternativa
+    seria ele reimplementar a lista fechada — que é exatamente o defeito que
+    esta auditoria vem catalogando: duplicar a REGRA em vez de chamar por ela.
+    Conexão injetada não é fechada aqui; quem abriu, fecha.
     """
     op = OPERACOES.get(operacao)
     if op is None:
@@ -176,8 +184,8 @@ def escrever(
     if op.tipo == "update" and registro_id is None:
         raise OperacaoNaoPermitida(f"{operacao}: update exige registro_id")
 
-    with get_db() as conn:
-        cur = conn.cursor()
+    with (contextlib.nullcontext(conn) if conn is not None else get_db()) as _conn:
+        cur = _conn.cursor()
 
         valor_anterior = None
         if op.tipo == "update":
