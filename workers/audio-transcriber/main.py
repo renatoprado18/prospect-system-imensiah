@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Worker")
 
 # Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
-WORKER_BUILD = "gmail-sync-chunked-v7-internal-loop"
+WORKER_BUILD = "llm-usage-instrumentado-v8"
 logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
 
 
