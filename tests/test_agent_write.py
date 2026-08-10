@@ -1,0 +1,216 @@
+"""A camada passou a escrever — estes testes são o que impede isso de virar dano.
+
+Diretriz do Renato (10/08/2026): a inteligência interpreta os fatos e atualiza o
+conhecimento; na dúvida, aciona. A camada nasceu read-only em 31/07 justamente
+porque agente que escreve pode "consertar" o que não entendeu. A saída não é
+proibir nem liberar: é escrita ESTREITA, AUDITADA e REVERSÍVEL.
+
+Cada teste aqui guarda uma forma de perder isso:
+  - operação fora da lista       -> a camada faz o que ninguém autorizou
+  - campo fora da operação       -> autorizei follow-up, ela mexeu em outra coluna
+  - escrita sem motivo           -> o livro-razão vira log de diff, inauditável
+  - confiança baixa virando UPDATE -> o palpite entra como fato
+  - desfazer apagando INSERT     -> repete o dano em CASCADE do merge
+
+Rodar: PYTHONPATH=app .venv/bin/python -m pytest tests/test_agent_write.py -v
+"""
+import json
+import pathlib
+import sys
+
+import pytest
+
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "app"))
+sys.path.insert(0, str(_ROOT))
+
+
+class _Cur:
+    """Cursor falso que registra o SQL emitido e devolve linhas plausíveis."""
+
+    def __init__(self, linha_existente=None):
+        self.sqls = []
+        self.params = []
+        self._linha = linha_existente
+
+    def execute(self, sql, params=None):
+        self.sqls.append(" ".join(sql.split()))
+        self.params.append(params)
+
+    def fetchone(self):
+        ultimo = self.sqls[-1].upper() if self.sqls else ""
+        if ultimo.startswith("SELECT") and "AGENT_WRITES" in ultimo:
+            return self._linha
+        if ultimo.startswith("SELECT"):
+            return self._linha if self._linha is not None else {"id": 42}
+        return {"id": 42}
+
+
+class _Conn:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def cursor(self):
+        return self._cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.fixture
+def aw(monkeypatch):
+    from services import agent_write
+    cur = _Cur()
+    monkeypatch.setattr(agent_write, "get_db", lambda: _Conn(cur))
+    return agent_write, cur
+
+
+def test_escreve_o_caso_pretola(aw):
+    """O caso que originou tudo: a frente existe no mundo e não no banco."""
+    mod, cur = aw
+    rid = mod.escrever(
+        "criar_frente_board_hunt",
+        {"nome": "Orbiz / Rodrigo Pretola", "contato_id": 5245, "fase": 2, "status": "ativo"},
+        motivo="Renato retomou o fio e propôs data (HH qua 12/08); board hunt registra Orbiz reativado desde 07/08 sem linha no banco.",
+        confianca=0.9,
+        fato_origem="messages#27573",
+    )
+    assert rid == 42
+    assert any("INSERT INTO board_hunt_frentes" in s for s in cur.sqls)
+    assert any("INSERT INTO agent_writes" in s for s in cur.sqls), "escreveu sem registrar no livro-razão"
+
+
+def test_operacao_fora_da_lista_nao_acontece(aw):
+    """Lista fechada: capacidade nova exige decisão, não improviso em runtime."""
+    mod, cur = aw
+    with pytest.raises(mod.OperacaoNaoPermitida):
+        mod.escrever("apagar_contato", {"id": 5245}, motivo="limpeza", confianca=1.0)
+    assert not cur.sqls, "chegou a emitir SQL para operação não permitida"
+
+
+def test_campo_fora_da_operacao_nao_passa(aw):
+    """Autorizar 'criar task' não pode autorizar mexer em qualquer coluna de tasks."""
+    mod, cur = aw
+    with pytest.raises(mod.OperacaoNaoPermitida) as exc:
+        mod.escrever(
+            "criar_task_followup",
+            {"titulo": "FUP Pretola", "data_conclusao": "2026-08-12"},
+            motivo="follow-up", confianca=0.9,
+        )
+    assert "data_conclusao" in str(exc.value)
+    assert not cur.sqls
+
+
+def test_escrita_sem_motivo_e_recusada(aw):
+    """Livro-razão sem 'por quê' mostra o que mudou e não deixa julgar se devia."""
+    mod, _ = aw
+    for vazio in ("", "   "):
+        with pytest.raises(mod.OperacaoNaoPermitida):
+            mod.escrever("criar_task_followup", {"titulo": "x"}, motivo=vazio, confianca=0.9)
+
+
+def test_confianca_baixa_vira_proposta_nao_escrita(aw):
+    """Abaixo do piso a camada PERGUNTA. E perguntar não é abster: o ambíguo tem
+    destino, com payload pronto para virar decisão do Renato."""
+    mod, cur = aw
+    with pytest.raises(mod.PropostaPendente) as exc:
+        mod.escrever(
+            "atualizar_fase_frente", {"fase": 4},
+            motivo="talvez tenha avançado", confianca=0.4, registro_id=3,
+        )
+    assert exc.value.payload == {"fase": 4}
+    assert exc.value.confianca == 0.4
+    assert not cur.sqls, "gravou apesar da confiança abaixo do piso"
+
+
+def test_piso_e_inclusivo_na_borda(aw):
+    """Exatamente no piso escreve — senão o piso documentado não é o piso real."""
+    mod, _ = aw
+    rid = mod.escrever(
+        "registrar_nota_projeto",
+        {"project_id": 1, "tipo": "camada", "conteudo": "x"},
+        motivo="registro do fato interpretado",
+        confianca=mod.PISO_ESCRITA,
+    )
+    assert rid == 42
+
+
+def test_update_guarda_o_estado_anterior(monkeypatch):
+    """Sem o valor anterior, desfazer é arqueologia — foi assim que o dano do
+    merge de contatos ficou inauditável."""
+    from services import agent_write
+    cur = _Cur(linha_existente={"fase": 2, "status": "ativo", "nota": "antes", "piso_alvo": None})
+    monkeypatch.setattr(agent_write, "get_db", lambda: _Conn(cur))
+
+    agent_write.escrever(
+        "atualizar_fase_frente", {"fase": 3},
+        motivo="reunião marcada para 12/08", confianca=0.85, registro_id=7,
+    )
+    idx = next(i for i, s in enumerate(cur.sqls) if "INSERT INTO agent_writes" in s)
+    anterior = json.loads(cur.params[idx][5])
+    assert anterior["fase"] == 2, "não guardou o valor anterior"
+    assert anterior["nota"] == "antes"
+
+
+def test_update_sem_registro_id_e_recusado(aw):
+    mod, _ = aw
+    with pytest.raises(mod.OperacaoNaoPermitida):
+        mod.escrever("atualizar_fase_frente", {"fase": 3}, motivo="x", confianca=0.9)
+
+
+def test_desfazer_insert_nao_apaga(monkeypatch):
+    """Apagar o registro levaria junto o que foi pendurado nele desde então — o
+    mesmo formato de dano do DELETE em CASCADE. Marca e devolve ao humano."""
+    from services import agent_write
+    cur = _Cur(linha_existente={
+        "id": 9, "tabela": "board_hunt_frentes", "registro_id": 13,
+        "valor_anterior": None, "desfeito_em": None,
+    })
+    monkeypatch.setattr(agent_write, "get_db", lambda: _Conn(cur))
+
+    r = agent_write.desfazer(9)
+    assert r["status"] == "insert_marcado_nao_apagado"
+    assert not any(s.upper().startswith("DELETE") for s in cur.sqls), "apagou o registro"
+
+
+def test_desfazer_update_restaura(monkeypatch):
+    from services import agent_write
+    cur = _Cur(linha_existente={
+        "id": 10, "tabela": "board_hunt_frentes", "registro_id": 7,
+        "valor_anterior": json.dumps({"fase": 2, "status": "ativo"}),
+        "desfeito_em": None,
+    })
+    monkeypatch.setattr(agent_write, "get_db", lambda: _Conn(cur))
+
+    r = agent_write.desfazer(10)
+    assert r["status"] == "revertido"
+    assert any("UPDATE board_hunt_frentes SET" in s for s in cur.sqls)
+
+
+def test_desfazer_duas_vezes_e_inocuo(monkeypatch):
+    from services import agent_write
+    cur = _Cur(linha_existente={
+        "id": 11, "tabela": "tasks", "registro_id": 5,
+        "valor_anterior": None, "desfeito_em": "2026-08-10 12:00:00",
+    })
+    monkeypatch.setattr(agent_write, "get_db", lambda: _Conn(cur))
+    assert agent_write.desfazer(11)["status"] == "ja_desfeito"
+
+
+def test_tabelas_proibidas_ficam_fora_da_lista():
+    """contacts/messages/users não entram por decisão, não por esquecimento:
+    apagar ficha é irreversível e mensagem é o registro do que aconteceu — a
+    camada interpreta, não reescreve."""
+    from services import agent_write
+    tabelas = {op.tabela for op in agent_write.OPERACOES.values()}
+    for proibida in ("contacts", "messages", "whatsapp_messages", "users", "system_memories"):
+        assert proibida not in tabelas, f"{proibida} entrou na lista fechada"
+
+
+def test_nenhuma_operacao_de_delete():
+    from services import agent_write
+    tipos = {op.tipo for op in agent_write.OPERACOES.values()}
+    assert tipos <= {"insert", "update"}, f"tipo destrutivo na lista: {tipos}"

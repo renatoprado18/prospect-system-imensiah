@@ -247,8 +247,14 @@ _SCHEDULER_JOBS = [
     # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
     # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
     # erro de leitura do memo feedback_cron_host_choice). Custo ~$0.50/dia.
-    ("wa-triage-sweep", "/api/cron/wa-triage-sweep?window_hours=4",
-     CronTrigger(hour="*/4", minute=3)),
+    # ⚠️ DESLIGADO 10/08/26 — auditoria de custo. Rodou 6 semanas em shadow e o
+    # shadow nunca virou nada: 1.830 classificações acumuladas, 12 dispensadas
+    # e 8 acionadas — 1,1% com desfecho humano. Nenhum consumidor lê a tabela
+    # como sinal (as referências em código são FK de merge e telemetria).
+    # US$2,46/mês para encher uma tabela que ninguém lê. Mesmo padrão do
+    # ai_suggestions (04/08). Reverter = descomentar.
+    # ("wa-triage-sweep", "/api/cron/wa-triage-sweep?window_hours=4",
+    #  CronTrigger(hour="*/4", minute=3)),
     # 28/06/26 — News watchers sessao paralela (4x/dia, modo silent default).
     # Migrado de vercel.json (Hobby plan limita 1 cron/dia, estava bloqueando
     # deploy). 5 watchers ativos, ~15s/run total (modo silent nao chama LLM).
