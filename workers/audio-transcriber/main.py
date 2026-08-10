@@ -34,6 +34,11 @@ def _format_sp_datetime(dt: datetime = None) -> str:
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
+# Custo LLM deste processo. Ate 10/08/26 as 8 chamadas ao Claude daqui nao
+# registravam nada, e o cost tracker reportava um total que as excluia sem
+# sinalizar — justo o volume pesado (bot por texto, audio, imagem, PDF, ata).
+import llm_usage
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -864,7 +869,11 @@ Extraia APENAS do que está nos documentos. NÃO invente."""
                 )
 
             if ai_resp.status_code == 200:
-                text = ai_resp.json().get("content", [{}])[0].get("text", "")
+                _rj = ai_resp.json()
+                llm_usage.record_response("worker.empresa_organize",
+                                          "claude-sonnet-4-20250514", _rj,
+                                          metadata={"empresa_id": empresa_id})
+                text = _rj.get("content", [{}])[0].get("text", "")
                 js = text.find("{")
                 je = text.rfind("}") + 1
                 if js >= 0:
@@ -1370,7 +1379,10 @@ async def _fetch_url(url: str, summarize: bool = False) -> str:
                           "messages": [{"role": "user", "content": f"Resuma em 3-4 frases:\n\n{title}\n{text[:3000]}"}]}
                 )
             if ai_resp.status_code == 200:
-                summary = ai_resp.json()["content"][0]["text"]
+                _rj = ai_resp.json()
+                llm_usage.record_response("worker.url_summarize",
+                                          "claude-haiku-4-5-20251001", _rj)
+                summary = _rj["content"][0]["text"]
                 result = f"**{title}**\n\n{summary}\n\nFonte: {url}"
 
         return result
@@ -1628,7 +1640,14 @@ async def _save_article_direct(project_id: int, url: str) -> str:
                 json={"model": "claude-haiku-4-5-20251001", "max_tokens": 400,
                       "messages": [{"role": "user", "content": f"Resuma este artigo em português, 3-4 frases + pontos-chave:\n\nTÍTULO: {title}\n\n{text}"}]}
             )
-        summary = ai_resp.json()["content"][0]["text"] if ai_resp.status_code == 200 else text[:300]
+        if ai_resp.status_code == 200:
+            _rj = ai_resp.json()
+            llm_usage.record_response("worker.article_save",
+                                      "claude-haiku-4-5-20251001", _rj,
+                                      metadata={"project_id": project_id})
+            summary = _rj["content"][0]["text"]
+        else:
+            summary = text[:300]
 
         # Save
         conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
@@ -2021,6 +2040,12 @@ REGRAS:
                 return None
 
             result = resp.json()
+            # Dentro do loop de propósito: cada iteração de tool-use é uma
+            # chamada cobrada. Registrar só a última subestimaria o bot — que é
+            # o produtor mais pesado e justamente o que estava invisível.
+            llm_usage.record_response("worker.bot_respond",
+                                      "claude-haiku-4-5-20251001", result,
+                                      metadata={"iteracao": iteration, "phone": phone})
             text_parts = []
             tool_uses = []
 
@@ -2266,6 +2291,8 @@ REGRAS CRÍTICAS:
             return JSONResponse({"error": f"Claude API error: {resp.status_code}"}, status_code=500)
 
         result = resp.json()
+        llm_usage.record_response("worker.ata_generate",
+                                  "claude-sonnet-4-20250514", result)
         ata_md = result["content"][0]["text"]
         logger.info(f"Ata generated: {len(ata_md)} chars")
 
@@ -2513,7 +2540,10 @@ async def _transcribe_audio_inner(data: dict) -> dict:
                         },
                     )
                     if sanity_resp.status_code == 200:
-                        verdict = (sanity_resp.json()["content"][0]["text"] or "").strip().upper()
+                        _rj = sanity_resp.json()
+                        llm_usage.record_response("worker.audio_sanity",
+                                                  "claude-haiku-4-5-20251001", _rj)
+                        verdict = (_rj["content"][0]["text"] or "").strip().upper()
                         logger.info(f"Sanity check verdict: {verdict}")
                         if "ALUCINACAO" in verdict or "ALUCINAÇÃO" in verdict:
                             await _maybe_respond(
@@ -2711,7 +2741,10 @@ async def _analyze_image_inner(data: dict) -> dict:
             await _maybe_respond("Erro ao analisar imagem.")
             return {"error": f"vision_failed: {resp.status_code}"}
 
-        analysis = resp.json().get("content", [{}])[0].get("text", "")
+        _rj = resp.json()
+        llm_usage.record_response("worker.image_analyze",
+                                  "claude-haiku-4-5-20251001", _rj)
+        analysis = _rj.get("content", [{}])[0].get("text", "")
         if not analysis:
             await _maybe_respond("Nao consegui analisar a imagem.")
             return {"error": "empty_analysis"}
@@ -2899,9 +2932,14 @@ async def _analyze_pdf_inner(data: dict) -> dict:
 
         result = resp.json()
         extracted = result.get("content", [{}])[0].get("text", "")
-        usage = result.get("usage", {}) or {}
-        # custo aprox sonnet 4.6: $3/1M in + $15/1M out
-        cost = (usage.get("input_tokens", 0) * 3 + usage.get("output_tokens", 0) * 15) / 1_000_000
+        # 10/08/26 — aqui havia uma TERCEIRA cópia da tabela de preços, inline
+        # e incompleta (ignorava cache read/write, que no PDF é justamente onde
+        # o volume está). Agora sai do mesmo `compute_cost` do resto: o valor
+        # gravado em wa_attachments e o de tonia_llm_usage não podem discordar.
+        cost = llm_usage.record_response(
+            "worker.pdf_analyze", "claude-sonnet-4-6", result,
+            metadata={"filename": filename, "size_bytes": size_bytes},
+        ) or 0.0
 
         if not extracted:
             await _maybe_respond("Nao consegui extrair conteudo do PDF.")

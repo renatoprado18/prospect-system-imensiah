@@ -1396,6 +1396,11 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
 
     if resp.status_code == 200:
         result = resp.json()
+        # 10/08/26 — esta era a única chamada ao Claude do lado INTEL que não
+        # registrava custo. Transcrição de áudio roda a cada áudio recebido:
+        # invisível e recorrente é a pior combinação num medidor.
+        from services import llm_usage
+        llm_usage.record_response("wa.audio_transcribe", llm.FAST, result)
         return result.get("content", [{}])[0].get("text", "")
 
     logger.warning(f"Claude transcription failed: {resp.status_code}")
