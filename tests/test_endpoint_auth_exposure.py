@@ -187,6 +187,34 @@ class TestCaminhoDaMaquina:
         with pytest.raises(HTTPException):
             main.require_scaffold_auth(self._request({}))
 
+    def test_ninguem_compara_a_env_direto(self):
+        """Rota que compara header com env NA MAO repete o bug de classe.
+
+        `POST /api/cos/portao-action` (rota de ESCRITA) fazia
+        `if request.headers.get("X-API-Key") != os.getenv("INTEL_API_KEY")`:
+        sem `.strip()` e sem guarda de vazio, `None != None` e falso e o
+        porteiro ABRE se a env sumir. As outras 22 copias exigem
+        `api_key and intel_api_key and ...` e continuariam negando — o teste
+        acima ja prova isso pro helper, mas so vale pra quem o CHAMA.
+
+        Corrigido em 10/08/26 trocando pelo helper. Esta guarda existe pra a
+        forma nao voltar: o teste de exposicao nao pegava, porque a rota TINHA
+        auth — so tinha a errada.
+        """
+        with open(MAIN_PY, encoding="utf-8") as fh:
+            fonte = fh.read()
+        formas = [
+            '!= os.getenv("INTEL_API_KEY")',
+            "!= os.getenv('INTEL_API_KEY')",
+            '!= os.environ.get("INTEL_API_KEY")',
+            "!= os.environ.get('INTEL_API_KEY')",
+        ]
+        achadas = [f for f in formas if f in fonte]
+        assert not achadas, (
+            f"comparacao crua com a env em main.py: {achadas}. "
+            "Use require_scaffold_auth(request) — sem env, essa forma ABRE."
+        )
+
 
 # --------------------------------------------------------------------------
 # Guarda da CLASSE (AST): nenhuma rota de andaime em main.py sem auth.

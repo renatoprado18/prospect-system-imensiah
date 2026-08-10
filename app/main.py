@@ -11007,9 +11007,15 @@ async def api_cos_portao_action(request: Request):
     """Fecha o loop do portão: o Renato AGE no cockpit (feito/adiar) → grava o
     write-back como project_note (tipo='portao_acao') no projeto da frente. A nota
     entra na memória unificada (a camada lê no próximo run e não re-surfaça o
-    portão). Auth: X-API-Key (a tonIAH proxeia)."""
-    if request.headers.get("X-API-Key") != os.getenv("INTEL_API_KEY"):
-        raise HTTPException(status_code=401, detail="Nao autenticado")
+    portão). Auth: X-API-Key (a tonIAH proxeia) OU sessão admin.
+
+    10/08/26 — a comparação era `request.headers.get(...) != os.getenv(...)`,
+    sem `.strip()` e sem guarda de vazio: com a env ausente, `None != None` é
+    falso e o porteiro ABRIA numa rota de escrita. As outras 22 cópias exigem
+    `api_key and intel_api_key and ...` e continuariam negando — este era o
+    único fora do padrão. Testado em prod 09/08: 401 sem header e com header
+    errado (a env está setada), ou seja, risco latente, não brecha aberta."""
+    require_scaffold_auth(request)
     data = await request.json()
     try:
         pid = int(data.get("project_id"))
