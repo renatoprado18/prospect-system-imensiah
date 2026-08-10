@@ -217,7 +217,16 @@ _SCHEDULER_JOBS = [
     # frentes e produz o debriefing diário (1×/dia, ~7h BRT, após um run do roteador).
     # Ver services/signal_router.py + services/frente_review.py.
     ("cos-signal-router", "/api/cron/cos-signal-router", CronTrigger(hour="*/4", minute=40)),
-    ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=10, minute=0)),
+    # 10/08/26 — de MOTOR a REDE DE SEGURANÇA. O agente local (launchd no Mac,
+    # Max, custo zero) roda 14×/dia desde 31/07 e produz o mesmo debriefing —
+    # melhor, porque decide o que pesquisar em vez de ler janela fixa. Os dois
+    # motores conviviam e a API custava US$16,83/mês para refazer o trabalho.
+    # Agora a rota SÓ roda se o agente não tiver escrito hoje (Mac dormindo,
+    # viagem, launchd quebrado) — a economia fica, o risco de ficar sem portão
+    # não. Movido de 10:00 para 12:30 UTC (09:30 BRT) porque às 07h BRT o
+    # agente ainda não rodou a primeira vez (07:12) e o fallback dispararia
+    # todo dia, gastando igual e provando nada.
+    ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=12, minute=30)),
     # 06/08/26 — LEDGER do check G. O check e session-bound: so roda quando o
     # Renato abre a /cos, com janela de 4 dias. Cinco dias sem abrir e o inbound
     # daqueles dias evapora sem nunca ter sido avaliado. Este job grava todo dia

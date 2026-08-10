@@ -10801,9 +10801,35 @@ async def cron_cos_daily_review(request: Request):
     import asyncio as _aio
     from services.frente_review import run_and_persist
 
+    # 10/08/26 — REDE DE SEGURANÇA, não motor. O agente local (Max, custo zero)
+    # roda 14×/dia e escreve o mesmo debriefing; esta rota existia em paralelo,
+    # refazendo o trabalho por US$16,83/mês. Agora só assume quando o agente
+    # NÃO escreveu hoje — Mac dormindo, viagem, launchd quebrado.
+    #
+    # Por que não simplesmente desligar: sem isto, Mac dormindo = nenhum portão,
+    # sem aviso, e "não apareceu nada" é indistinguível de "não havia nada".
+    # O custo passa a ser proporcional à falha, em vez de fixo.
+    from services.frente_review import agente_local_ja_rodou_hoje
+    try:
+        _ja_rodou = agente_local_ja_rodou_hoje()
+    except Exception as e:
+        # Sem conseguir checar, RODA. Abster no ambíguo aqui significa ficar sem
+        # portão justamente no dia em que a checagem falhou.
+        logger.warning("cos-daily-review: checagem do agente local falhou (%s) — rodando", e)
+        _ja_rodou = False
+
+    if _ja_rodou:
+        return {"status": "skipped", "job": "cos-daily-review",
+                "motivo": "agente_local ja escreveu hoje", "custo_evitado": True}
+
+    logger.error(
+        "cos-daily-review: FALLBACK disparado — o agente local nao escreveu hoje. "
+        "Verificar o Mac (launchd/pmset) ou modo viagem."
+    )
+
     try:
         result = await _aio.wait_for(run_and_persist(), timeout=280.0)
-        return {"status": "ok", "job": "cos-daily-review", **result}
+        return {"status": "ok", "job": "cos-daily-review", "fallback": True, **result}
     except _aio.TimeoutError:
         logger.error("cron_cos_daily_review: run > 280s")
         return {"status": "error", "job": "cos-daily-review", "error": "timeout > 280s"}

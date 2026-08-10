@@ -848,6 +848,33 @@ def latest_review() -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) else json.loads(payload)
 
 
+def agente_local_ja_rodou_hoje() -> bool:
+    """O agente local (Max, custo zero) já escreveu o debriefing de hoje?
+
+    É a chave do fallback: desde 10/08/26 o cron da API não é mais o motor —
+    é rede de segurança. Ele só assume o trabalho quando esta função devolve
+    False (Mac dormindo, viagem, launchd quebrado).
+
+    Filtra por `motor = 'agente_local'` de propósito: uma rodada da PRÓPRIA API
+    também grava em `cos_daily_review`, e contá-la faria o fallback se
+    auto-satisfazer — rodou ontem em modo fallback, hoje acha que "já tem
+    review" e nunca mais roda. O mesmo formato de defeito que já apareceu na
+    máquina ouvindo o próprio eco.
+
+    ERRO NÃO É "SIM". Quem chama trata a exceção rodando assim mesmo: abster no
+    ambíguo deixaria o dia sem portão justamente quando a checagem falhou.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT MAX(run_at) AS ult FROM cos_daily_review
+                WHERE run_date = CURRENT_DATE
+                  AND payload->>'motor' = 'agente_local'"""
+        )
+        row = cur.fetchone()
+    return bool(row and row["ult"])
+
+
 async def run_and_persist() -> Dict[str, Any]:
     """Roda o loop completo e persiste. Chamado pelo cron diário."""
     payload = await run_daily_review()
