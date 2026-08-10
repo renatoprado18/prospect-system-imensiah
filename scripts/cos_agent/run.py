@@ -463,6 +463,78 @@ def fundir(anterior: dict, novos: list[dict], triagem: dict) -> dict:
             "vigilias": vigilias, "cobertas": cobertas}
 
 
+def _chave_dedup(op: str, dados: dict, registro_id) -> str:
+    """Identidade da dúvida, para não reperguntar a mesma coisa 14 vezes por dia.
+
+    O agente roda 14×/dia. Sem isto, uma frente ambígua viraria 14 propostas
+    idênticas por dia e o canal morreria afogado — que é como o
+    `ai_suggestions` chegou a 6.897 linhas sem uma única ação humana.
+
+    A chave é operação + alvo, NÃO o texto do motivo: o motivo é prosa e muda a
+    cada rodada, então usá-lo faria toda pergunta parecer nova. Mesmo erro que
+    a identidade de memória cometia ao usar o título.
+    """
+    alvo = (registro_id or dados.get("contato_id") or dados.get("contact_id")
+            or dados.get("project_id") or dados.get("nome") or "")
+    return f"{op}:{alvo}"
+
+
+def abrir_proposta(owner_url: str, item: dict) -> bool:
+    """A dúvida da camada vira pergunta ao Renato. Devolve True se abriu.
+
+    POR QUE COM A CREDENCIAL DO DONO, e não pela lista fechada: isto não é a
+    camada mexendo no cadastro — é o runner registrando que precisa de decisão
+    humana. Meter `action_proposals` na lista fechada daria ao agente o poder de
+    fabricar propostas arbitrárias, que é outra coisa e não foi pedida.
+
+    ⚠️ O CANAL ESTÁ FRÁGIL. Ele funcionava (93% de atendimento em maio) e
+    degradou junto com o ruído que foi desligado: 10 propostas em agosto, 70%
+    expirando. Por isso `action_type` próprio — para medir SE esta pergunta
+    específica é respondida, em vez de diluí-la no balde geral. Se em algumas
+    semanas estas também expirarem, o problema não é a camada: é que ninguém
+    está lendo o canal, e aí a decisão é do Renato.
+    """
+    chave = _chave_dedup(item["operacao"], item.get("dados") or {}, item.get("registro_id"))
+    dados = item.get("dados") or {}
+    cid = dados.get("contato_id") or dados.get("contact_id")
+    try:
+        with _conn(owner_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT 1 FROM action_proposals
+                    WHERE action_type = 'camada_cadastro' AND status = 'pending'
+                      AND action_params->>'dedup_key' = %s LIMIT 1""",
+                (chave,),
+            )
+            if cur.fetchone():
+                return False
+            cur.execute(
+                """INSERT INTO action_proposals
+                     (contact_id, action_type, action_params, ai_reasoning, confidence,
+                      urgency, status, title, description, expires_at, criado_em)
+                   VALUES (%s, 'camada_cadastro', %s, %s, %s, 'low', 'pending', %s, %s,
+                           now() + interval '7 days', now())""",
+                (
+                    cid,
+                    json.dumps({"dedup_key": chave, "operacao": item["operacao"],
+                                "dados": dados, "registro_id": item.get("registro_id")}),
+                    item.get("motivo") or "",
+                    float(item.get("confianca") or 0),
+                    f"Confirmar: {item['operacao']} — {item.get('frente') or 'frente'}",
+                    (f"A camada leu um fato que sugere esta mudança mas não teve certeza "
+                     f"({item.get('confianca')}). Motivo: {item.get('motivo')}. "
+                     f"Dados propostos: {json.dumps(dados, ensure_ascii=False)}"),
+                ),
+            )
+            c.commit()
+        return True
+    except Exception as e:                                  # noqa: BLE001
+        # Falhar aqui não pode derrubar a rodada, mas TEM que aparecer: dúvida
+        # que não vira pergunta e não vira erro é dúvida que nunca existiu.
+        print(f"[cos-agent] ⚠️ dúvida NÃO virou proposta ({item.get('operacao')}): {e}",
+              file=sys.stderr, flush=True)
+        return False
+
+
 def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
     """Aplica o que o agente propôs mudar no cadastro. Devolve o placar.
 
@@ -486,7 +558,8 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
     sys.path.insert(0, str(BASE.parent.parent / "app"))
     from services import agent_write  # noqa: E402
 
-    placar = {"escritas": 0, "propostas": 0, "recusadas": 0, "detalhe": []}
+    placar = {"escritas": 0, "propostas": 0, "recusadas": 0,
+              "detalhe": [], "pendentes": []}
     candidatos = [(d, u) for d in debriefs for u in (d.get("atualizacoes") or [])[:3]]
     if not candidatos:
         return placar
@@ -520,6 +593,10 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
                 placar["detalhe"].append(
                     {"frente": d.get("frente"), "operacao": op, "status": "proposta",
                      "confianca": p.confianca, "motivo": p.motivo, "dados": p.payload})
+                placar["pendentes"].append(
+                    {"operacao": op, "dados": p.payload, "motivo": p.motivo,
+                     "confianca": p.confianca, "registro_id": u.get("registro_id"),
+                     "frente": d.get("frente")})
             except Exception as e:                        # noqa: BLE001
                 placar["recusadas"] += 1
                 placar["detalhe"].append(
@@ -874,9 +951,14 @@ def main() -> int:
     rw_url = (os.getenv("COS_RW_URL") or "").strip()
     if rw_url:
         pl = persistir_atualizacoes(rw_url, ok)
+        # A dúvida vira PERGUNTA. Até aqui ela só ia pro stderr, que ninguém
+        # abre — dúvida que não chega a ele é indistinguível de dúvida que não
+        # existiu, e era esse o buraco que a diretriz de 10/08 mandava fechar.
+        abertas = sum(1 for p in pl["pendentes"] if abrir_proposta(owner_url, p))
         if pl["escritas"] or pl["propostas"] or pl["recusadas"]:
             print(f"[cos-agent] cadastro: {pl['escritas']} escrita(s), "
-                  f"{pl['propostas']} proposta(s) pra decisão, {pl['recusadas']} recusada(s)")
+                  f"{pl['propostas']} dúvida(s) → {abertas} pergunta(s) nova(s), "
+                  f"{pl['recusadas']} recusada(s)")
             for det in pl["detalhe"]:
                 print(f"[cos-agent]   {det.get('status'):9s} {det.get('operacao','?')} "
                       f"— {det.get('frente','?')}", file=sys.stderr)

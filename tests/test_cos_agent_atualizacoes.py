@@ -167,6 +167,104 @@ def test_sem_credencial_avisa_em_vez_de_degradar_calado():
     assert "DESCARTADAS" in trecho and "stderr" in trecho
 
 
+class _ConnProposta:
+    """Cursor falso que simula o canal: `ja_pendente` liga o dedup."""
+
+    def __init__(self, ja_pendente=False):
+        self.ja_pendente = ja_pendente
+        self.sqls = []
+        self.params = []
+        self.commits = 0
+
+    def cursor(self):
+        return self
+
+    def execute(self, sql, params=None):
+        self.sqls.append(" ".join(sql.split()))
+        self.params.append(params)
+
+    def fetchone(self):
+        return (1,) if (self.ja_pendente and "SELECT 1" in self.sqls[-1]) else None
+
+    def commit(self):
+        self.commits += 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _item(op="atualizar_fase_frente", dados=None, rid=15):
+    return {"operacao": op, "dados": dados if dados is not None else {"fase": 4},
+            "motivo": "pode ter avançado", "confianca": 0.5,
+            "registro_id": rid, "frente": "Orbiz"}
+
+
+def test_duvida_vira_pergunta(monkeypatch):
+    mod = _runner()
+    conn = _ConnProposta()
+    monkeypatch.setattr(mod, "_conn", lambda url: conn)
+    assert mod.abrir_proposta("postgres://fake", _item()) is True
+    assert any("INSERT INTO action_proposals" in s for s in conn.sqls)
+    assert conn.commits == 1, "abriu a pergunta e não commitou"
+
+
+def test_nao_repergunta_o_que_ja_esta_pendente(monkeypatch):
+    """O agente roda 14×/dia: sem dedup, uma frente ambígua vira 14 perguntas
+    idênticas por dia e afoga o canal — o caminho do ai_suggestions."""
+    mod = _runner()
+    conn = _ConnProposta(ja_pendente=True)
+    monkeypatch.setattr(mod, "_conn", lambda url: conn)
+    assert mod.abrir_proposta("postgres://fake", _item()) is False
+    assert not any("INSERT INTO action_proposals" in s for s in conn.sqls)
+
+
+def test_chave_de_dedup_ignora_o_motivo():
+    """O motivo é prosa e muda a cada rodada; usá-lo na identidade faria toda
+    pergunta parecer nova — o mesmo erro da memória identificada pelo título."""
+    mod = _runner()
+    a = mod._chave_dedup("atualizar_fase_frente", {"fase": 4}, 15)
+    b = mod._chave_dedup("atualizar_fase_frente", {"fase": 5}, 15)
+    assert a == b, "mudou a chave porque o dado mudou — vai reperguntar sem parar"
+    c = mod._chave_dedup("atualizar_fase_frente", {"fase": 4}, 16)
+    assert a != c, "alvos diferentes têm que ser perguntas diferentes"
+
+
+def test_tipo_proprio_para_ser_medido(monkeypatch):
+    """action_type próprio existe para medir SE esta pergunta é respondida, em
+    vez de diluí-la no balde geral — o canal já vinha com 70% de expiração."""
+    mod = _runner()
+    conn = _ConnProposta()
+    monkeypatch.setattr(mod, "_conn", lambda url: conn)
+    mod.abrir_proposta("postgres://fake", _item())
+    ins = next(s for s in conn.sqls if "INSERT INTO action_proposals" in s)
+    assert "'camada_cadastro'" in ins
+
+
+def test_falha_ao_perguntar_aparece(monkeypatch, capsys):
+    """Dúvida que não vira pergunta e não vira erro é dúvida que nunca existiu."""
+    mod = _runner()
+    def _explode(url):
+        raise RuntimeError("banco fora")
+    monkeypatch.setattr(mod, "_conn", _explode)
+    assert mod.abrir_proposta("postgres://fake", _item()) is False
+    assert "NÃO virou proposta" in capsys.readouterr().err
+
+
+def test_pendentes_saem_do_placar(runner):
+    """O runner precisa receber a lista para abrir as perguntas — se ela não
+    sair daqui, a dúvida morre no placar."""
+    mod, _ = runner
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief([{
+        "operacao": "atualizar_fase_frente", "dados": {"fase": 4},
+        "motivo": "incerto", "confianca": 0.3, "registro_id": 15,
+    }]))
+    assert len(pl["pendentes"]) == 1
+    assert pl["pendentes"][0]["operacao"] == "atualizar_fase_frente"
+
+
 def test_prompt_ensina_as_cinco_operacoes():
     """Operação que o portão aceita e o prompt não ensina é capacidade morta."""
     from services import agent_write
