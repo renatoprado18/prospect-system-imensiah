@@ -99,7 +99,7 @@ def consolidar_google_ids(cur, fica: int, absorvidas: list, aplicar: bool) -> in
                      FROM contacts WHERE id = ANY(%s)""", ([fica] + absorvidas,))
     fichas = {r["id"]: r for r in cur.fetchall()}
     if fica not in fichas:
-        return 0
+        return 0, None
 
     mapa, orfaos = {}, []
     for cid, r in fichas.items():
@@ -123,8 +123,15 @@ def consolidar_google_ids(cur, fica: int, absorvidas: list, aplicar: bool) -> in
         for g in orfaos:
             if g not in mapa["_orfaos"]:
                 mapa["_orfaos"].append(g)
+    # 10/08/26 — os dois early returns devolviam `0` escalar enquanto o final
+    # devolve `(n, candidato)`: o chamador desempacota em dois nomes, então
+    # `TypeError: cannot unpack non-iterable int` derrubava o merge inteiro.
+    # E este caminho não é raro — `mapa` fica vazio sempre que NENHUMA das
+    # fichas do grupo tem vínculo Google, que é o caso comum de ficha criada
+    # pelo WhatsApp. Entrou em 24dd021 (08/08), junto com a tupla; os testes
+    # estavam vermelhos desde então, fora da lista de vermelhos conhecidos.
     if not mapa:
-        return 0
+        return 0, None
 
     # O gid escalar da absorvida NAO pode ser adotado aqui: as duas fichas ainda
     # coexistem neste ponto (o DELETE vem depois) e `google_contact_id` tem
