@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Enriquecimento de contatos como agente local — job do launchd.
+
+  Instalar:
+    cp scripts/enrich_agent/com.almeidaprado.enrich-agent.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.enrich-agent.plist
+  Disparar a mao (teste):
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.enrich-agent
+  Desligar:
+    launchctl bootout gui/$(id -u)/com.almeidaprado.enrich-agent
+
+  HORARIO: 06:40 BRT (09:40 UTC). Duas razoes, e as duas importam:
+
+  · O cron `run-auto-enrich` do Railway roda 05:25 UTC (02:25 BRT). Rodar DEPOIS
+    dele deixaria a fila vazia todo dia e o Mac nao teria o que fazer — o job
+    pareceria saudavel batendo ponto sobre trabalho nenhum. Com o fallback
+    condicional (o cron so assume se o Mac nao rodou), a ordem se inverte: o Mac
+    roda primeiro, e o cron das 02h vira rede de seguranca. Por isso 06:40 e uma
+    escolha PROVISORIA: quando o cron passar a ser condicional de fato, este job
+    deve subir pra antes dele.
+  · 32 minutos antes do cos-agent das 07:12, pra os dois nao brigarem pela cota
+    do Max no mesmo minuto.
+
+  `--limit 5`: a fila real e de ~53 contatos em circulo 1-2, re-enriquecidos a
+  cada 30 dias — cerca de 2 por dia em regime permanente. O teto de 5 cobre o
+  regime e a fila represada sem comer a cota que o Renato usa pra trabalhar.
+  Medido em 10/08: UM contato de 26 mil interacoes levou 153s.
+
+  SONO DA MAQUINA: mesma armadilha do cos-agent. Na bateria o Mac dorme em 1
+  minuto e o job nao acontece. O `pmset repeat wakeorpoweron 07:10` que ja existe
+  cobre o cos-agent, NAO este job (06:40 e antes). Sem ajustar o pmset pra 06:38,
+  este job so roda quando a maquina ja estiver acordada.
+
+  COMO SE SABE QUE NAO RODOU: batimento em `cron_heartbeats`
+  (job_id=enrich-agent-local). A deteccao mora no SERVIDOR — vigia que mora na
+  maquina que caiu nao vigia nada.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.enrich-agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>set -a; . "$HOME/.cos-agent/env"; set +a; exec /Users/rap/prospect-system/.venv/bin/python /Users/rap/prospect-system/scripts/enrich_agent/run.py --limit 5</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>40</integer></dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system/scripts/enrich_agent</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/enrich.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/enrich.err</string>
+
+  <key>ExitTimeOut</key>
+  <integer>1800</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

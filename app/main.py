@@ -11282,6 +11282,36 @@ async def cron_run_auto_enrich(request: Request):
     import asyncio as _aio
     from services.contact_enrichment import auto_enrich_priority_contacts
 
+    # 10/08/26 — REDE DE SEGURANÇA, não motor. O enriquecimento migrou para
+    # agente local (`scripts/enrich_agent/`, launchd 06:40 BRT, Max, custo zero).
+    # Este cron custava US$7,96/mês — 86% dos US$9,30 do `enrichment.contact`,
+    # medido pela concentração às 05h UTC. Agora só assume quando o Mac não
+    # rodou hoje, pelo mesmo desenho do cos-daily-review: o custo fica
+    # proporcional à falha em vez de fixo, e Mac dormindo não vira fila parada
+    # em silêncio.
+    try:
+        with get_db() as _c:
+            _cur = _c.cursor()
+            _cur.execute(
+                """SELECT MAX(fired_at) AS ult FROM cron_heartbeats
+                    WHERE job_id = 'enrich-agent-local'
+                      AND fired_at > CURRENT_DATE"""
+            )
+            _row = _cur.fetchone()
+            _mac_rodou = bool(_row and _row["ult"])
+    except Exception as e:
+        # Sem conseguir checar, RODA: abster deixaria a fila parada justamente
+        # no dia em que a verificação falhou.
+        logger.warning("run-auto-enrich: checagem do agente local falhou (%s) — rodando", e)
+        _mac_rodou = False
+
+    if _mac_rodou:
+        return {"status": "skipped", "job": "run-auto-enrich",
+                "motivo": "enrich-agent-local ja rodou hoje", "custo_evitado": True}
+
+    logger.error("run-auto-enrich: FALLBACK — o agente local não rodou hoje. "
+                 "Verificar o Mac (launchd/pmset) ou modo viagem.")
+
     try:
         async def _run():
             # 03/08/26 — lote 5 -> 3. Ao subir `max_tokens` de 2000 pra 8000 (o
