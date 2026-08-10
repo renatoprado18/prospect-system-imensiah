@@ -18,6 +18,7 @@ import logging
 from collections import defaultdict
 
 from database import get_db
+from services.contact_dedup import _migrate_contact_references
 
 logger = logging.getLogger(__name__)
 
@@ -563,32 +564,35 @@ def merge_contatos(keep_id: int, merge_id: int, field_choices: Optional[Dict] = 
                 UPDATE contacts SET {set_clause} WHERE id = %s
             """, values)
 
-        # Transferir mensagens
-        try:
-            cursor.execute("""
-                UPDATE messages SET contact_id = %s WHERE contact_id = %s
-            """, (keep_id, merge_id))
-            messages_transferred = cursor.rowcount
-        except:
-            messages_transferred = 0
+        # Repontar TODAS as referencias antes do DELETE.
+        #
+        # 10/08/26 — aqui havia tres UPDATEs a mao (messages, conversations,
+        # tasks), cada um em `try/except: pass`. As outras 33 tabelas com FK
+        # pra contacts(id) ficavam de fora: no DELETE abaixo, as 20 em CASCADE
+        # eram APAGADAS (memorias, fatos, briefings, project_members,
+        # whatsapp_messages...) e as SET NULL perdiam o vinculo. Esta funcao so
+        # roda quando o usuario ESCOLHE campos na tela de /duplicados — ou
+        # seja, quanto mais cuidado ele tinha, mais dado se perdia. O caminho
+        # sem escolha (contact_dedup.merge_duplicate_contacts) ja usava o
+        # helper correto; todas as correcoes de FK (10/07, 25/07, 24dd021)
+        # foram aplicadas la e nunca chegaram aqui.
+        #
+        # Contagens medidas ANTES da migracao: o helper reponta em lote e nao
+        # devolve rowcount por tabela, e a resposta da API expoe os 3 numeros.
+        counts = {}
+        for tbl in ("messages", "conversations", "tasks"):
+            cursor.execute(
+                f"SELECT COUNT(*) AS n FROM {tbl} WHERE contact_id = %s",
+                (merge_id,)
+            )
+            row = cursor.fetchone()
+            counts[tbl] = (row["n"] if row else 0) or 0
 
-        # Transferir conversas
-        try:
-            cursor.execute("""
-                UPDATE conversations SET contact_id = %s WHERE contact_id = %s
-            """, (keep_id, merge_id))
-            conversations_transferred = cursor.rowcount
-        except:
-            conversations_transferred = 0
+        _migrate_contact_references(cursor, keep_id, [merge_id])
 
-        # Transferir tasks
-        try:
-            cursor.execute("""
-                UPDATE tasks SET contact_id = %s WHERE contact_id = %s
-            """, (keep_id, merge_id))
-            tasks_transferred = cursor.rowcount
-        except:
-            tasks_transferred = 0
+        messages_transferred = counts["messages"]
+        conversations_transferred = counts["conversations"]
+        tasks_transferred = counts["tasks"]
 
         # Excluir contato mergeado
         cursor.execute("DELETE FROM contacts WHERE id = %s", (merge_id,))

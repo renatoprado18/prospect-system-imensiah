@@ -149,3 +149,112 @@ def test_backup_antes_de_escrever():
     i_bkp = fonte.index("backup_fichas_merge.json")
     i_merge = fonte.index("m = merge(cur, fica, vivos, aplicar)")
     assert i_bkp < i_merge, "o backup tem que ser gravado ANTES do primeiro merge"
+
+
+# ---------------------------------------------------------------------------
+# O OUTRO caminho de merge: a TELA (/duplicados com escolha de campos).
+#
+# Tudo acima protege `scripts/merge_contatos.py` — a linha de comando. O
+# serviço que a tela chama (`services.duplicados.merge_contatos`) é código
+# distinto, e até 10/08/26 migrava só 3 tabelas à mão antes do DELETE: as 20
+# FKs em CASCADE eram apagadas. As correções de 10/07, 25/07 e 24dd021 foram
+# todas aplicadas no outro caminho e nunca chegaram aqui — inclusive estes
+# testes, que davam verde enquanto a tela perdia dado.
+# ---------------------------------------------------------------------------
+
+class _CurTela:
+    """Fake do cursor do serviço: registra ordem e responde o mínimo."""
+
+    def __init__(self, keep_id, merge_id):
+        self.keep_id = keep_id
+        self.merge_id = merge_id
+        self.ops = []
+        self.rowcount = 1
+        self._primeiro_select = True
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split())
+        up = s.upper()
+        if up.startswith("DELETE FROM CONTACTS"):
+            self.ops.append(("DELETE_CONTACT", s))
+        elif up.startswith("UPDATE"):
+            self.ops.append(("UPDATE", s.split()[1]))
+        elif up.startswith("DELETE"):
+            self.ops.append(("DELETE_LINHA", s.split()[2]))
+        elif up.startswith("SELECT"):
+            self.ops.append(("SELECT", s))
+
+    def fetchall(self):
+        if self._primeiro_select:
+            self._primeiro_select = False
+            return [{"id": self.keep_id, "nome": "A"}, {"id": self.merge_id, "nome": "B"}]
+        return []
+
+    def fetchone(self):
+        return {"n": 0}
+
+
+class _ConnTela:
+    def __init__(self, cur):
+        self._cur = cur
+
+    def cursor(self):
+        return self._cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _roda_merge_da_tela(monkeypatch):
+    sys.path.insert(0, str(_ROOT / "app"))
+    from services import duplicados
+
+    cur = _CurTela(100, 200)
+    monkeypatch.setattr(duplicados, "get_db", lambda: _ConnTela(cur))
+    resultado = duplicados.merge_contatos(100, 200, field_choices={"nome": 100})
+    return cur, resultado
+
+
+def test_tela_migra_as_fks_antes_de_apagar(monkeypatch):
+    """A tela tem que migrar TODAS as FKs, não as 3 de sempre.
+
+    O que se perdia antes deste teste: contact_memories, contact_facts,
+    contact_briefings, project_members, whatsapp_messages e mais 15 tabelas em
+    CASCADE — sem erro, sem log, sem rastro.
+    """
+    cur, resultado = _roda_merge_da_tela(monkeypatch)
+    assert resultado.get("success"), resultado
+
+    migradas = {t for tipo, t in cur.ops if tipo == "UPDATE"}
+    for essencial in ("contact_memories", "contact_facts", "contact_briefings",
+                      "project_members", "whatsapp_messages", "messages",
+                      "conversations", "tasks"):
+        assert essencial in migradas, (
+            f"{essencial} não migrou no merge da tela — o DELETE apaga em CASCADE"
+        )
+    assert len(migradas) >= 25, f"migrou só {len(migradas)} tabelas; faltou FK"
+
+
+def test_tela_apaga_a_ficha_so_no_fim(monkeypatch):
+    cur, _ = _roda_merge_da_tela(monkeypatch)
+
+    tipos = [o[0] for o in cur.ops]
+    assert "DELETE_CONTACT" in tipos, "não chegou a apagar a ficha"
+    assert tipos.index("DELETE_CONTACT") == len(tipos) - 1, (
+        f"DELETE veio antes do fim — CASCADE apagaria dado migrável. Ordem: {tipos}"
+    )
+
+
+def test_tela_usa_o_mesmo_helper_do_outro_caminho():
+    """Duas listas de FK divergem no primeiro `git pull`; uma só, não.
+
+    Era exatamente esta duplicação que fazia a tela ficar para trás: quem
+    corrigia FK corrigia `contact_dedup` e não sabia que havia outra cópia.
+    """
+    fonte = (_ROOT / "app" / "services" / "duplicados.py").read_text()
+    assert "_migrate_contact_references" in fonte, (
+        "a tela voltou a migrar FK por conta própria"
+    )
