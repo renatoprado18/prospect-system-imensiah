@@ -566,7 +566,14 @@ async def _call_tonia_tick(job_id: str, path: str, read_timeout: float) -> None:
 # (job_id, path, trigger, read_timeout) — dispatch dos ticks externos da Tonia.
 _TONIA_TICKS = (
     ("tonia-briefing-tick", "/briefing/tick", _TONIA_BRIEFING_TRIGGER, 90.0),
-    ("tonia-urgent-tick", "/urgent/tick", _TONIA_URGENT_TRIGGER, 60.0),
+    # ⚠️ URGENT DESLIGADO 10/08/26 — decisão do Renato na auditoria de custo.
+    # Rodava a cada 30 min (48 disparos/dia) e custava US$9,21/mês — o 4º maior
+    # gasto de LLM do sistema — para produzir um aviso que ele já obtém pelo
+    # cockpit. Mesmo padrão do ai_suggestions (04/08) e do teto de notificações
+    # (27/07): produção contínua, consumo humano perto de zero.
+    # Reverter = descomentar a linha. O sync do cron_registry marca active=FALSE
+    # em job removido, então ele não fica stale-forever no monitor.
+    # ("tonia-urgent-tick", "/urgent/tick", _TONIA_URGENT_TRIGGER, 60.0),
 )
 
 
