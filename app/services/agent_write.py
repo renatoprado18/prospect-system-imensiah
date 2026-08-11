@@ -129,7 +129,26 @@ def _serializa(valor: Any) -> Any:
     """JSON não conhece date/Decimal; o livro-razão não pode falhar por isso."""
     if valor is None or isinstance(valor, (str, int, float, bool)):
         return valor
+    if isinstance(valor, (dict, list)):
+        # `str()` num dict devolve repr de Python — aspas simples, `None` em vez
+        # de `null`. O livro-razão passaria a guardar algo que não é JSON e que
+        # ninguém consegue reler programaticamente.
+        return valor
     return str(valor)
+
+
+def _para_o_banco(valor: Any) -> Any:
+    """Adapta o valor ao driver antes do INSERT/UPDATE.
+
+    `psycopg2` não sabe adaptar `dict` sozinho: manda `can't adapt type 'dict'`.
+    Duas das cinco operações aceitam coluna `jsonb` (`registrar_nota_projeto`
+    tem `metadata`), então toda nota com metadados falhava — e falhava CALADA,
+    porque até 11/08 o motivo da recusa não saía do processo. Descoberto na
+    primeira rodada em que a recusa passou a dizer por quê.
+    """
+    if isinstance(valor, (dict, list)):
+        return json.dumps(valor, ensure_ascii=False)
+    return valor
 
 
 def escrever(
@@ -203,7 +222,7 @@ def escrever(
             sets = ", ".join(f"{k} = %s" for k in dados)
             cur.execute(
                 f"UPDATE {op.tabela} SET {sets} WHERE id = %s RETURNING id",
-                (*dados.values(), registro_id),
+                (*(_para_o_banco(v) for v in dados.values()), registro_id),
             )
             alvo_id = cur.fetchone()["id"]
         else:
@@ -211,7 +230,7 @@ def escrever(
             ph = ", ".join(["%s"] * len(dados))
             cur.execute(
                 f"INSERT INTO {op.tabela} ({cols}) VALUES ({ph}) RETURNING id",
-                tuple(dados.values()),
+                tuple(_para_o_banco(v) for v in dados.values()),
             )
             alvo_id = cur.fetchone()["id"]
 
@@ -259,7 +278,7 @@ def desfazer(write_id: int, por: str = "renato") -> Dict[str, Any]:
             sets = ", ".join(f"{k} = %s" for k in anterior)
             cur.execute(
                 f"UPDATE {w['tabela']} SET {sets} WHERE id = %s",
-                (*anterior.values(), w["registro_id"]),
+                (*(_para_o_banco(v) for v in anterior.values()), w["registro_id"]),
             )
             resultado = "revertido"
         else:

@@ -200,6 +200,48 @@ def test_desfazer_duas_vezes_e_inocuo(monkeypatch):
     assert agent_write.desfazer(11)["status"] == "ja_desfeito"
 
 
+def test_dict_vira_json_antes_do_banco(aw):
+    """`psycopg2` não adapta `dict`: manda `can't adapt type 'dict'`.
+
+    `registrar_nota_projeto` aceita `metadata`, que é `jsonb` — então TODA nota
+    com metadados falhava, e falhava calada, porque até 11/08 o motivo da recusa
+    não saía do processo. Apareceu na primeira rodada em que a recusa passou a
+    dizer por quê: o regulamento do concurso de café, com `wa_attachments#1957`
+    de procedência, foi recusado por isto.
+    """
+    mod, cur = aw
+    mod.escrever(
+        "registrar_nota_projeto",
+        {"project_id": 28, "conteudo": "regulamento recebido",
+         "metadata": {"fonte": "wa_attachments#1957", "tags": ["cafe"]}},
+        motivo="o anexo traz cronograma e taxas que a frente precisa",
+        confianca=0.95,
+    )
+    i = next(n for n, s in enumerate(cur.sqls) if "INSERT INTO project_notes" in s)
+    enviado = [p for p in cur.params[i] if isinstance(p, str) and "wa_attachments" in p]
+    assert enviado, "o metadata não chegou ao banco"
+    # Precisa ser JSON — não repr de Python, que é o que `str(dict)` produz e o
+    # que `jsonb` recusa.
+    assert json.loads(enviado[0])["fonte"] == "wa_attachments#1957"
+    assert "'" not in enviado[0].split(":")[0], "mandou repr de Python, não JSON"
+
+
+def test_livro_razao_guarda_o_dict_como_json(aw):
+    """O ledger tem que ser relegível por máquina: `str(dict)` gravaria aspas
+    simples e `None` no lugar de `null` — algo que não é JSON."""
+    mod, cur = aw
+    mod.escrever(
+        "registrar_nota_projeto",
+        {"project_id": 28, "conteudo": "x", "metadata": {"fonte": "wa#1", "n": None}},
+        motivo="registro do fato interpretado", confianca=0.95,
+    )
+    i = next(n for n, s in enumerate(cur.sqls) if "INSERT INTO agent_writes" in s)
+    novo = json.loads(next(p for p in cur.params[i]
+                           if isinstance(p, str) and "wa#1" in p))
+    assert novo["metadata"] == {"fonte": "wa#1", "n": None}, (
+        "o livro-razão guardou o metadata achatado em texto")
+
+
 def test_tabelas_proibidas_ficam_fora_da_lista():
     """contacts/messages/users não entram por decisão, não por esquecimento:
     apagar ficha é irreversível e mensagem é o registro do que aconteceu — a
