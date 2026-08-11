@@ -7,7 +7,7 @@ Data: 2026-03-26
 """
 import os
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 import logging
 
@@ -484,47 +484,98 @@ class GoogleCalendarIntegration:
         calendar_id: str = "primary",
         max_results: int = 100
     ) -> Dict[str, Any]:
-        """Lista eventos com sync incremental."""
-        params = {
+        """Lista eventos com sync incremental — TODAS as páginas.
+
+        POR QUE PAGINAR, e o que quebrava sem isto (medido 11/08/26). A janela do
+        full sync (-30/+90 dias) tinha 135 eventos e `maxResults` é 100. O Google
+        devolve `nextSyncToken` APENAS na última página — havendo `nextPageToken`,
+        o token de sync não vem. O código ignorava a segunda página, então:
+
+          1. os últimos ~35 eventos nunca eram sincronizados;
+          2. `nextSyncToken` voltava vazio e `calendar_sync_state` ficava VAZIA;
+          3. sem token gravado, `incremental_sync` caía em full sync toda vez —
+             e o incremental é o único caminho que trata cancelamento.
+
+        O sintoma que chegou até o Renato: a Vallen presencial de 12/08 foi
+        cancelada no Google e seguiu `confirmed` no INTEL, com `last_synced_at`
+        congelado em 08/08 enquanto os vizinhos da mesma série eram carimbados no
+        mesmo dia. A CoS afirmou a ele que "o convite segue confirmado no Google"
+        lendo essa linha, e ele teve de corrigir com print da agenda. Linha órfã
+        não se anuncia como órfã — parece verdade.
+
+        POR QUE `showDeleted`. Sem ele o Google simplesmente não devolve a
+        ocorrência cancelada: ela não é atualizada, é OMITIDA. O sync então não
+        tem como saber que sumiu, e a diferença entre "não mudou" e "foi
+        cancelado" desaparece.
+        """
+        base = {
             "maxResults": max_results,
             "singleEvents": "true",
-            "orderBy": "startTime"
+            # Cancelado precisa CHEGAR para poder ser tratado.
+            "showDeleted": "true",
         }
-
         if sync_token:
-            params["syncToken"] = sync_token
+            base["syncToken"] = sync_token
         else:
-            # Full sync - eventos dos últimos 30 dias até 90 dias no futuro
-            params["timeMin"] = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
-            params["timeMax"] = (datetime.utcnow() + timedelta(days=90)).isoformat() + "Z"
+            # `orderBy` não é aceito junto de syncToken — só no full sync.
+            base["orderBy"] = "startTime"
+            # tz-aware (drive-by): `utcnow()` é naive e deprecated em 3.12+. O
+            # formato com Z é o que a API espera, e `.isoformat()` de um aware
+            # sairia com "+00:00" — daí o strftime explícito.
+            agora = datetime.now(timezone.utc)
+            base["timeMin"] = (agora - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            base["timeMax"] = (agora + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
-                    params=params,
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    timeout=30.0
-                )
+        eventos: List[Dict[str, Any]] = []
+        next_sync_token = None
+        page_token = None
+        # Teto de segurança: 20 páginas × 100 = 2.000 eventos. Existe para que um
+        # `nextPageToken` que não avança vire erro visível em vez de laço infinito.
+        for pagina in range(20):
+            params = dict(base)
+            if page_token:
+                params["pageToken"] = page_token
 
-                if response.status_code == 200:
-                    data = response.json()
-                    return {
-                        "events": data.get("items", []),
-                        "nextSyncToken": data.get("nextSyncToken"),
-                        "nextPageToken": data.get("nextPageToken"),
-                        "fullSyncRequired": False
-                    }
-                elif response.status_code == 410:
-                    # Sync token inválido - precisa full sync
-                    return {"events": [], "fullSyncRequired": True}
-                else:
-                    logger.error(f"Erro ao listar eventos: {response.status_code}")
-                    return {"error": f"Erro ao listar eventos: {response.status_code}"}
+            async with httpx.AsyncClient() as client:
+                try:
+                    response = await client.get(
+                        f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                        params=params,
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=30.0
+                    )
+                except Exception as e:
+                    logger.error(f"Erro ao listar eventos: {e}")
+                    return {"error": str(e)}
 
-            except Exception as e:
-                logger.error(f"Erro ao listar eventos: {e}")
-                return {"error": str(e)}
+            if response.status_code == 410:
+                # Sync token inválido - precisa full sync
+                return {"events": [], "fullSyncRequired": True}
+            if response.status_code != 200:
+                logger.error(f"Erro ao listar eventos: {response.status_code}")
+                return {"error": f"Erro ao listar eventos: {response.status_code}"}
+
+            data = response.json()
+            eventos.extend(data.get("items", []))
+            next_sync_token = data.get("nextSyncToken") or next_sync_token
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+        else:
+            # Saiu pelo teto: devolve o que juntou, mas NÃO o sync token — gravar
+            # token de uma varredura incompleta faria o incremental seguinte
+            # partir de um estado que nunca existiu.
+            logger.error("Calendar: 20 páginas sem fim — varredura incompleta, token descartado")
+            return {"events": eventos, "nextSyncToken": None,
+                    "fullSyncRequired": False, "paginas_estouradas": True}
+
+        return {
+            "events": eventos,
+            "nextSyncToken": next_sync_token,
+            "nextPageToken": None,          # já consumido aqui
+            "paginas": pagina + 1,
+            "fullSyncRequired": False,
+        }
 
 
 _calendar_integration = None

@@ -73,12 +73,31 @@ class CalendarSyncService:
         if "error" in result:
             return {"error": result["error"], "created": 0, "updated": 0}
 
-        stats = {"created": 0, "updated": 0}
+        stats = {"created": 0, "updated": 0, "deleted": 0}
 
         with get_db() as conn:
             cursor = conn.cursor()
 
             for event in result.get("events", []):
+                # CANCELADO TAMBÉM CHEGA AQUI desde 11/08/26 (`showDeleted=true`),
+                # e o full sync precisava saber o que fazer com ele — só o
+                # incremental tratava. Enquanto não tratou, evento cancelado no
+                # Google seguia `confirmed` no INTEL: foi assim que a Vallen
+                # presencial de 12/08 continuou de pé na base depois de cancelada.
+                #
+                # APAGA, não marca. Marcar `status='cancelled'` parece mais
+                # conservador e é pior aqui: NENHUMA das 32 consultas a
+                # `calendar_events` filtra por status, então o evento cancelado
+                # continuaria aparecendo em toda tela — que foi exatamente o que
+                # aconteceu quando a CoS marcou o #4035 na mão e ele seguiu
+                # visível. Mudar o contrato exigiria tocar as 32; o `DELETE` é o
+                # que o incremental já faz e o que os consumidores esperam.
+                if event.get("status") == "cancelled":
+                    cursor.execute(
+                        "DELETE FROM calendar_events WHERE google_event_id = %s",
+                        (event["id"],))
+                    stats["deleted"] += cursor.rowcount
+                    continue
                 existed = await self._upsert_event(cursor, event, google_account_email)
                 stats["updated" if existed else "created"] += 1
 
@@ -135,7 +154,10 @@ class CalendarSyncService:
                     cursor.execute("""
                         DELETE FROM calendar_events WHERE google_event_id = %s
                     """, (event["id"],))
-                    stats["deleted"] += 1
+                    # `rowcount`, não `+= 1`: cancelamento de evento que nunca
+                    # esteve na base contava como remoção e inflava a estatística
+                    # — o número que diria se o sync está funcionando.
+                    stats["deleted"] += cursor.rowcount
                 else:
                     existed = await self._upsert_event(cursor, event, google_account_email)
                     stats["updated" if existed else "created"] += 1
