@@ -190,12 +190,53 @@ def triar(ro_url: str, desde_horas: int = 26) -> list[dict]:
 # --------------------------------------------------------------------------
 # 2. O agente — um subprocesso por frente, sem credencial de escrita
 # --------------------------------------------------------------------------
+def linha_do_board_hunt(ro_url: str, project_id: int) -> str:
+    """O que o board hunt registra SOBRE ESTA frente — injetado, não consultado.
+
+    POR QUE INJETAR. Medido em 11/08 com duas rodadas dirigidas (Hindiana e
+    Alba): em 8 consultas cada, o agente **nunca abriu `board_hunt_frentes`**.
+    O prompt só a mencionava dentro do bullet de `criar_frente_board_hunt`
+    ("confira que não existe com outro nome"), então nada o levava a olhar a
+    fase da frente que estava julgando. Sem ver o dado, ele não tinha como
+    concluir que estava atrasado — e `atualizar_fase_frente` só produziu recusa
+    desde que a escrita ligou.
+
+    Pedir "consulte a tabela" seria mais barato e pior: uma consulta que ele
+    pode não fazer volta a ser regra que só existe em prosa. Injetado, o
+    `registro_id` chega junto e a operação deixa de depender de dedução.
+    """
+    try:
+        with _conn(ro_url) as c, c.cursor() as cur:
+            cur.execute(
+                """SELECT id, nome, fase, status, piso_alvo, nota
+                     FROM board_hunt_frentes WHERE project_id = %s""",
+                (project_id,),
+            )
+            linhas = cur.fetchall()
+    except Exception as e:                                    # noqa: BLE001
+        # Falhar aqui não pode derrubar o julgamento — mas o agente precisa
+        # saber que não olhou, senão trata ausência como "não existe frente".
+        return f"⚠️ não consegui ler `board_hunt_frentes` ({str(e)[:80]}). Não conclua nada disto."
+    if not linhas:
+        return ("Esta frente **não tem linha em `board_hunt_frentes`**. Se ela for uma "
+                "frente de originação de conselho de verdade, é caso de "
+                "`criar_frente_board_hunt` — confira antes se não existe com outro nome.")
+    partes = []
+    for r in linhas:
+        partes.append(
+            f"- **`registro_id` = {r['id']}** · `{r['nome']}` · fase **{r['fase']}** · "
+            f"status `{r['status']}`" + (f" · piso {r['piso_alvo']}" if r["piso_alvo"] else "")
+            + (f"\n  nota atual: {(r['nota'] or '')[:300]}" if r["nota"] else ""))
+    return "\n".join(partes)
+
+
 def julgar(frente: dict, ro_url: str) -> dict:
     prompt = (BASE / "prompt_frente.md").read_text(encoding="utf-8")
     prompt = (prompt
               .replace("{PROJECT_ID}", str(frente["id"]))
               .replace("{PROJECT_NAME}", frente["nome"] or "")
               .replace("{HOJE}", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+              .replace("{BOARD_HUNT}", linha_do_board_hunt(ro_url, frente["id"]))
               .replace("{MAX_QUERIES}", str(MAX_QUERIES)))
 
     # SÓ a credencial de leitura entra no ambiente do agente. A de escrita
