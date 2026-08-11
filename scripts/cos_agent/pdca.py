@@ -355,8 +355,58 @@ def bloco_precisao(runs: list[dict]) -> None:
     print("      Renato só não agiu ainda.")
 
 
+def bloco_cadastro(runs: list[dict]) -> None:
+    """A camada escreveu — e o que foi RECUSADO, com o motivo.
+
+    POR QUE ESTE BLOCO EXISTE. O placar do cadastro passou a ser gravado no
+    payload em 11/08 justamente para poder ser lido aqui. Sem leitor ele seria
+    dado morto ([[feedback_consumidor_morto_wiring]]): no primeiro dia com
+    escrita ligada, 7 das 20 propostas foram recusadas e o motivo só existia no
+    stderr da máquina — dava pra contar, não pra consertar.
+
+    A TAXA DE RECUSA É O NÚMERO DA RETRO, não o de escritas. Escrita que passa
+    diz que o desenho funciona; recusa repetida diz ONDE ele não funciona — e
+    recusa concentrada numa operação é sinal de contrato mal escrito, não de
+    agente ruim. Foi assim que `atualizar_fase_frente` se revelou inaplicável.
+    """
+    _h("6. CADASTRO — a camada escreveu, e o que foi recusado")
+    com = [r for r in runs if r["p"].get("cadastro")]
+    if not com:
+        # `None` em todas ≠ "não escreveu nada": pode ser rodada sem COS_RW_URL,
+        # que é o modo degradado. Dizer "0 escritas" aqui esconderia isso.
+        print("   nenhuma rodada da janela registrou placar de cadastro")
+        print("   (payload sem a chave `cadastro` = rodou antes de 11/08 ou sem COS_RW_URL)")
+        return
+
+    esc = sum(c["escritas"] for c in (r["p"]["cadastro"] for r in com))
+    duv = sum(c["duvidas"] for c in (r["p"]["cadastro"] for r in com))
+    rec = sum(c["recusadas"] for c in (r["p"]["cadastro"] for r in com))
+    abertas = sum(c.get("perguntas_abertas") or 0 for c in (r["p"]["cadastro"] for r in com))
+    total = esc + duv + rec
+    print(f"   {len(com)} rodada(s) com escrita ligada · {total} propostas")
+    print(f"   escritas {esc} · dúvidas {duv} (→ {abertas} perguntas) · recusadas {rec}"
+          + (f" ({rec / total:.0%})" if total else ""))
+
+    if duv == 0 and esc:
+        print("\n   ⚠️ ZERO dúvidas com escrita acontecendo. Ou todo julgamento passou de")
+        print("      0,75, ou o piso está mal calibrado — ele é chute fundamentado, não")
+        print("      medição, e esta é a retro que existe pra decidir isso.")
+
+    por_op: dict[str, list[str]] = {}
+    for r in com:
+        for x in r["p"]["cadastro"].get("recusas") or []:
+            por_op.setdefault(x.get("operacao") or "?", []).append(x.get("erro") or "sem motivo")
+    if por_op:
+        print("\n   recusas por operação (motivo da mais recente):")
+        for op, erros in sorted(por_op.items(), key=lambda kv: -len(kv[1])):
+            print(f"     {len(erros):3d}× {op}")
+            print(f"          {erros[-1][:150]}")
+        print("\n   Recusa concentrada numa operação é contrato mal escrito, não agente")
+        print("   ruim: se o prompt não ensina o campo, o modelo não tem como preenchê-lo.")
+
+
 def bloco_ajustes() -> None:
-    _h("6. AJUSTES — o que faz disto um ciclo, e não um relatório")
+    _h("7. AJUSTES — o que faz disto um ciclo, e não um relatório")
     print(f"   Parâmetros hoje:  DEBOUNCE_MIN={DEBOUNCE_MIN} · TETO_DIARIO={TETO_DIARIO} · "
           f"MAX_POR_RODADA={MAX_POR_RODADA} · janela {HORA_INICIO}-{HORA_FIM}h BRT")
     print("   Histórico: os 3 primeiros nasceram CHUTE em 31/07. Na noite do mesmo dia,")
@@ -392,6 +442,7 @@ def main() -> int:
     bloco_debounce(runs)
     bloco_frescor(runs)
     bloco_divergencia(runs)
+    bloco_cadastro(runs)
     bloco_ajustes()
     print()
     return 0
