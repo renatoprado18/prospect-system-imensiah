@@ -134,10 +134,23 @@ def _normalize(row: Dict, fonte: str) -> Dict:
 
     dias = (prazo - date.today()).days if prazo else None
 
+    # Quando fechou (073). `concluido_em_fonte` distingue o que foi carimbado no
+    # ato do que veio do backfill por relato — que é limite superior, não a data
+    # exata. Quem consome a métrica precisa poder separar os dois.
+    concluido_em = row.get("concluido_em")
+    concluido_dia = concluido_em.date() if isinstance(concluido_em, datetime) else _as_date(concluido_em)
+
     return {
         "fonte": fonte,
         "id": row.get("id"),
         "uid": f"{fonte}:{row.get('id')}",
+        "concluido_em": concluido_dia.isoformat() if concluido_dia else None,
+        "concluido_em_br": concluido_dia.strftime("%d/%m/%Y") if concluido_dia else None,
+        "concluido_em_fonte": row.get("concluido_em_fonte"),
+        # No prazo só é resposta quando existem AS DUAS datas. Sem isso seria
+        # `False` por ausência de dado, que é o jeito silencioso de transformar
+        # item não medido em item atrasado.
+        "concluido_no_prazo": (concluido_dia <= prazo) if (concluido_dia and prazo) else None,
         "area": (row.get("area") or "").strip() or None,
         "acao": (row.get("acao") or "").strip(),
         "r": (row.get("responsavel_r") or "").strip() or None,
@@ -166,7 +179,8 @@ def _normalize(row: Dict, fonte: str) -> Dict:
 def _fetch_intel(cursor, project_id: int) -> List[Dict]:
     cursor.execute("""
         SELECT id, area, acao, responsavel_r, responsavel_a, responsavel_c,
-               responsavel_i, prazo, status, notas, task_id
+               responsavel_i, prazo, status, notas, task_id,
+               concluido_em, concluido_em_fonte
           FROM raci_itens
          WHERE project_id = %s
     """, (project_id,))
@@ -202,7 +216,8 @@ def _fetch_conselhoos_status(empresa_uuid: str):
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute("""
                 SELECT id, area, acao, responsavel_r, responsavel_a,
-                       responsavel_c, responsavel_i, prazo, status, notas
+                       responsavel_c, responsavel_i, prazo, status, notas,
+                       concluido_em, concluido_em_fonte
                   FROM raci_itens
                  WHERE empresa_id = %s
             """, (empresa_uuid,))
@@ -224,6 +239,50 @@ def _sort_key(item: Dict):
     bucket = STATUS_ORDER.index(item["status_efetivo"]) if item["status_efetivo"] in STATUS_ORDER else 9
     sem_prazo = item["prazo"] is None
     return (bucket, sem_prazo, item["prazo"] or "", item["acao"].lower())
+
+
+def _acumulado(itens: List[Dict]) -> Dict:
+    """O que ACONTECEU na frente — não o que está aberto.
+
+    POR QUE EXISTE (pedido da CoS, 10/08/26). A tela mostrava "10 abertos, 5
+    atrasados" e o Renato afirmou não ter números para dar substância ao próprio
+    posicionamento — tendo 52 de 62 fechados desde abril. Decidiu sobre si mesmo
+    com foto parcial. "Só o que está aberto" está certo para o dia a dia e errado
+    para responder o que a governança produziu.
+
+    A RÉGUA DIZ SOBRE QUANTOS ELA FALA. `no_prazo` é calculado apenas sobre os
+    itens que têm AS DUAS datas — conclusão e prazo. `sem_data` e `cobertura`
+    saem junto, sempre: a coluna `concluido_em` nasceu em 11/08/26 e o passado
+    só foi recuperado onde havia relato, então dizer "44 no prazo" sem dizer
+    "de 10 medidos entre 54 concluídos" seria inventar precisão
+    ([[feedback_regua_cobertura_parcial]]).
+    """
+    concluidos = [i for i in itens if i["status"] == "concluido"]
+    com_data = [i for i in concluidos if i["concluido_em"]]
+    avaliaveis = [i for i in com_data if i["concluido_no_prazo"] is not None]
+    no_prazo = [i for i in avaliaveis if i["concluido_no_prazo"]]
+    datas = sorted(i["concluido_em"] for i in com_data) if com_data else []
+
+    return {
+        "total": len(itens),
+        "concluidos": len(concluidos),
+        # A frase que o Renato usa — "52 de 62 desde abril".
+        "rotulo": f"{len(concluidos)}/{len(itens)}" if itens else None,
+        "desde": datas[0] if datas else None,
+        "ultimo_fechamento": datas[-1] if datas else None,
+        # Medição de pontualidade, com o denominador à vista.
+        "medidos": len(avaliaveis),
+        "no_prazo": len(no_prazo),
+        "fora_prazo": len(avaliaveis) - len(no_prazo),
+        "sem_data": len(concluidos) - len(com_data),
+        "cobertura_pct": round(len(com_data) / len(concluidos) * 100) if concluidos else None,
+        # Quantos dos medidos vieram do backfill (limite superior, não a data
+        # exata). Enquanto este número dominar, "no prazo" é indicativo.
+        "por_relato": sum(1 for i in avaliaveis if i["concluido_em_fonte"] == "relato"),
+        "rotulo_pontualidade": (
+            f"{len(no_prazo)} de {len(avaliaveis)} medidos" if avaliaveis else None
+        ),
+    }
 
 
 def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
@@ -269,6 +328,10 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     for it in itens:
         resumo[it["status_efetivo"]] = resumo.get(it["status_efetivo"], 0) + 1
 
+    # Calculado ANTES do filtro, como o resumo: acumulado que encolhe quando se
+    # olha "só os atrasados" esconderia justamente o que ele existe pra mostrar.
+    acumulado = _acumulado(itens)
+
     if status:
         itens = [it for it in itens if it["status_efetivo"] == status]
 
@@ -285,6 +348,7 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
         "itens": itens,
         "total": len(itens),
         "resumo": resumo,
+        "acumulado": acumulado,
         "fontes": fontes,
         "filtro_status": status,
         "gerado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),

@@ -67,6 +67,18 @@ body{
 .stat[data-s="em_andamento"]{border-left-color:var(--andamento)}
 .stat[data-s="concluido"]{border-left-color:var(--concluido)}
 
+/* ---------- acumulado (o que ACONTECEU, não o que está aberto) ---------- */
+.acumulado{
+  font-size:12.5px; color:var(--muted); margin:-4px 0 16px; letter-spacing:.01em;
+}
+.acumulado strong{color:var(--concluido); font-weight:700}
+.acumulado .sep{margin:0 7px; opacity:.5}
+.acumulado .cob{
+  margin-left:9px; padding:2px 7px; border-radius:10px; font-size:11px;
+  background:#f1ece2; color:var(--muted); border:1px solid var(--border);
+  cursor:help;
+}
+
 /* ---------- barra de ações (some no print) ---------- */
 .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 button,.btn{
@@ -317,6 +329,7 @@ textarea.inline-edit{
   <div id="avisos"></div>
 
   <div class="resumo" id="resumo"></div>
+  <div class="acumulado" id="acumulado"></div>
 
   <div class="bar no-print">
     <button class="btn-gold" onclick="window.print()">Imprimir / PDF</button>
@@ -444,6 +457,28 @@ function render(){
         <div class="n">${dados.resumo[s] || 0}</div>
         <div class="l">${LABELS[s]}</div>
       </div>`).join('');
+
+  // O ACUMULADO. Os statcards dizem o que está ABERTO — e em 10/08 essa foto
+  // parcial custou caro: a tela mostrava "10 abertos, 5 atrasados" e o Renato
+  // afirmou não ter números para dar substância ao próprio posicionamento,
+  // tendo 52 de 62 fechados desde abril. Aberto não é o que aconteceu.
+  const ac = dados.acumulado;
+  const alvo = document.getElementById('acumulado');
+  if (!ac || !ac.concluidos) { alvo.innerHTML = ''; }
+  else {
+    const desde = ac.desde
+      ? ` · desde ${ac.desde.split('-').reverse().join('/')}` : '';
+    // A pontualidade só aparece com o DENOMINADOR colado. "5 no prazo" ao lado
+    // de "52 concluídos" seria lido como 5 de 52; o que existe é 5 de 10
+    // medidos, porque a data de fechamento só passou a ser gravada em 11/08.
+    const pont = ac.medidos
+      ? `<span class="sep">·</span><strong>${ac.no_prazo}</strong> no prazo,
+         de ${ac.medidos} medidos` : '';
+    const cob = ac.sem_data
+      ? `<span class="cob" title="A data de conclusão passou a ser gravada em 11/08/2026. ${ac.sem_data} item(ns) fecharam antes disso e não têm data recuperável${ac.por_relato ? `; ${ac.por_relato} dos medidos vieram de relato semanal, que é limite superior` : ''}.">${ac.sem_data} sem data</span>`
+      : '';
+    alvo.innerHTML = `<strong>${ac.rotulo}</strong> concluídos${desde}${pont} ${cob}`;
+  }
 
   document.getElementById('btn-limpar').style.display = filtro ? '' : 'none';
 

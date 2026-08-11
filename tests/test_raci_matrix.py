@@ -57,6 +57,80 @@ def linha(**kw):
 
 # ==================== normalização ====================
 
+def test_concluido_no_prazo_exige_AS_DUAS_datas():
+    """`None` não é `False`.
+
+    Item concluído sem data de fechamento, ou sem prazo, não é item atrasado —
+    é item NÃO MEDIDO. Colapsar os dois em `False` transformaria os 42 itens do
+    Vallen sem data recuperável em 42 fechamentos fora do prazo, que é a versão
+    silenciosa de inventar o número (073).
+    """
+    from datetime import datetime
+    sem_nada = _normalize(linha(status="concluido"), FONTE_INTEL)
+    assert sem_nada["concluido_no_prazo"] is None
+    assert sem_nada["concluido_em"] is None
+
+    so_prazo = _normalize(linha(status="concluido", prazo=ONTEM), FONTE_INTEL)
+    assert so_prazo["concluido_no_prazo"] is None, "sem data de conclusão não se avalia"
+
+    so_data = _normalize(linha(status="concluido",
+                               concluido_em=datetime(2026, 8, 1, 10, 0)), FONTE_INTEL)
+    assert so_data["concluido_no_prazo"] is None, "sem prazo não há do que atrasar"
+
+
+def test_no_prazo_compara_dia_e_nao_instante():
+    """Fechar às 18h do dia do prazo é fechar no prazo."""
+    from datetime import datetime
+    hoje = date.today()
+    it = _normalize(linha(status="concluido", prazo=hoje,
+                          concluido_em=datetime(hoje.year, hoje.month, hoje.day, 18, 30)),
+                    FONTE_INTEL)
+    assert it["concluido_no_prazo"] is True
+    tarde = _normalize(linha(status="concluido", prazo=ONTEM,
+                             concluido_em=datetime(hoje.year, hoje.month, hoje.day, 9, 0)),
+                       FONTE_INTEL)
+    assert tarde["concluido_no_prazo"] is False
+
+
+def test_acumulado_declara_a_cobertura_junto_com_o_numero():
+    """A régua tem que dizer sobre quantos ela fala.
+
+    O caso real: o Vallen tem 52 concluídos e só 10 com data recuperável.
+    Publicar "5 no prazo" sem o denominador faria parecer 5 de 52.
+    """
+    from datetime import datetime
+    from services.raci_matrix import _acumulado
+    hoje = date.today()
+    itens = [
+        _normalize(linha(id=1, status="concluido", prazo=hoje,
+                         concluido_em=datetime(hoje.year, hoje.month, hoje.day, 9, 0),
+                         concluido_em_fonte="gatilho"), FONTE_INTEL),
+        _normalize(linha(id=2, status="concluido", prazo=ONTEM,
+                         concluido_em=datetime(hoje.year, hoje.month, hoje.day, 9, 0),
+                         concluido_em_fonte="relato"), FONTE_INTEL),
+        _normalize(linha(id=3, status="concluido"), FONTE_INTEL),          # sem data
+        _normalize(linha(id=4, status="pendente", prazo=AMANHA), FONTE_INTEL),
+    ]
+    a = _acumulado(itens)
+    assert a["concluidos"] == 3 and a["total"] == 4
+    assert a["rotulo"] == "3/4"
+    assert a["medidos"] == 2, "só os que têm as duas datas entram na conta"
+    assert a["no_prazo"] == 1 and a["fora_prazo"] == 1
+    assert a["sem_data"] == 1, "o não medido tem que aparecer, não sumir"
+    assert a["cobertura_pct"] == 67
+    assert a["por_relato"] == 1, "backfill é limite superior — precisa ser separável"
+    assert "de 2 medidos" in a["rotulo_pontualidade"]
+
+
+def test_acumulado_de_frente_sem_conclusao_nao_inventa_numero():
+    from services.raci_matrix import _acumulado
+    a = _acumulado([_normalize(linha(status="pendente"), FONTE_INTEL)])
+    assert a["concluidos"] == 0
+    assert a["rotulo"] == "0/1"
+    assert a["cobertura_pct"] is None and a["rotulo_pontualidade"] is None, (
+        "sem item concluído, percentual seria divisão por zero disfarçada de zero")
+
+
 def test_as_duas_fontes_viram_o_mesmo_formato():
     a = _normalize(linha(), FONTE_INTEL)
     b = _normalize(linha(), FONTE_CONSELHOOS)
