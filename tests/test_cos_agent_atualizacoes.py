@@ -50,6 +50,14 @@ class _ConnFake:
         self.sqls.append(" ".join(sql.split()))
 
     def fetchone(self):
+        # Todo UPDATE do portão lê antes o estado ANTERIOR dos campos que vai
+        # tocar — é o que torna a escrita reversível. Um fake que só devolve
+        # `id` faz o caminho de update explodir em KeyError e o teste culpar o
+        # código pelo dublê.
+        ultimo = self.sqls[-1] if self.sqls else ""
+        if ultimo.startswith("SELECT") and "board_hunt_frentes" in ultimo:
+            return {"fase": 2, "status": "ativo", "nota": None,
+                    "piso_alvo": None, "id": 15}
         return {"id": 99}
 
     def fetchall(self):
@@ -72,6 +80,18 @@ def runner(monkeypatch):
 
 def _debrief(atualizacoes):
     return [{"project_id": 1, "frente": "Orbiz", "atualizacoes": atualizacoes}]
+
+
+def _gravou(conn):
+    """Houve escrita de verdade?
+
+    Desde 11/08 o runner emite SAVEPOINT/ROLLBACK por item — controle de
+    transação, não gravação. Afirmar `not conn.sqls` passou a reprovar o
+    contorno em vez do defeito: o que estes testes guardam é que NADA foi
+    gravado, não que nenhum comando foi emitido.
+    """
+    return [s for s in conn.sqls
+            if s.startswith("INSERT INTO") or s.startswith("UPDATE ")]
 
 
 def test_proposta_valida_vira_escrita(runner):
@@ -101,7 +121,7 @@ def test_confianca_baixa_vira_pergunta_com_payload(runner):
     assert pl["propostas"] == 1 and pl["escritas"] == 0
     det = pl["detalhe"][0]
     assert det["status"] == "proposta" and det["dados"] == {"fase": 4}
-    assert not conn.sqls, "gravou apesar da confiança abaixo do piso"
+    assert not _gravou(conn), "gravou apesar da confiança abaixo do piso"
 
 
 def test_operacao_invalida_e_contada_nao_engolida(runner):
@@ -123,7 +143,7 @@ def test_confianca_ausente_nao_vira_escrita(runner):
         "motivo": "registro",
     }]))
     assert pl["escritas"] == 0 and pl["propostas"] == 1
-    assert not conn.sqls
+    assert not _gravou(conn)
 
 
 def test_teto_de_tres_por_frente(runner):
@@ -263,6 +283,155 @@ def test_pendentes_saem_do_placar(runner):
     }]))
     assert len(pl["pendentes"]) == 1
     assert pl["pendentes"][0]["operacao"] == "atualizar_fase_frente"
+
+
+# ---------------------------------------------------------------------------
+# 11/08 — os dois defeitos que a PRÓPRIA CAMADA denunciou no primeiro dia com
+# escrita ligada, abrindo #999793 e #999794 na fila do projeto #58.
+# ---------------------------------------------------------------------------
+
+def test_registro_id_dentro_de_dados_e_aceito(runner):
+    """`atualizar_fase_frente` é a única operação de UPDATE das cinco — e era
+    inaplicável na prática.
+
+    O runner lia `registro_id` no topo do objeto, mas o exemplo de JSON do prompt
+    só documentava operacao/dados/motivo/confianca/fato_origem. A exigência
+    estava em PROSA, na tabela de operações — e prosa não é contrato
+    ([[feedback_prompt_nao_le_comentario]]). Em 11/08 as três tentativas de
+    `atualizar_fase_frente` foram recusadas.
+    """
+    mod, conn = runner
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief([{
+        "operacao": "atualizar_fase_frente",
+        "dados": {"registro_id": 15, "fase": 4, "nota": "reunião marcada"},
+        "motivo": "o Pretola confirmou o HH — a frente saiu do contato inicial",
+        "confianca": 0.9, "fato_origem": "messages#28104",
+    }]))
+    assert pl["escritas"] == 1, f"recusou a forma tolerada: {pl['detalhe']}"
+    assert any("UPDATE board_hunt_frentes" in s for s in conn.sqls)
+    # E não pode vazar como coluna — `registro_id` não existe em
+    # board_hunt_frentes, e um SET registro_id = ... explodiria no banco.
+    assert not any("registro_id =" in s for s in conn.sqls)
+
+
+def test_update_sem_alvo_nenhum_continua_recusado(runner):
+    """Controle positivo do teste acima: tolerar a forma errada não pode virar
+    inventar o alvo. Sem `registro_id` em lugar nenhum, a recusa fica."""
+    mod, _ = runner
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief([{
+        "operacao": "atualizar_fase_frente", "dados": {"fase": 4},
+        "motivo": "avançou", "confianca": 0.9,
+    }]))
+    assert pl["recusadas"] == 1
+    assert "registro_id" in pl["detalhe"][0]["erro"]
+
+
+def test_recusa_carrega_o_motivo(runner):
+    """43% das propostas do primeiro dia sumiram sem diagnóstico.
+
+    O erro era guardado em `detalhe['erro']` e nunca saía: a linha de stderr
+    imprimia só status/operação/frente, e nada ia pro payload. Dava pra CONTAR
+    recusa, não pra consertar.
+    """
+    mod, _ = runner
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief([{
+        "operacao": "apagar_contato", "dados": {"id": 1},
+        "motivo": "limpeza", "confianca": 1.0,
+    }]))
+    det = pl["detalhe"][0]
+    assert det["erro"], "recusa sem motivo é recusa que não se corrige"
+    assert "OperacaoNaoPermitida" in det["erro"], "o tipo do erro identifica a causa"
+    assert det["dados"] == {"id": "1"}, "sem o que foi proposto não dá pra julgar"
+
+
+def test_recusa_do_banco_nao_derruba_a_escrita_seguinte():
+    """SAVEPOINT por item.
+
+    `project_members` tem UNIQUE (project_id, contact_id), e em 11/08 o agente
+    propôs duas vezes ligar alguém já ligado. Sem savepoint a transação inteira
+    aborta e tudo que vem DEPOIS morre com `InFailedSqlTransaction` — erro que
+    aponta pro lugar errado. Naquele dia as duas caíram no fim da fila; numa
+    próxima rodada teriam levado junto o que viesse a seguir.
+    """
+    mod = _runner()
+
+    class _ConnQueEstoura(_ConnFake):
+        """Erra UMA vez, no primeiro INSERT em project_members — e depois só
+        aceita comando novo se tiver havido ROLLBACK TO SAVEPOINT."""
+
+        def __init__(self):
+            super().__init__()
+            self.estourou = False
+            self.abortada = False
+
+        def execute(self, sql, params=None):
+            limpo = " ".join(sql.split())
+            if limpo.startswith("ROLLBACK TO SAVEPOINT"):
+                self.abortada = False
+            elif self.abortada:
+                raise RuntimeError("InFailedSqlTransaction: transaction is aborted")
+            elif "INSERT INTO project_members" in limpo and not self.estourou:
+                self.estourou = True
+                self.abortada = True
+                raise RuntimeError("UniqueViolation: duplicate key value")
+            self.sqls.append(limpo)
+
+    conn = _ConnQueEstoura()
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(mod, "_conn", lambda url: conn)
+    try:
+        pl = mod.persistir_atualizacoes("postgres://fake", _debrief([
+            {"operacao": "ligar_contato_a_projeto",
+             "dados": {"project_id": 28, "contact_id": 4973, "papel": "membro"},
+             "motivo": "participa da frente", "confianca": 0.95},
+            {"operacao": "registrar_nota_projeto",
+             "dados": {"project_id": 28, "tipo": "camada", "conteudo": "vem depois"},
+             "motivo": "o que a camada entendeu do fato", "confianca": 0.9},
+        ]))
+    finally:
+        mp.undo()
+
+    assert pl["recusadas"] == 1
+    assert pl["escritas"] == 1, (
+        "a escrita seguinte morreu junto — sem savepoint, um erro de banco "
+        "engole tudo que vem depois na rodada")
+    assert any("INSERT INTO project_notes" in s for s in conn.sqls)
+
+
+def test_o_placar_do_cadastro_chega_ao_payload():
+    """A taxa de recusa tem que existir FORA da máquina.
+
+    Enquanto o motivo vivia só em `~/.cos-agent/run.err`, a retro quinzenal não
+    tinha como medi-lo — mesmo defeito de 06/08, quando `falhas: 3` era gravado
+    sem o porquê e cada investigação recomeçava do zero.
+    """
+    fonte = (_ROOT / "scripts" / "cos_agent" / "run.py").read_text(encoding="utf-8")
+    i = fonte.index('"cadastro": cadastro')
+    assert '"custo_usd"' in fonte[i - 400:i], "o placar não entrou no payload da rodada"
+    assert '"recusas": [x for x in pl["detalhe"]' in fonte, (
+        "o payload conta as recusas sem dizer quais foram")
+    # `None` sem credencial ≠ `escritas: 0` com credencial. Colapsar os dois
+    # esconde o modo degradado.
+    assert "cadastro = None" in fonte
+
+
+def test_stderr_da_recusa_diz_o_motivo():
+    fonte = (_ROOT / "scripts" / "cos_agent" / "run.py").read_text(encoding="utf-8")
+    i = fonte.index("det.get('status'):9s")
+    assert "det['erro']" in fonte[i - 400:i], (
+        "a linha de stderr voltou a imprimir recusa sem causa")
+
+
+def test_prompt_ensina_o_registro_id_no_exemplo():
+    """A regra que só existe em prosa não existe para o modelo."""
+    prompt = (_ROOT / "scripts" / "cos_agent" / "prompt_frente.md").read_text(encoding="utf-8")
+    i = prompt.index('"atualizacoes": [')
+    exemplo = prompt[i:i + 700]
+    assert '"registro_id"' in exemplo, (
+        "o exemplo de JSON não mostra `registro_id` — a única operação de UPDATE "
+        "volta a ser inaplicável")
+    assert "atualizar_fase_frente" in exemplo
 
 
 def test_prompt_ensina_as_cinco_operacoes():

@@ -553,7 +553,11 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
     Recusa não é erro: `PropostaPendente` (confiança baixa) e
     `OperacaoNaoPermitida` (campo ou operação fora da lista) são resultados
     esperados, contados e relatados. O que NÃO pode acontecer é uma proposta
-    sumir sem aparecer em lugar nenhum.
+    sumir sem aparecer em lugar nenhum — e era o que acontecia até 11/08: o
+    motivo da recusa ficava só neste dicionário, que ninguém persistia. No
+    primeiro dia com escrita ligada, **7 das 20 propostas (35%) foram recusadas
+    sem deixar diagnóstico**. Agora o motivo vai pro stderr E pro payload do
+    `cos_daily_review`, que é onde a retro consegue medir a taxa.
     """
     sys.path.insert(0, str(BASE.parent.parent / "app"))
     from services import agent_write  # noqa: E402
@@ -565,14 +569,44 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
         return placar
 
     with _conn(rw_url) as conexao:
-        for d, u in candidatos:
+        for i, (d, u) in enumerate(candidatos):
             op = (u.get("operacao") or "").strip()
-            dados = u.get("dados") or {}
+            # Cópia: o dict original ainda vai virar proposta pendente se a
+            # confiança for baixa, e mutar o que se mostra ao Renato é outro bug.
+            dados = dict(u.get("dados") or {})
             motivo = (u.get("motivo") or "").strip()
             try:
                 conf = float(u.get("confianca") or 0)
             except (TypeError, ValueError):
                 conf = 0.0
+
+            # `registro_id` mora no nível de cima do contrato, mas o prompt só
+            # documentava a exigência em prosa até 11/08 — e prosa não é contrato
+            # ([[feedback_prompt_nao_le_comentario]]). Enquanto o agente aprende o
+            # formato novo, aceitamos também dentro de `dados`: deixá-lo ali seria
+            # "campo fora da operação" e recusaria a única operação de UPDATE que
+            # existe. Tolerar a forma errada aqui é barato; perder a operação não.
+            reg_id = u.get("registro_id")
+            if "registro_id" in dados:
+                if reg_id is None:
+                    reg_id = dados["registro_id"]
+                dados.pop("registro_id")
+            if reg_id is not None:
+                try:
+                    reg_id = int(reg_id)
+                except (TypeError, ValueError):
+                    reg_id = None
+
+            # SAVEPOINT por item. Sem ele, uma recusa vinda do BANCO (e não da
+            # lista fechada) aborta a transação inteira e todas as escritas
+            # seguintes morrem com `InFailedSqlTransaction` — erro que aponta pro
+            # lugar errado. Não é hipótese: `project_members` tem UNIQUE
+            # (project_id, contact_id), e em 11/08 o agente propôs duas vezes
+            # ligar alguém já ligado. Naquele dia as duas caíram no fim da fila;
+            # numa próxima rodada teriam levado junto o que viesse depois.
+            sp = f"sp_upd_{i}"
+            with conexao.cursor() as cur0:
+                cur0.execute(f"SAVEPOINT {sp}")
 
             try:
                 rid = agent_write.escrever(
@@ -580,28 +614,40 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
                     motivo=motivo, confianca=conf,
                     agente="cos_agent_local",
                     fato_origem=(u.get("fato_origem") or "").strip() or None,
-                    registro_id=u.get("registro_id"),
+                    registro_id=reg_id,
                     conn=conexao,
                 )
+                with conexao.cursor() as cur0:
+                    cur0.execute(f"RELEASE SAVEPOINT {sp}")
                 placar["escritas"] += 1
                 placar["detalhe"].append(
                     {"frente": d.get("frente"), "operacao": op, "id": rid, "status": "escrito"})
             except agent_write.PropostaPendente as p:
                 # O ambíguo tem destino: vira pergunta. Abster aqui recriaria o
                 # caso Orbiz — o desencontro visto e ninguém avisado.
+                with conexao.cursor() as cur0:
+                    cur0.execute(f"ROLLBACK TO SAVEPOINT {sp}")
                 placar["propostas"] += 1
                 placar["detalhe"].append(
                     {"frente": d.get("frente"), "operacao": op, "status": "proposta",
                      "confianca": p.confianca, "motivo": p.motivo, "dados": p.payload})
                 placar["pendentes"].append(
                     {"operacao": op, "dados": p.payload, "motivo": p.motivo,
-                     "confianca": p.confianca, "registro_id": u.get("registro_id"),
+                     "confianca": p.confianca, "registro_id": reg_id,
                      "frente": d.get("frente")})
             except Exception as e:                        # noqa: BLE001
+                with conexao.cursor() as cur0:
+                    cur0.execute(f"ROLLBACK TO SAVEPOINT {sp}")
                 placar["recusadas"] += 1
+                # O que foi proposto vai junto do erro. "recusada
+                # ligar_contato_a_projeto" sozinho não diz se o defeito é do
+                # agente, do contrato ou do banco — e sem isso a retro conta
+                # recusas sem saber o que consertar.
                 placar["detalhe"].append(
                     {"frente": d.get("frente"), "operacao": op, "status": "recusada",
-                     "erro": str(e)[:200]})
+                     "erro": f"{type(e).__name__}: {e}"[:300],
+                     "confianca": conf, "registro_id": reg_id,
+                     "dados": {k: str(v)[:120] for k, v in dados.items()}})
     return placar
 
 
@@ -949,19 +995,32 @@ def main() -> int:
     # porque o modo degradado silencioso é como se descobre em novembro que
     # nada foi escrito desde agosto.
     rw_url = (os.getenv("COS_RW_URL") or "").strip()
+    cadastro = None
     if rw_url:
         pl = persistir_atualizacoes(rw_url, ok)
         # A dúvida vira PERGUNTA. Até aqui ela só ia pro stderr, que ninguém
         # abre — dúvida que não chega a ele é indistinguível de dúvida que não
         # existiu, e era esse o buraco que a diretriz de 10/08 mandava fechar.
         abertas = sum(1 for p in pl["pendentes"] if abrir_proposta(owner_url, p))
+        # O placar do cadastro entra no payload da rodada. Sem isto a taxa de
+        # recusa só existia no stderr da máquina — e a retro quinzenal não tem
+        # como medir o que só existe num arquivo local que ninguém abre.
+        cadastro = {
+            "escritas": pl["escritas"], "duvidas": pl["propostas"],
+            "perguntas_abertas": abertas, "recusadas": pl["recusadas"],
+            "recusas": [x for x in pl["detalhe"] if x.get("status") == "recusada"],
+        }
         if pl["escritas"] or pl["propostas"] or pl["recusadas"]:
             print(f"[cos-agent] cadastro: {pl['escritas']} escrita(s), "
                   f"{pl['propostas']} dúvida(s) → {abertas} pergunta(s) nova(s), "
                   f"{pl['recusadas']} recusada(s)")
             for det in pl["detalhe"]:
+                # O ERRO na mesma linha. Antes só saía status/operação/frente, e
+                # a recusa virava um fato sem causa: dava pra contar, não dava
+                # pra consertar.
+                extra = f" · {det['erro']}" if det.get("erro") else ""
                 print(f"[cos-agent]   {det.get('status'):9s} {det.get('operacao','?')} "
-                      f"— {det.get('frente','?')}", file=sys.stderr)
+                      f"— {det.get('frente','?')}{extra}", file=sys.stderr)
     elif any(d.get("atualizacoes") for d in ok):
         n = sum(len(d.get("atualizacoes") or []) for d in ok)
         print(f"[cos-agent] ⚠️ {n} atualização(ões) propostas e DESCARTADAS: "
@@ -997,6 +1056,10 @@ def main() -> int:
         "triagem": {**triagem, "julgadas_agora": len(ok),
                     "herdadas": len(m["frentes"]) - len(ok)},
         "custo_usd": round(custo, 4) if custo else None,
+        # `None` quando a camada rodou sem COS_RW_URL — distinto de `escritas: 0`,
+        # que é "podia escrever e não teve o que". Colapsar os dois esconderia o
+        # modo degradado, que é como se descobre em novembro que nada foi escrito.
+        "cadastro": cadastro,
         "frentes": m["frentes"],
         "placar": {"hoje": hoje, "esta_semana": esta_semana,
                    "precisa_de_voce": m["precisa"], "vigilias": m["vigilias"],

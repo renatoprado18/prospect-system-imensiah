@@ -100,7 +100,10 @@ Você é um AGENTE: **decide o que pesquisar, onde e quanto**. Não há pacote p
   "atualizacoes": [
     {"operacao": "criar_frente_board_hunt", "dados": {"nome": "...", "contato_id": 5245, "fase": 2, "status": "ativo"},
      "motivo": "por que este fato exige esta mudança", "confianca": 0.9,
-     "fato_origem": "messages#27573"}
+     "fato_origem": "messages#27573"},
+    {"operacao": "atualizar_fase_frente", "registro_id": 15, "dados": {"fase": 3, "nota": "..."},
+     "motivo": "por que este fato move a frente de fase", "confianca": 0.9,
+     "fato_origem": "messages#28104"}
   ],
   "trajetoria": [
     "1. [o que procurei] -> [o que achei] -> [efeito no julgamento]"
@@ -145,12 +148,19 @@ própria. Toda escrita fica no livro-razão com o seu motivo, e é reversível.
 | operação | campos aceitos |
 |---|---|
 | `criar_frente_board_hunt` | nome, subtitulo, project_id, contato_id, originador_contact_id, originador_rotulo, fase, status, piso_alvo, nota |
-| `atualizar_fase_frente` | fase, status, nota, piso_alvo — **exige `registro_id`** |
+| `atualizar_fase_frente` | fase, status, nota, piso_alvo — **exige `registro_id`, no NÍVEL DE CIMA** (ao lado de `operacao`, não dentro de `dados`) |
 | `ligar_contato_a_projeto` | project_id, contact_id, papel |
 | `criar_task_followup` | titulo, descricao, contact_id, project_id, data_vencimento, prioridade, status, origem |
 | `registrar_nota_projeto` | project_id, tipo, titulo, conteudo, autor, metadata |
 
 Campo fora dessa lista faz a atualização inteira ser recusada. Não invente coluna.
+
+⚠️ **`atualizar_fase_frente` é a única operação de UPDATE, e ela precisa saber QUAL
+linha alterar.** Descubra o id em `board_hunt_frentes` (`SELECT id, nome, fase,
+status FROM board_hunt_frentes`) e devolva-o em `registro_id`, **fora de `dados`** —
+é assim no exemplo de JSON acima. Sem isso a atualização é recusada, e foi o que
+aconteceu com as três primeiras tentativas de 11/08: a exigência estava escrita só
+nesta tabela, em prosa, e prosa não é contrato.
 
 **Quando propor:**
 
