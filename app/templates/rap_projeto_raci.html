@@ -468,14 +468,22 @@ function render(){
   else {
     const desde = ac.desde
       ? ` · desde ${ac.desde.split('-').reverse().join('/')}` : '';
-    // A pontualidade só aparece com o DENOMINADOR colado. "5 no prazo" ao lado
-    // de "52 concluídos" seria lido como 5 de 52; o que existe é 5 de 10
-    // medidos, porque a data de fechamento só passou a ser gravada em 11/08.
+    // Pontualidade só com o DENOMINADOR colado, e só sobre o que foi carimbado
+    // no ato. O backfill veio do relatório semanal, que reporta em lote: 4 itens
+    // com prazo de abril carimbados no mesmo 11/05 apareceriam como 4 atrasos
+    // que não aconteceram. Enquanto não houver fechamento medido de verdade, a
+    // tela diz que a contagem começou — não mostra um número enviesado.
     const pont = ac.medidos
       ? `<span class="sep">·</span><strong>${ac.no_prazo}</strong> no prazo,
-         de ${ac.medidos} medidos` : '';
-    const cob = ac.sem_data
-      ? `<span class="cob" title="A data de conclusão passou a ser gravada em 11/08/2026. ${ac.sem_data} item(ns) fecharam antes disso e não têm data recuperável${ac.por_relato ? `; ${ac.por_relato} dos medidos vieram de relato semanal, que é limite superior` : ''}.">${ac.sem_data} sem data</span>`
+         de ${ac.medidos} medidos`
+      : (ac.reconstruidos || ac.sem_data
+          ? `<span class="sep">·</span><span title="${ac.aviso_reconstruido || ''}">pontualidade
+             passa a contar a partir de 11/08/2026</span>` : '');
+    const partes = [];
+    if (ac.sem_data) partes.push(`${ac.sem_data} sem data`);
+    if (ac.reconstruidos) partes.push(`${ac.reconstruidos} por relato`);
+    const cob = partes.length
+      ? `<span class="cob" title="A data de conclusão passou a ser gravada em 11/08/2026. ${ac.sem_data} item(ns) fecharam antes disso sem data recuperável.${ac.aviso_reconstruido ? ' ' + ac.aviso_reconstruido : ''}">${partes.join(' · ')}</span>`
       : '';
     alvo.innerHTML = `<strong>${ac.rotulo}</strong> concluídos${desde}${pont} ${cob}`;
   }

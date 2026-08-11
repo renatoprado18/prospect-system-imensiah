@@ -260,28 +260,46 @@ def _acumulado(itens: List[Dict]) -> Dict:
     concluidos = [i for i in itens if i["status"] == "concluido"]
     com_data = [i for i in concluidos if i["concluido_em"]]
     avaliaveis = [i for i in com_data if i["concluido_no_prazo"] is not None]
-    no_prazo = [i for i in avaliaveis if i["concluido_no_prazo"]]
     datas = sorted(i["concluido_em"] for i in com_data) if com_data else []
+
+    # SÓ O CARIMBADO NO ATO SUSTENTA A AFIRMAÇÃO. O backfill veio de
+    # `concluido_relatado_em`, que é a data do RELATÓRIO SEMANAL — e medido em
+    # 11/08 ele se revelou pior que impreciso: é EM LOTE. No Vallen, 4 itens com
+    # prazos de 15 a 30/04 foram todos carimbados em 11/05, a data do relatório
+    # que os reportou juntos. Comparar essa data com o prazo de cada um produz
+    # "atraso" que nunca existiu — o item fechou em abril e só foi relatado em
+    # maio. Publicar isso como pontualidade seria o Renato se acusando de um
+    # descumprimento que os dados não mostram.
+    exatos = [i for i in avaliaveis if i["concluido_em_fonte"] == "gatilho"]
+    no_prazo_exatos = [i for i in exatos if i["concluido_no_prazo"]]
+    reconstruidos = [i for i in avaliaveis if i["concluido_em_fonte"] != "gatilho"]
 
     return {
         "total": len(itens),
         "concluidos": len(concluidos),
-        # A frase que o Renato usa — "52 de 62 desde abril".
+        # A frase que o Renato usa — "52 de 62 desde abril". Esta é sólida: não
+        # depende de data nenhuma, só de status.
         "rotulo": f"{len(concluidos)}/{len(itens)}" if itens else None,
         "desde": datas[0] if datas else None,
         "ultimo_fechamento": datas[-1] if datas else None,
-        # Medição de pontualidade, com o denominador à vista.
-        "medidos": len(avaliaveis),
-        "no_prazo": len(no_prazo),
-        "fora_prazo": len(avaliaveis) - len(no_prazo),
+
+        # Pontualidade PUBLICÁVEL — só o que foi carimbado no ato.
+        "medidos": len(exatos),
+        "no_prazo": len(no_prazo_exatos),
+        "fora_prazo": len(exatos) - len(no_prazo_exatos),
+        "rotulo_pontualidade": (
+            f"{len(no_prazo_exatos)} de {len(exatos)} medidos" if exatos else None
+        ),
+
+        # Contexto, explicitamente NÃO publicável.
+        "reconstruidos": len(reconstruidos),
         "sem_data": len(concluidos) - len(com_data),
         "cobertura_pct": round(len(com_data) / len(concluidos) * 100) if concluidos else None,
-        # Quantos dos medidos vieram do backfill (limite superior, não a data
-        # exata). Enquanto este número dominar, "no prazo" é indicativo.
-        "por_relato": sum(1 for i in avaliaveis if i["concluido_em_fonte"] == "relato"),
-        "rotulo_pontualidade": (
-            f"{len(no_prazo)} de {len(avaliaveis)} medidos" if avaliaveis else None
-        ),
+        "aviso_reconstruido": (
+            "Datas anteriores a 11/08/2026 vêm do relatório semanal, que reporta "
+            "itens em lote: a data é do relato, não do fechamento, e produz atraso "
+            "aparente. Não usar para afirmar pontualidade."
+        ) if reconstruidos else None,
     }
 
 

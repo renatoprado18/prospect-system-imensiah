@@ -114,12 +114,39 @@ def test_acumulado_declara_a_cobertura_junto_com_o_numero():
     a = _acumulado(itens)
     assert a["concluidos"] == 3 and a["total"] == 4
     assert a["rotulo"] == "3/4"
-    assert a["medidos"] == 2, "só os que têm as duas datas entram na conta"
-    assert a["no_prazo"] == 1 and a["fora_prazo"] == 1
     assert a["sem_data"] == 1, "o não medido tem que aparecer, não sumir"
     assert a["cobertura_pct"] == 67
-    assert a["por_relato"] == 1, "backfill é limite superior — precisa ser separável"
-    assert "de 2 medidos" in a["rotulo_pontualidade"]
+    # Só o carimbado no ato entra na pontualidade; o reconstruído fica de fora e
+    # visível.
+    assert a["medidos"] == 1 and a["no_prazo"] == 1 and a["fora_prazo"] == 0
+    assert a["reconstruidos"] == 1
+    assert "de 1 medidos" in a["rotulo_pontualidade"]
+
+
+def test_pontualidade_nao_se_apoia_em_data_de_relatorio():
+    """O backfill reporta EM LOTE, e isso fabrica atraso.
+
+    Medido em 11/08/26 no Vallen: quatro itens com prazos de 15 a 30/04 foram
+    todos carimbados em 11/05 — a data do relatório semanal que os reportou
+    juntos. Comparar essa data com o prazo de cada um produziria quatro atrasos
+    que nunca existiram, e o número serve justamente para o Renato afirmar
+    pontualidade. Item reconstruído conta como CONCLUÍDO, nunca como medido.
+    """
+    from datetime import datetime
+    from services.raci_matrix import _acumulado
+    lote = [_normalize(linha(id=i, status="concluido",
+                             prazo=date(2026, 4, 20),
+                             concluido_em=datetime(2026, 5, 11, 9, 0),
+                             concluido_em_fonte="relato"), FONTE_CONSELHOOS)
+            for i in range(4)]
+    a = _acumulado(lote)
+    assert a["concluidos"] == 4
+    assert a["medidos"] == 0, "data de relatório não mede pontualidade"
+    assert a["no_prazo"] == 0 and a["fora_prazo"] == 0
+    assert a["rotulo_pontualidade"] is None, (
+        "com zero medições exatas a tela não pode exibir número de pontualidade")
+    assert a["reconstruidos"] == 4
+    assert a["aviso_reconstruido"] and "lote" in a["aviso_reconstruido"]
 
 
 def test_acumulado_de_frente_sem_conclusao_nao_inventa_numero():
