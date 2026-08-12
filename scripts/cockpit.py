@@ -1031,6 +1031,20 @@ def main():
     cur_cos, cos_em = carregar_curadoria()
     open(SAIDA, "w").write(render(d, cur_cos, cos_em))
     print(f"→ {SAIDA}")
+
+    # O índice da pasta (`indice.html`) descreve o que existe em volta deste
+    # painel — inclusive denunciando painel que se diz vivo e está parado. Refazer
+    # aqui custa a leitura do cabeçalho de ~40 arquivos e evita que ele envelheça
+    # calado, que é justamente o defeito que ele existe pra apontar nos outros.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import indice_cockpit
+        open(indice_cockpit.SAIDA, "w").write(
+            indice_cockpit.render(datetime.now(BRT).date()))
+        print(f"→ {indice_cockpit.SAIDA}")
+    except Exception as e:
+        print(f"⚠️  índice da pasta não regenerado: {e}")
+
     if "--quieto" not in sys.argv:
         abrir(SAIDA)
 
