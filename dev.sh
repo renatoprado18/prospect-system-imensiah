@@ -26,18 +26,50 @@ echo "║          INTEL CRM - Dev Server           ║"
 echo "╚═══════════════════════════════════════════╝"
 echo -e "${NC}"
 
+PG_BIN=/usr/local/opt/postgresql@15/bin
+PG_DATA=/usr/local/var/postgresql@15
+
+# Sobe o Postgres. Tenta o brew primeiro (é quem gerencia o boot), mas NÃO
+# depende dele: `pg_ctl` sobe o mesmo cluster quando o brew está quebrado.
+start_postgres() {
+    # LC_ALL é obrigatório: sem locale válido o postmaster morre no start com
+    # "became multithreaded during startup" e o pg_ctl só diz "stopped waiting".
+    # É o mesmo valor que o plist do brew injeta — o fallback não pode subir o
+    # cluster num ambiente diferente do caminho normal.
+    brew services start postgresql@15 2>/dev/null \
+        || LC_ALL=en_US.UTF-8 "$PG_BIN/pg_ctl" -D "$PG_DATA" -l "$PG_DATA/server.log" start 2>/dev/null \
+        || true
+
+    # Espera aceitar conexão em vez de dormir um número fixo — `sleep 2` tanto
+    # sobra quanto falta, e quando falta o erro sai como "banco não existe".
+    for _ in $(seq 1 15); do
+        "$PG_BIN/pg_isready" -h localhost -p 5432 -q && return 0
+        sleep 1
+    done
+    return 1
+}
+
 # Verificar PostgreSQL local
 check_postgres() {
-    if ! brew services list | grep -q "postgresql@15.*started"; then
+    # Pergunta ao POSTGRES, não ao brew. Em 11/08/26 o `brew services list`
+    # passou a estourar em Ruby (`undefined method 'stop_timeout'`, Homebrew 6.x)
+    # e, com `set -e`, derrubava o dev.sh inteiro — com o banco NO AR o tempo
+    # todo. O que decide aqui é "aceita conexão", não o que o brew acha do
+    # serviço: o brew é um caminho pra subir, nunca a fonte da verdade.
+    if ! "$PG_BIN/pg_isready" -h localhost -p 5432 -q; then
         echo -e "${YELLOW}⚠️  PostgreSQL não está rodando. Iniciando...${NC}"
-        brew services start postgresql@15
-        sleep 2
+        if ! start_postgres; then
+            echo -e "${RED}❌ PostgreSQL não subiu em 15s.${NC}"
+            echo -e "   Tente: ${BLUE}$PG_BIN/pg_ctl -D $PG_DATA -l $PG_DATA/server.log start${NC}"
+            echo -e "   Log:   ${BLUE}tail -20 $PG_DATA/server.log${NC}"
+            exit 1
+        fi
     fi
 
     # Verificar se banco intel existe
-    if ! /usr/local/opt/postgresql@15/bin/psql -lqt | cut -d \| -f 1 | grep -qw intel; then
+    if ! "$PG_BIN/psql" -lqt | cut -d \| -f 1 | grep -qw intel; then
         echo -e "${YELLOW}⚠️  Banco 'intel' não existe. Criando...${NC}"
-        /usr/local/opt/postgresql@15/bin/createdb intel
+        "$PG_BIN/createdb" intel
         echo -e "${YELLOW}⚠️  Banco vazio. Execute: ./dev.sh sync${NC}"
     fi
 }
@@ -63,12 +95,11 @@ setup() {
         brew install postgresql@17
     fi
 
-    # Iniciar PostgreSQL
-    brew services start postgresql@15
-    sleep 2
+    # Iniciar PostgreSQL (mesmo caminho tolerante do check_postgres)
+    start_postgres || echo -e "${YELLOW}⚠️  PostgreSQL não subiu — veja $PG_DATA/server.log${NC}"
 
     # Criar banco
-    /usr/local/opt/postgresql@15/bin/createdb intel 2>/dev/null || true
+    "$PG_BIN/createdb" intel 2>/dev/null || true
 
     # Ativar venv e instalar deps Python
     if [ -d ".venv" ]; then
