@@ -36,15 +36,18 @@ COCKPIT = os.path.expanduser("~/cockpit")
 SAIDA = os.path.join(COCKPIT, "indice.html")
 BRT = ZoneInfo("America/Sao_Paulo")
 
-# Painéis que se refazem sozinhos pelo launchd — o dado é sempre de agora, e por
-# isso não envelhecem como as peças de sessão.
+# Painéis que se refazem sozinhos pelo launchd. O terceiro campo é a IDADE MÁXIMA
+# ESPERADA em dias — e ele existe porque a primeira versão desta tela acusou o
+# `raci.html` de estar "parado há 2 dias" com o job funcionando perfeitamente: o
+# RACI roda `Weekday 1` (segunda 7h30), então dois dias depois é o esperado, não
+# atraso. Régua diária aplicada a ritual semanal FABRICA o atraso que denuncia —
+# é a segunda vez que isso acontece com o RACI (a primeira foi `9f79c45`, na data
+# do relatório). Cadência é do painel, nunca do calendário de quem olha.
 VIVOS = {
-    "index.html": ("Cockpit do dia", "com.almeidaprado.cockpit, a cada 5 min"),
-    "board_hunt.html": ("Funil de originação de conselhos", "com.almeidaprado.boardhunt, a cada 5 min"),
-    "board_hunt_resumo.html": ("Board hunt em 1 folha — pra enviar", "gerado junto com o board"),
-    "raci.html": ("Planning semanal RACI", "com.almeidaprado.raci, ritual semanal"),
-    "placar.html": ("Placar da camada CoS", "agente local"),
-    "fatos.html": ("Fatos incertos — precisam de você", "agente local"),
+    "index.html": ("Cockpit do dia", "com.almeidaprado.cockpit, a cada 5 min", 1),
+    "board_hunt.html": ("Funil de originação de conselhos", "com.almeidaprado.boardhunt, a cada 5 min", 1),
+    "board_hunt_resumo.html": ("Board hunt em 1 folha — pra enviar", "gerado junto com o board", 1),
+    "raci.html": ("Planning semanal RACI", "com.almeidaprado.raci, segunda 7h30", 8),
 }
 
 # Telas com gerador próprio: podem ser refeitas a qualquer momento com um comando.
@@ -59,6 +62,11 @@ SOB_DEMANDA = {
     "triagem.html": "scripts/triagem_tasks.py",
     "devolutiva.html": "scripts/devolutiva.py",
     "memoria_particao.html": "scripts/gera_particao_memoria.py",
+    # Saíram de VIVOS em 12/08: apagados a pedido do Renato depois que a tela
+    # mostrou que estavam parados há 8 dias. Continuam listados porque o gerador
+    # existe — o que morreu foi o hábito de olhar, não a ferramenta.
+    "placar.html": "scripts/cos_agent/placar.py",
+    "fatos.html": "scripts/cos_agent/fatos.py",
 }
 
 
@@ -184,16 +192,16 @@ def render(hoje):
         if it["arq"] in (os.path.basename(SAIDA),) or it["arq"].endswith(".json"):
             continue
         if it["arq"] in VIVOS:
-            rot, fonte = VIVOS[it["arq"]]
+            rot, fonte, teto = VIVOS[it["arq"]]
             it["rotulo"], it["fonte"] = rot, fonte
             # Painel que se declara vivo e está velho é a pior das duas: mostra
-            # número com cara de agora. Quem olha não tem como saber que o produtor
-            # parou — a data do arquivo é o único sinal, e ninguém lê data de
-            # arquivo. [[feedback_medir_o_consumidor_certo]]
+            # número com cara de agora, e quem olha não tem como saber que o
+            # produtor parou. Mas o teto é o DA CADÊNCIA DELE — ver o comentário
+            # em VIVOS. [[feedback_medir_o_consumidor_certo]]
             dias = (hoje - it["ts"].date()).days
-            if dias >= 2:
-                it["aviso"] = (f'<div class="alerta">⚠ devia atualizar sozinho e está '
-                               f'parado há {dias} dias</div>')
+            if dias > teto:
+                it["aviso"] = (f'<div class="alerta">⚠ parado há {dias} dias — '
+                               f'{esc(fonte)}</div>')
             vivos.append(it)
         elif it["arq"] in SOB_DEMANDA:
             demanda.append(it)
