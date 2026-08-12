@@ -30,8 +30,14 @@ no próprio CRM (`marson` está em 2 fichas, `rodrigo` em 115). Raridade é medi
 não adivinhada. A cobertura de cada caminho aparece no rodapé da página: régua
 que não se mede vira régua em que se acredita.
 
-Uso:  ./board_hunt.py            # gera e abre
+DUAS SAÍDAS. `board_hunt.html` é a tela de trabalho — tudo, com a telemetria da
+régua à vista. `board_hunt_resumo.html` é uma folha A4 pra mandar a terceiros (o
+pedido de 12/08 foi o pai): as mesmas frentes e datas, **sem as notas internas** —
+resumir é escolher o que o leitor precisa, não encolher a fonte. Ver `render_resumo`.
+
+Uso:  ./board_hunt.py            # gera as duas e abre a tela
       ./board_hunt.py --quieto   # gera sem abrir (pra launchd)
+      ./board_hunt.py --pdf      # gera + converte o resumo em PDF (pra WhatsApp)
 """
 import json
 import os
@@ -46,6 +52,9 @@ import psycopg2.extras
 
 ROOT = "/Users/rap/prospect-system"
 SAIDA = os.path.expanduser("~/cockpit/board_hunt.html")
+SAIDA_RESUMO = os.path.expanduser("~/cockpit/board_hunt_resumo.html")
+PDF_RESUMO = os.path.expanduser("~/Downloads/board_hunt_resumo.pdf")
+CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 CANAIS = os.path.expanduser("~/cockpit/board_hunt_canais.json")
 BRT = ZoneInfo("America/Sao_Paulo")
 
@@ -54,6 +63,7 @@ QUENTE_ATE = 14            # dias
 MORNO_ATE = 45             # dias
 RARO_ATE = 3               # nº de fichas no CRM abaixo do qual um sobrenome casa sozinho
 JANELA_AGENDA = 45         # dias à frente que a página varre por "próximo passo"
+NOTA_NO_CARD = 260         # caracteres de nota visíveis antes do "nota completa"
 
 FASES = [(1, "Prospecção / Rede"), (2, "Aproximação"), (3, "Reunião / Descoberta"),
          (4, "Avaliação / Proposta"), (5, "Negociação"), (6, "Assento fechado")]
@@ -97,6 +107,18 @@ def tokens(nome):
 
 def data_br(d):
     return f"{d.day:02d}/{d.month:02d}"
+
+
+def _curto(t, n):
+    """Corta no espaço, não no meio da palavra: `conversa (Consel` lido por um
+    terceiro parece dado corrompido, não texto abreviado."""
+    t = (t or "").strip()
+    if len(t) <= n:
+        return t
+    corte = t[:n]
+    if " " in corte[n // 2:]:
+        corte = corte[:corte.rindex(" ")]
+    return corte.rstrip(" ,;·-") + "…"
 
 
 # ------------------------------------------------------------------ coleta --
@@ -332,13 +354,27 @@ CSS = """
     margin-bottom:18px;align-items:center}
   .chip{display:inline-flex;align-items:center;gap:6px}
   .sw{width:11px;height:11px;border-radius:50%}
-  .board{display:flex;gap:14px;overflow-x:auto;padding-bottom:14px;align-items:flex-start}
-  .col{flex:0 0 232px;background:transparent}
+  /* Faixas empilhadas por fase, não colunas. O kanban de 7 colunas fixas media
+     1.708px e o `overflow-x` jogava fora da tela justamente Negociação, Assento
+     fechado e On-hold — as três que decidem ("ficou difícil visualizar", Renato,
+     12/08). Empilhado, o funil se lê de cima pra baixo e o grid usa a largura
+     que existir, seja notebook ou monitor. */
+  .board{display:flex;flex-direction:column;gap:13px}
+  .col{background:transparent;border-top:1px solid var(--line);padding-top:9px}
   .col > h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
-    color:var(--charcoal);padding:0 4px 9px;display:flex;justify-content:space-between}
-  .col > h2 .n{color:var(--muted);font-weight:600}
+    color:var(--charcoal);padding:0 2px 9px;display:flex;align-items:center;gap:9px}
+  .col > h2 .fase{background:var(--dourado);color:#fff;font-size:10.5px;width:18px;height:18px;
+    border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .col > h2 .n{color:var(--muted);font-weight:600;margin-left:auto;text-transform:none;
+    letter-spacing:0;font-size:11.5px}
+  .col.hold{border-top-style:dashed}
   .col.hold > h2{color:var(--hold)}
-  .stack{display:flex;flex-direction:column;gap:10px;min-height:40px}
+  .col.hold > h2 .fase{background:var(--hold)}
+  .col.vazia > h2{opacity:.5}
+  /* `align-items:start`: sem isso o grid estica todo card à altura do maior da
+     faixa, e uma nota longa infla os vizinhos com espaço vazio. */
+  .stack{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:10px;
+    align-items:start}
   .vazio{color:var(--muted);font-size:12px;padding:4px}
   .cardw{background:var(--card);border:1px solid var(--line);border-left-width:4px;
     border-radius:9px;padding:11px 12px;box-shadow:0 1px 2px rgba(80,66,40,.05)}
@@ -350,6 +386,17 @@ CSS = """
   .cardw .t{font-weight:700;color:var(--charcoal);font-size:14.5px;line-height:1.25}
   .cardw .sub{color:var(--muted);font-size:11.5px;margin-top:1px}
   .cardw .n{font-size:12.5px;color:var(--ink);margin-top:7px}
+  /* A nota é o caderno da operação e cresce sem teto — há frentes com 1.500
+     caracteres. Aberta por padrão, uma faixa passava de uma tela de altura e o
+     problema do scroll horizontal virava scroll vertical. Fica o começo; o resto
+     abre com um clique (`<details>` nativo, sem JS). */
+  .cardw details{margin-top:5px}
+  .cardw details summary{font-size:11.5px;color:var(--dourado);cursor:pointer;
+    list-style:none;font-weight:600}
+  .cardw details summary::-webkit-details-marker{display:none}
+  .cardw details summary::before{content:"▸ ";font-size:10px}
+  .cardw details[open] summary::before{content:"▾ "}
+  .cardw details .n{margin-top:5px;padding-top:6px;border-top:1px dotted var(--line)}
   .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;font-size:11px}
   .tag{background:var(--dourado-soft);color:#6b551d;border-radius:20px;padding:2px 8px;
     white-space:nowrap}
@@ -426,10 +473,18 @@ def card(f):
     else:
         prox = '<div class="prox"><span class="warn">⚠ sem próximo passo</span></div>'
 
+    nota = (f["nota"] or "").strip()
+    if len(nota) <= NOTA_NO_CARD:
+        bloco_nota = f'<div class="n">{esc(nota)}</div>' if nota else ""
+    else:
+        bloco_nota = (f'<div class="n">{esc(_curto(nota, NOTA_NO_CARD))}</div>'
+                      f'<details><summary>nota completa ({len(nota)} caracteres)</summary>'
+                      f'<div class="n">{esc(nota)}</div></details>')
+
     return f"""<div class="cardw {temp}">
       <div class="t">{esc(f['nome'])}</div>
       <div class="sub">{esc(f['subtitulo'] or '')}</div>
-      <div class="n">{esc(f['nota'] or '')}</div>
+      {bloco_nota}
       {prox}
       <div class="tags">{''.join(tags)}</div>
     </div>"""
@@ -443,11 +498,15 @@ def render(d, canais):
     for num, nome in FASES:
         itens = [f for f in d["frentes"] if f["fase"] == num and f["status"] != "hold"]
         corpo = "".join(card(f) for f in itens) or '<div class="vazio">—</div>'
-        colunas.append(f'<div class="col"><h2>{nome} <span class="n">{len(itens) or ""}</span></h2>'
+        n = f'{len(itens)} frente{"s" if len(itens) != 1 else ""}' if itens else "vazia"
+        colunas.append(f'<div class="col{"" if itens else " vazia"}">'
+                       f'<h2><span class="fase">{num}</span>{nome}<span class="n">{n}</span></h2>'
                        f'<div class="stack">{corpo}</div></div>')
     hold = [f for f in d["frentes"] if f["status"] == "hold"]
     corpo = "".join(card(f) for f in hold) or '<div class="vazio">—</div>'
-    colunas.append(f'<div class="col hold"><h2>On-hold <span class="n">{len(hold) or ""}</span></h2>'
+    n = f'{len(hold)} frente{"s" if len(hold) != 1 else ""}' if hold else "vazia"
+    colunas.append(f'<div class="col hold{"" if hold else " vazia"}">'
+                   f'<h2><span class="fase">⏸</span>On-hold<span class="n">{n}</span></h2>'
                    f'<div class="stack">{corpo}</div></div>')
 
     # Barra de próximos passos: os eventos que as frentes casaram, em ordem.
@@ -510,7 +569,9 @@ def render(d, canais):
 <body>
 <header>
   <h1>Board Hunt 2026 <span class="dot">·</span> Pipeline de originação de conselhos</h1>
-  <div class="meta">gerado <b>{agora:%d/%m %H:%M}</b> · {esc(fresco)}</div>
+  <div class="meta">gerado <b>{agora:%d/%m %H:%M}</b> · {esc(fresco)}<br>
+    <a href="board_hunt_resumo.html" style="color:var(--dourado)">↗ versão de 1 folha, pra enviar</a>
+  </div>
 </header>
 
 <div class="metabar">
@@ -554,13 +615,208 @@ def render(d, canais):
 </html>"""
 
 
+# ---------------------------------------------------------------- resumo A4 --
+# Segunda saída, pedida pelo Renato em 12/08: uma folha pra mandar ao pai (Orestes)
+# no WhatsApp. Ele cobra a RENDA ([[feedback_board_hunt_e_a_renda]]) — o que ele
+# precisa ver é onde a caça está e o que tem data marcada.
+#
+# O QUE FICA DE FORA, de propósito: as `nota` das frentes. Elas são o caderno
+# interno da operação — ID de mensagem, "bola com o Marcelo", NDA lido errado,
+# correção de rumo. Resumir não é encolher a fonte: é escolher o que o leitor
+# precisa. Também saem a bola, o marcador `~` de casamento por nome, a cobertura
+# da régua e os canais dormentes — telemetria de quem MANTÉM a página, não de
+# quem a lê. O que entra: fase, o que é a frente, última troca, próxima reunião.
+
+CSS_RESUMO = """
+  @page{size:A4 portrait;margin:14mm 13mm}
+  :root{--charcoal:#2b2925;--ink:#3a362f;--muted:#7d7466;--line:#ded5c4;
+    --dourado:#b8973e;--quente:#c0492f;--morno:#a8801d;--frio:#3f6f92;--hold:#9a9184}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff;color:var(--ink);
+    font:11px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    padding:22px 26px;max-width:820px;margin:0 auto}
+  header{border-bottom:2px solid var(--dourado);padding-bottom:9px;margin-bottom:12px}
+  h1{font-size:16.5px;font-weight:700;color:var(--charcoal);letter-spacing:.2px}
+  .sub{font-size:10px;color:var(--muted);margin-top:3px}
+  .kpis{display:flex;gap:8px;margin-bottom:11px}
+  .kpis div{flex:1;border:1px solid var(--line);border-radius:7px;padding:6px 9px}
+  .kpis b{display:block;font-size:16px;font-weight:700;color:var(--charcoal);line-height:1.1}
+  .kpis span{font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  h2{font-size:9.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--dourado);
+    font-weight:700;margin:11px 0 5px;padding-bottom:3px;border-bottom:1px solid var(--line)}
+  h2 .leg{float:right;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400;
+    font-size:9px}
+  .ag{display:flex;flex-wrap:wrap;gap:6px}
+  .ag span{border:1px solid var(--line);border-radius:5px;padding:3px 8px;font-size:10.5px}
+  .ag b{color:var(--charcoal)}
+  table{width:100%;border-collapse:collapse;page-break-inside:auto}
+  tr{page-break-inside:avoid}
+  th{font-size:8.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);
+    text-align:left;font-weight:600;padding:0 6px 4px 0}
+  td{padding:3px 6px 3px 0;border-top:1px solid #efe9dc;vertical-align:top;line-height:1.3}
+  .fase td{border-top:1px solid var(--line);padding-top:7px;font-size:9px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.6px;color:var(--charcoal)}
+  .nm{font-weight:700;color:var(--charcoal);width:36%}
+  .nm em{display:block;font-weight:400;font-style:normal;color:var(--muted);font-size:9.5px}
+  .st{width:17%;white-space:nowrap}
+  .px{width:47%}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+  .q{background:var(--quente)} .m{background:var(--morno)}
+  .f{background:var(--frio)} .h{background:var(--hold)}
+  .ok{color:#4a6035;font-weight:600} .warn{color:var(--quente)}
+  footer{margin-top:11px;padding-top:6px;border-top:1px solid var(--line);
+    font-size:8.5px;color:var(--muted);line-height:1.45}
+  @media print{body{padding:0}}
+"""
+
+_TEMP_CLS = {"quente": "q", "morno": "m", "frio": "f",
+             "hold": "h", "prova": "h", "indefinido": "h"}
+
+
+def linha_resumo(f):
+    cls = _TEMP_CLS.get(f["temp"], "h")
+    if f["status"] == "hold":
+        quando = "em espera"
+    elif f["status"] == "prova":
+        quando = "referência"
+    elif f["dias"] is None:
+        quando = "—"
+    elif f["dias"] == 0:
+        quando = "hoje"
+    else:
+        quando = f'há {f["dias"]} dia' + ("s" if f["dias"] > 1 else "")
+
+    e = f["evento"]
+    # Frente em espera ou de referência não tem "próximo passo" — o compromisso da
+    # Vallen é de cliente, e mostrá-lo aqui punha a peça anunciando reunião de
+    # caça onde não há. Reordenado depois que o PDF de 12/08 exibiu justamente o
+    # evento "[Interno] ..." da Vallen como próximo passo do funil.
+    if f["status"] in ("hold", "prova") or not e:
+        prox = "—" if f["status"] in ("hold", "prova") else '<span class="warn">sem data marcada</span>'
+    elif "[interno]" in (e["summary"] or "").lower():
+        # Título de bloqueio interno não descreve nada pra quem lê de fora — a data
+        # é verdadeira, o rótulo é de uso doméstico.
+        hora = "" if e["all_day"] else f" {e['start_datetime']:%H}h"
+        prox = f'<span class="ok">▸ {data_br(e["start_datetime"].date())}{hora} · compromisso agendado</span>'
+    else:
+        hora = "" if e["all_day"] else f" {e['start_datetime']:%H}h"
+        prox = (f'<span class="ok">▸ {data_br(e["start_datetime"].date())}{hora} · '
+                f'{esc(_curto(e["summary"], 42))}</span>')
+    sub = f'<em>{esc(_curto(f["subtitulo"], 44))}</em>' if f["subtitulo"] else ""
+    return (f'<tr><td class="nm">{esc(f["nome"])}{sub}</td>'
+            f'<td class="st"><span class="dot {cls}"></span>{esc(quando)}</td>'
+            f'<td class="px">{prox}</td></tr>')
+
+
+def render_resumo(d):
+    agora = datetime.now(BRT)
+    k = d["kpis"]
+    ativas = [f for f in d["frentes"] if f["status"] == "ativo"]
+    com_data = sum(1 for f in ativas if f["evento"])
+
+    corpo = []
+    for num, nome in FASES:
+        itens = [f for f in d["frentes"] if f["fase"] == num and f["status"] != "hold"]
+        if not itens:
+            continue
+        corpo.append(f'<tr class="fase"><td colspan="3">{num} · {nome}</td></tr>')
+        corpo += [linha_resumo(f) for f in itens]
+    hold = [f for f in d["frentes"] if f["status"] == "hold"]
+    if hold:
+        corpo.append('<tr class="fase"><td colspan="3">Em espera</td></tr>')
+        corpo += [linha_resumo(f) for f in hold]
+
+    # Só reuniões de frente ATIVA, na ordem em que chegam — é o que responde
+    # "está andando?" sem precisar ler o funil inteiro.
+    vistos, ag = set(), []
+    for f in sorted((x for x in ativas if x["evento"]),
+                    key=lambda x: x["evento"]["start_datetime"]):
+        e = f["evento"]
+        if e["id"] in vistos:
+            continue
+        vistos.add(e["id"])
+        hora = "" if e["all_day"] else f" {e['start_datetime']:%H}h"
+        ag.append(f'<span>{data_br(e["start_datetime"].date())}{hora} · <b>{esc(f["nome"])}</b></span>')
+    agenda = "".join(ag) or '<span style="color:var(--muted)">nenhuma reunião marcada</span>'
+
+    return f"""<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board Hunt 2026 — resumo</title>
+<style>{CSS_RESUMO}</style>
+</head>
+<body>
+<header>
+  <h1>Busca de assentos em conselho — resumo</h1>
+  <div class="sub">Renato de Faria e Almeida Prado · situação em {agora:%d/%m/%Y}, {agora:%H:%M}
+    · meta: {META_ASSENTOS} assentos remunerados até dezembro/2026</div>
+</header>
+
+<div class="kpis">
+  <div><b>{k['assentos']} de {META_ASSENTOS}</b><span>Assentos fechados</span></div>
+  <div><b>{len(ativas)}</b><span>Frentes ativas</span></div>
+  <div><b>{k['quentes']}</b><span>Com conversa nos últimos {QUENTE_ATE} dias</span></div>
+  <div><b>{com_data}</b><span>Com reunião marcada</span></div>
+</div>
+
+<h2>Próximas reuniões</h2>
+<div class="ag">{agenda}</div>
+
+<h2>As frentes, por estágio da conversa
+  <span class="leg"><span class="dot q"></span>conversa recente
+    <span class="dot m" style="margin-left:9px"></span>aguardando retorno
+    <span class="dot f" style="margin-left:9px"></span>parada</span></h2>
+<table>
+  <tr><th>Frente</th><th>Última troca</th><th>Próximo passo agendado</th></tr>
+  {''.join(corpo)}
+</table>
+
+<footer>
+  Quadro gerado pelo sistema a partir das conversas e da agenda — os prazos e as datas
+  são os reais, não estimativas. &ldquo;Última troca&rdquo; conta os dias desde a
+  mensagem mais recente com cada interlocutor. Estágios 1 a 6: da rede até o assento
+  fechado.
+</footer>
+</body>
+</html>"""
+
+
+def gerar_pdf():
+    """HTML → PDF por Chrome headless (não há wkhtmltopdf/weasyprint na máquina —
+    [[reference_pdf_onbrand]]). Fora da rodada de 5 min de propósito: abrir o
+    Chrome 288×/dia pra um PDF que ninguém pediu é queimar bateria."""
+    import subprocess
+    if not os.path.exists(CHROME):
+        print(f"⚠️  Chrome não encontrado em {CHROME} — PDF não gerado")
+        return None
+    r = subprocess.run([CHROME, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+                        f"--print-to-pdf={PDF_RESUMO}", f"file://{SAIDA_RESUMO}"],
+                       capture_output=True, timeout=90)
+    if r.returncode != 0 or not os.path.exists(PDF_RESUMO):
+        print(f"⚠️  Chrome falhou ({r.returncode}): {r.stderr.decode()[:200]}")
+        return None
+    return PDF_RESUMO
+
+
 def main():
     conn = psycopg2.connect(env("DATABASE_URL"))
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     d = avaliar(coletar(cur, datetime.now(BRT).date()))
     open(SAIDA, "w").write(render(d, carregar_canais()))
+    open(SAIDA_RESUMO, "w").write(render_resumo(d))
     print(f"→ {SAIDA}  ({d['kpis']['funil']} frentes · {d['kpis']['quentes']} quentes · "
           f"{d['kpis']['sem_prox']} sem próximo passo)")
+    print(f"→ {SAIDA_RESUMO}  (1 folha A4, sem as notas internas)")
+    if "--pdf" in sys.argv:
+        pdf = gerar_pdf()
+        if pdf:
+            print(f"→ {pdf}")
+            if "--quieto" not in sys.argv:
+                import subprocess
+                subprocess.run(["open", "-R", pdf])
+        return 0 if pdf else 1
     if "--quieto" not in sys.argv:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         try:
