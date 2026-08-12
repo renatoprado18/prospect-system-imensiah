@@ -1,0 +1,211 @@
+{
+  "_leia_antes": [
+    "REGISTRO DE FATOS do Renato — a verdade mora aqui UMA vez.",
+    "Não é superfície de comunicação: ninguém lê isto. É o que o verifica_perfil.py compara",
+    "contra o CV, a peça de posicionamento, o site e o LinkedIn.",
+    "",
+    "Nasceu em 12/08/2026, depois que o mesmo erro sobre a Osborne ('400 anos', quando é",
+    "1772) sobreviveu em QUATRO documentos. Eleger uma das cópias como fonte não resolve:",
+    "naquele dia o LinkedIn estava certo nas datas de certificado e errado no cargo da",
+    "Natique ('Conselheiro Administrativo'), e o CV o inverso.",
+    "",
+    "COMO MANTER: ao descobrir um fato ou corrigir um erro, escreva AQUI primeiro.",
+    "Cada entrada tem 'errado' — os padrões que já apareceram por aí e não podem voltar."
+  ],
+  "atualizado_em": "2026-08-12",
+  "fatos": [
+    {
+      "id": "osborne_fundacao",
+      "tema": "Osborne",
+      "correto": "1772",
+      "errado": [
+        "400 anos",
+        "quatrocentos anos",
+        "400-year-old",
+        "400 year old",
+        "de 400 anos"
+      ],
+      "nota": "Multinacional familiar espanhola fundada em 1772. São 254 anos, não 400."
+    },
+    {
+      "id": "natique_ceo",
+      "tema": "Natique",
+      "correto": "doze anos",
+      "errado": [
+        "CEO por dezessete anos",
+        "dirigi como CEO por dezessete",
+        "CEO for seventeen"
+      ],
+      "nota": "CEO de fev/1996 a fev/2008 = 12 anos. Depois SÓCIO até a venda, em jan/2013. São 17 anos de casa, não 17 como CEO."
+    },
+    {
+      "id": "crescimento_115",
+      "tema": "Natique",
+      "correto": "115%",
+      "errado": [
+        "crescimento em portfólio",
+        "A companhia cresceu 115%"
+      ],
+      "nota": "115% em RECEITA, da NATIQUE, entre 2013 e 2017. 'A companhia' é ambíguo: lê-se como a Osborne inteira."
+    },
+    {
+      "id": "premio_carambola",
+      "tema": "Carambola",
+      "correto": "Best for the World",
+      "errado": [
+        "Best of the World",
+        "Best For The World",
+        "Best Of The World"
+      ],
+      "nota": "Prêmio da B Lab, 2021 e 2022, categoria Trabalhadores. Preposição e artigo em minúscula."
+    },
+    {
+      "id": "certificacao_bcorp",
+      "tema": "Carambola",
+      "correto": "B Corp",
+      "errado": [
+        "B-Corp",
+        "BCorp",
+        "B corp"
+      ],
+      "nota": "Sem hífen. Formalmente 'Certified B Corporation'."
+    },
+    {
+      "id": "carambola_desfecho",
+      "tema": "Carambola",
+      "correto": "product-market fit",
+      "errado": [
+        "não decolou",
+        "fracassou"
+      ],
+      "nota": "Encerrada em ago/2023 por falta de PMF, não por falha da tese. 8 anos, B Corp, clientes Itaú e Fleury."
+    },
+    {
+      "id": "mba",
+      "tema": "Formação",
+      "correto": "Global Executive MBA for the Americas",
+      "errado": [
+        "MBA em Negócios Internacionais",
+        "MBA – UCLA Anderson School of Management",
+        "Master of Business Administration"
+      ],
+      "nota": "UCLA Anderson, 2013–2014. Nome vindo do transcript."
+    },
+    {
+      "id": "poli",
+      "tema": "Formação",
+      "correto": "2001",
+      "errado": [
+        "Engenharia de Produção pela Poli-USP (1997)",
+        "Eng., Engineering"
+      ],
+      "nota": "Engenharia de Produção, Escola Politécnica da USP, 1993–2001."
+    },
+    {
+      "id": "ibgc",
+      "tema": "Certificações",
+      "correto": "agosto",
+      "errado": [
+        "IBGC · junho 2024",
+        "IBGC (junho 2024)",
+        "IBGC - junho 2024"
+      ],
+      "nota": "Conselheiro de Administração IBGC, agosto/2024. Confirmado: o certificado expira em ago/2027 e a validade é de 3 anos."
+    },
+    {
+      "id": "ai_on_board",
+      "tema": "Certificações",
+      "correto": "janeiro 2023",
+      "errado": [
+        "AI on Board – Board Academy (2024)",
+        "AI on Board Board Academy · janeiro 2024"
+      ],
+      "nota": "Board Academy, janeiro/2023. Fonte: LinkedIn, onde o certificado está anexado."
+    },
+    {
+      "id": "pfcc",
+      "tema": "Certificações",
+      "correto": "março 2024",
+      "errado": [
+        "Formação e Certificação de Conselheiros Board Academy · fevereiro 2024"
+      ],
+      "nota": "Turma 18.2024. O certificado não traz mês; convenção adotada em 12/08 é seguir o LinkedIn."
+    },
+    {
+      "id": "santo_grau",
+      "tema": "Natique",
+      "correto": "1998",
+      "errado": [
+        "Santo Grau no mesmo ano"
+      ],
+      "nota": "Marca criada em 1992 por terceiros, ADQUIRIDA pela Natique em 1998. Eleita entre as melhores no ranking da Playboy em 2009 e 2011 — únicos prêmios do período dele. Os de 2014 a 2020 (incluindo 6º no IV Cúpula da Cachaça) são POSTERIORES à venda e não podem ser reivindicados."
+    },
+    {
+      "id": "assespro_cargo",
+      "tema": "Mandatos",
+      "correto": "vice-presidente do conselho consultivo",
+      "errado": [
+        "conselheiro na ASSESPRO São Paulo",
+        "ASSESPRO São Paulo"
+      ],
+      "nota": "Federação ASSESPRO-SP: vice-presidente do conselho consultivo (desde dez/2025) E diretor de Governança (desde mar/2025). Grafia da entidade: Assespro-SP."
+    },
+    {
+      "id": "natique_cargo_conselho",
+      "tema": "Mandatos",
+      "correto": "Conselho de Administração",
+      "errado": [
+        "Conselheiro Administrativo"
+      ],
+      "nota": "Membro do Conselho de Administração da Natique-Osborne, jan/2013 a mai/2017. 'Conselheiro Administrativo' lê como função administrativa, não como assento estatutário."
+    },
+    {
+      "id": "posicionamento",
+      "tema": "Tese",
+      "correto": "decisão parada",
+      "errado": [
+        "AI Thinker",
+        "Conselheiro do Futuro",
+        "Pioneiro em IA para Governança",
+        "10xMentorAI",
+        "10XMentorAI"
+      ],
+      "nota": "Tese vigente desde 11/08/2026: 'Entro em empresa familiar que está com uma decisão parada e faço a decisão andar, sem virar o executivo dela.' A 10xMentorAI ACABOU (fato de 10/08)."
+    },
+    {
+      "id": "board_academy",
+      "tema": "Mandatos",
+      "correto": "dezembro de 2025",
+      "errado": [
+        "Board Academy · Presidente da Comissão do Conselho Consultivo do Futuro fevereiro 2024 – presente"
+      ],
+      "nota": "Presidência da Comissão do Conselho Consultivo do Futuro ENCERRADA em dez/2025. É passado. ⚠️ DIVERGÊNCIA ABERTA (#999836): início é fevereiro/2024 no CV e novembro/2024 no LinkedIn."
+    }
+  ],
+  "superficies": {
+    "cv": {
+      "tipo": "drive_docx",
+      "file_id": "1F6FndyLNUVWrT2jP-c-3zjCxKdDug7az",
+      "nome": "CV 2026 (Drive)"
+    },
+    "peca": {
+      "tipo": "arquivo",
+      "caminho": "~/cockpit/posicionamento_gui.html",
+      "nome": "Peça de posicionamento"
+    },
+    "site": {
+      "tipo": "url",
+      "urls": [
+        "https://www.almeida-prado.com",
+        "https://www.almeida-prado.com/neogovernanca"
+      ],
+      "nome": "almeida-prado.com"
+    },
+    "linkedin": {
+      "tipo": "snapshot",
+      "caminho": "~/cockpit/linkedin_snapshot.txt",
+      "nome": "LinkedIn (snapshot manual)",
+      "como_atualizar": "abrir o perfil logado, copiar o texto das seções Sobre + Experiência + Formação + Licenças, e salvar nesse arquivo. O LinkedIn bloqueia leitura automática (HTTP 999)."
+    }
+  }
+}

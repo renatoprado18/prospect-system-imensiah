@@ -62,3 +62,6 @@ mcp/.venv/
 mcp/oauth_state.db
 mcp/oauth_state.db-wal
 mcp/oauth_state.db-shm
+
+# registro de fatos canonicos do Renato — versionado de proposito (o *.json acima o pegaria)
+!scripts/fatos_canonicos.json
