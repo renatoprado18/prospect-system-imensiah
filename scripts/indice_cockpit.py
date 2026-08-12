@@ -43,12 +43,22 @@ BRT = ZoneInfo("America/Sao_Paulo")
 # atraso. Régua diária aplicada a ritual semanal FABRICA o atraso que denuncia —
 # é a segunda vez que isso acontece com o RACI (a primeira foi `9f79c45`, na data
 # do relatório). Cadência é do painel, nunca do calendário de quem olha.
+# A ORDEM DESTE DICIONÁRIO É A ORDEM DA TELA (pedida pelo Renato em 12/08):
+# cockpit do dia → funil → planning semanal. Do que se olha toda hora ao que se
+# olha uma vez por semana; não é alfabética nem por data de arquivo.
 VIVOS = {
-    "index.html": ("Cockpit do dia", "com.almeidaprado.cockpit, a cada 5 min", 1),
-    "board_hunt.html": ("Funil de originação de conselhos", "com.almeidaprado.boardhunt, a cada 5 min", 1),
-    "board_hunt_resumo.html": ("Board hunt em 1 folha — pra enviar", "gerado junto com o board", 1),
-    "raci.html": ("Planning semanal RACI", "com.almeidaprado.raci, segunda 7h30", 8),
+    "index.html": ("Cockpit do dia", "com.almeidaprado.cockpit, a cada 5 min", 1, ""),
+    "board_hunt.html": ("Funil de originação de conselhos",
+                        "com.almeidaprado.boardhunt, a cada 5 min", 1,
+                        "a folha de 1 página pra enviar abre de dentro desta"),
+    "raci.html": ("Planning semanal RACI", "com.almeidaprado.raci, segunda 7h30", 8, ""),
 }
+
+# Páginas que existem no disco mas NÃO ganham card próprio: já se alcançam de
+# dentro de outra. `board_hunt_resumo.html` tem link no topo do próprio funil —
+# dois cards pro mesmo assunto fazem o índice repetir o que a página já resolve
+# (Renato, 12/08: "são 1 só").
+EMBUTIDAS = {"board_hunt_resumo.html"}
 
 # Telas com gerador próprio: podem ser refeitas a qualquer momento com um comando.
 # O comando vai na tela — saber que existe e não achar como rodar dá no mesmo.
@@ -124,7 +134,7 @@ def linha(it, extra=""):
     sub = f'<div class="s">{esc(it["sub"])}</div>' if it["sub"] else ""
     ex = f'<div class="x">{extra}</div>' if extra else ""
     cls = "it ausente" if it.get("ausente") else "it"
-    tag = it.get("aviso", "")
+    tag = it.get("nota", "") + it.get("aviso", "")
     # Sem arquivo no disco não há o que abrir: vira <div>, não link morto.
     ini = '<div class="%s">' % cls if it.get("ausente") else f'<a class="{cls}" href="{esc(it["rel"])}">'
     fim = "</div>" if it.get("ausente") else "</a>"
@@ -169,6 +179,7 @@ CSS = """
     text-overflow:ellipsis;white-space:nowrap;min-width:0}
   .f .dt{margin-left:auto;white-space:nowrap;flex:0 0 auto}
   .alerta{font-size:11.5px;color:#c0492f;margin-top:7px;font-weight:600}
+  .nota{font-size:11.5px;color:var(--dourado);margin-top:7px}
   div.it.ausente{opacity:.62;border-style:dashed;box-shadow:none}
   div.it.ausente .tt{color:var(--muted)}
   details{margin-top:8px}
@@ -189,11 +200,14 @@ def render(hoje):
 
     vivos, demanda, pecas = [], [], []
     for it in raiz:
-        if it["arq"] in (os.path.basename(SAIDA),) or it["arq"].endswith(".json"):
+        if it["arq"] in (os.path.basename(SAIDA),) or it["arq"].endswith(".json") \
+                or it["arq"] in EMBUTIDAS:
             continue
         if it["arq"] in VIVOS:
-            rot, fonte, teto = VIVOS[it["arq"]]
+            rot, fonte, teto, nota = VIVOS[it["arq"]]
             it["rotulo"], it["fonte"] = rot, fonte
+            if nota:
+                it["nota"] = f'<div class="nota">↗ {esc(nota)}</div>'
             # Painel que se declara vivo e está velho é a pior das duas: mostra
             # número com cara de agora, e quem olha não tem como saber que o
             # produtor parou. Mas o teto é o DA CADÊNCIA DELE — ver o comentário
@@ -224,6 +238,9 @@ def render(hoje):
                         "ts": None, "idade": "não gerada", "kb": 0, "ausente": True})
     demanda.sort(key=lambda x: (x.get("ausente", False), x["arq"]))
 
+    # Painel vivo segue a ordem declarada em VIVOS (a da tela), não a do disco.
+    ordem = list(VIVOS)
+    vivos.sort(key=lambda x: ordem.index(x["arq"]))
     # Peça viva mais recente primeiro: é o que a sessão de hoje produziu.
     pecas.sort(key=lambda x: x["ts"], reverse=True)
     arq.sort(key=lambda x: x["ts"], reverse=True)
