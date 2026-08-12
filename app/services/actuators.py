@@ -361,10 +361,13 @@ async def _do_update_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     'cancelled'). start/end são parseados como o create (preserva o horário BRT
     que calendar_events guarda naive). Pelo menos 1 campo além do id.
 
+    `status='cancelled'` é ACEITO mas não é gravado: cai em delete_calendar_event
+    (apaga aqui e no Google). Ver o bloco no corpo — a base não guarda cancelado.
+
     NOTA de escopo: recusar convite de TERCEIRO mantendo o evento pros outros
     (RSVP declined) não é suportado — o service edita o registro/organizador, não
     o responseStatus do attendee. Para "não vou" a um evento do próprio Renato,
-    use delete_calendar_event ou status='cancelled'. RSVP = débito residual."""
+    use delete_calendar_event. RSVP = débito residual."""
     eid = payload.get("event_id") or payload.get("id")
     if eid is None:
         raise ValueError("update_calendar_event requer 'event_id'")
@@ -381,7 +384,26 @@ async def _do_update_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     status = payload.get("status")
     if status is not None:
-        updates["status"] = str(status).strip().lower()
+        status = str(status).strip().lower()
+        # `cancelled` NÃO é um estado que esta base guarda. O contrato do sync é
+        # "cancelado = apagado" (calendar_sync.py, 11/08/26), e é por isso que a
+        # maioria das ~47 consultas a `calendar_events` não filtra `status`:
+        # gravar aqui deixaria o evento visível em TODA tela, que foi o que
+        # aconteceu com o #4035 quando a CoS o marcou na mão. Duas partes do
+        # sistema mandando o oposto na mesma coluna é o defeito — some com o
+        # caminho errado em vez de pedir que 47 consultas o contornem.
+        # O service repete a regra (é o que cobre o endpoint HTTP); aqui ela vem
+        # antes só porque este caminho conhece o `scope` de recorrência, que o
+        # update_event não recebe. Os demais campos do payload são descartados
+        # de propósito: quem cancela não está também renomeando.
+        if status == "cancelled":
+            out = await _do_delete_calendar_event({
+                "event_id": eid,
+                "scope": payload.get("scope") or "single",
+            })
+            return {**out, "status": "cancelled",
+                    "nota": "evento apagado (local + Google) — a base não guarda cancelado"}
+        updates["status"] = status
 
     for f in ("start_datetime", "end_datetime"):
         raw = payload.get(f)

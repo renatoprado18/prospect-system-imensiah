@@ -110,7 +110,22 @@ class CalendarEventsService:
             return dict(row) if row else None
 
     async def update_event(self, event_id: int, updates: Dict, sync_to_google: bool = True) -> Dict:
-        """Atualiza evento. Async: aguarda sync pro Google antes de retornar."""
+        """Atualiza evento. Async: aguarda sync pro Google antes de retornar.
+
+        `status='cancelled'` APAGA em vez de gravar — ver o bloco abaixo.
+        """
+        # A base não guarda evento cancelado: o contrato do sync é "cancelado =
+        # apagado" (calendar_sync.py, 11/08/26), e por isso a maioria das ~47
+        # consultas a `calendar_events` não filtra `status` — gravar 'cancelled'
+        # deixa o evento visível em TODA tela (foi o que houve com o #4035).
+        # A regra fica AQUI, e não em cada chamador, porque o actuator e o
+        # endpoint PUT /api/calendar/events/{id} são caminhos independentes: o
+        # fix só no actuator deixava o HTTP gravando cancelado calado.
+        if str(updates.get("status", "")).strip().lower() == "cancelled":
+            ok = await self.delete_event(event_id, delete_from_google=sync_to_google)
+            return {"id": event_id, "deleted": bool(ok), "status": "cancelled",
+                    "nota": "evento apagado — a base não guarda cancelado"} if ok else None
+
         allowed_fields = ["summary", "description", "location", "start_datetime",
                          "end_datetime", "contact_id", "prospect_id", "status"]
 
