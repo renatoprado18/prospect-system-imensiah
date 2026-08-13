@@ -891,16 +891,16 @@ Extraia APENAS do que está nos documentos. NÃO invente."""
                     "https://api.anthropic.com/v1/messages",
                     headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
                              "content-type": "application/json"},
-                    json={"model": "claude-sonnet-4-20250514", "max_tokens": 2000,
+                    json={"model": "claude-sonnet-5", "max_tokens": 2000,
                           "messages": [{"role": "user", "content": prompt}]}
                 )
 
             if ai_resp.status_code == 200:
                 _rj = ai_resp.json()
                 llm_usage.record_response("worker.empresa_organize",
-                                          "claude-sonnet-4-20250514", _rj,
+                                          "claude-sonnet-5", _rj,
                                           metadata={"empresa_id": empresa_id})
-                text = _rj.get("content", [{}])[0].get("text", "")
+                text = next((b.get("text", "") for b in _rj.get("content", []) if b.get("type") == "text"), "")
                 js = text.find("{")
                 je = text.rfind("}") + 1
                 if js >= 0:
@@ -2307,7 +2307,7 @@ REGRAS CRÍTICAS:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-5",
                     "max_tokens": 16000,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -2319,8 +2319,12 @@ REGRAS CRÍTICAS:
 
         result = resp.json()
         llm_usage.record_response("worker.ata_generate",
-                                  "claude-sonnet-4-20250514", result)
-        ata_md = result["content"][0]["text"]
+                                  "claude-sonnet-5", result)
+        # Sonnet 5 pode emitir bloco de thinking antes do texto — content[0] nem sempre e a ata
+        ata_md = next((b.get("text", "") for b in result.get("content", []) if b.get("type") == "text"), "")
+        if not ata_md:
+            logger.error(f"Ata vazia — blocos recebidos: {[b.get('type') for b in result.get('content', [])]}")
+            return JSONResponse({"error": "Claude devolveu resposta sem texto"}, status_code=500)
         logger.info(f"Ata generated: {len(ata_md)} chars")
 
         # Save to ConselhoOS database
