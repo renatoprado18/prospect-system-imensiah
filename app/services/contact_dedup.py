@@ -47,6 +47,10 @@ _FK_TABLES_TO_CONTACTS = [
     'contact_snoozes',
     'contact_today_manual',
     'conversations',
+    # 074: vinculo pessoa<->lugar COM PAPEL. Sem esta linha o merge apagaria em
+    # CASCADE justamente o que a entidade existe pra guardar — "fulano e'
+    # proprietario da fazenda" — e o dano seria invisivel: o merge termina 200.
+    'locais_contatos',
     'health_predictions',
     'linkedin_enrichment_history',
     'messages',
@@ -88,6 +92,10 @@ _COMPOSITE_UNIQUE_PARTNERS = {
     'campaign_enrollments': ['campaign_id'],
     'contact_prospect_link': ['prospect_id'],
     'contact_today_manual': ['data'],
+    # 074: UNIQUE (local_id, contact_id, papel). Sem isto, mesclar duas fichas
+    # que tenham o MESMO papel no MESMO lugar (o caso provavel: duplicata da
+    # mesma pessoa) explode o UPDATE em violacao de unique no meio do merge.
+    'locais_contatos': ['local_id', 'papel'],
     'project_members': ['project_id'],
     'timeline_summaries': ['cache_hash'],
 }
