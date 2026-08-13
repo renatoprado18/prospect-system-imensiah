@@ -153,6 +153,33 @@ def coletar(cur, hoje):
     """)
     d["tasks"] = cur.fetchall()
 
+    # --- A DÚVIDA DA CAMADA --------------------------------------------------
+    # Quando a camada julga abaixo do piso de confiança ela NÃO escreve: abre uma
+    # pergunta (`agent_write.PropostaPendente` → `camada_cadastro`). O desenho
+    # depende de a pergunta chegar nele — e era aí que quebrava: em agosto o canal
+    # `action_proposals` teve 0 de 11 atendidas, e a única dúvida que a camada já
+    # levantou (a #1061, sobre um repasse mensal que só vive no corpo de um e-mail)
+    # ficou 25h parada num lugar que ele não abre. Medido em 13/08.
+    #
+    # Por que AQUI e não numa página nova: superfície nova mata o aviso
+    # ([[feedback_superficie_nova_mata_o_aviso]]). Esta é a página que ele abre —
+    # e a dúvida é irmã do portão logo acima: lá está o que a camada concluiu,
+    # aqui o que ela não teve confiança de concluir sozinha.
+    #
+    # Só as não expiradas: pergunta vencida não é pendência, é histórico, e
+    # mostrá-la ensinaria a ignorar a seção.
+    cur.execute("""
+        SELECT ap.id, ap.title, ap.ai_reasoning, ap.confidence, ap.criado_em,
+               ap.expires_at, ap.action_params, c.nome AS contato
+          FROM action_proposals ap
+          LEFT JOIN contacts c ON c.id = ap.contact_id
+         WHERE ap.action_type = 'camada_cadastro'
+           AND ap.status = 'pending'
+           AND (ap.expires_at IS NULL OR ap.expires_at > now())
+         ORDER BY ap.expires_at NULLS LAST, ap.criado_em
+    """)
+    d["duvidas"] = cur.fetchall()
+
     # --- CHECK-G: o inbound que sobreviveu à triagem -------------------------
     # Fonte é o LEDGER, não uma query paralela — se o gate mudar, esta página
     # muda junto. Duas verdades sobre o mesmo funil divergem em silêncio (a
@@ -662,6 +689,52 @@ def render(d, cur_cos, cos_em):
       </div>""")
         portao_html = "".join(linhas)
 
+    # --- A DÚVIDA DA CAMADA --------------------------------------------------
+    # O PRAZO É A INFORMAÇÃO QUE MUDA O COMPORTAMENTO, não o texto da pergunta.
+    # A proposta expira em 7 dias e some sozinha; sem o "expira em N dias" a
+    # seção viraria mais uma lista pra ler depois — e "depois" é o que produziu
+    # 0 de 11 atendidas em agosto. Por isso o prazo vai no `aside`, no lugar
+    # onde as outras seções põem o vencimento.
+    duvidas_html, n_duvidas = "", 0
+    for q in (d.get("duvidas") or []):
+        c = cos(f"duvida:{q['id']}")
+        if c.get("ocultar"):
+            continue
+        params = q.get("action_params") or {}
+        if isinstance(params, str):
+            try:
+                params = json.loads(params)
+            except ValueError:
+                params = {}
+        # `criado_em`/`expires_at` são TIMESTAMP naive em UTC — comparar com
+        # `datetime.now()` (BRT local) tira 3h de toda conta e, na fronteira,
+        # um dia inteiro do prazo. Aqui isso apareceu como "esperando há 23h"
+        # numa pergunta parada havia 26 ([[feedback_hora_do_banco_e_utc]]).
+        agora_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        resta = None
+        if q.get("expires_at"):
+            resta = (q["expires_at"] - agora_utc).total_seconds() / 86400
+        espera = (agora_utc - q["criado_em"]).total_seconds() / 3600 if q.get("criado_em") else None
+        # Vermelho só quando o prazo aperta: pintar tudo de crítico é não pintar
+        # nada. Abaixo de 2 dias a pergunta morre antes da próxima leitura.
+        classe = "p-crit" if (resta is not None and resta < 2) else ""
+        n_duvidas += 1
+        duvidas_html += f"""<div class="item {classe}">
+        <div class="stripe"></div>
+        <div class="body">
+          <div class="title">{esc(q.get('title'))}</div>
+          <div class="why">{esc(q.get('ai_reasoning') or '')}</div>
+          {f'<div class="why cos-diz">{esc(c["porque"])}</div>' if c.get("porque") else ''}
+          <div class="meta">
+            <span class="chip">confiança {float(q['confidence'] or 0):.2f}</span>
+            {f'<span class="chip">{params.get("operacao")}</span>' if params.get("operacao") else ''}
+            {f'<span class="chip{" velho" if espera > 24 else ""}">esperando há {espera/24:.0f}d</span>' if espera and espera > 24 else (f'<span class="chip">esperando há {espera:.0f}h</span>' if espera else '')}
+            {f'<span class="chip">{esc(q["contato"])}</span>' if q.get("contato") else ''}
+            <span class="id">#{q['id']}</span></div>
+        </div>
+        <div class="aside"><span class="due">{f'expira em {resta:.0f}d' if resta is not None else 'sem prazo'}</span></div>
+      </div>"""
+
     # --- HOJE ---------------------------------------------------------------
     # O QUE JÁ PASSOU SAI DA FRENTE (07/08). Ele marcou como "FEITO" as quatro
     # reuniões do dia que já tinham acontecido — não porque houvesse algo a
@@ -872,6 +945,7 @@ def render(d, cur_cos, cos_em):
 
   <div class="summary">
     <div class="stat{' hot' if n_portao else ''}"><div class="n">{n_portao}</div><div class="l">No portão</div></div>
+    {f'''<div class="stat hot"><div class="n">{n_duvidas}</div><div class="l">A camada perguntou</div></div>''' if n_duvidas else ''}
     <div class="stat{' hot' if n_hoje else ''}"><div class="n">{n_hoje}</div><div class="l">Falta hoje</div></div>
     <div class="stat"><div class="n">{len(sep['semana']) + len([e for e in d['eventos'] if e['start_datetime'].date() > hoje])}</div><div class="l">Próximos 8 dias</div></div>
     <div class="stat{' hot' if sep['vencidas'] else ''}"><div class="n">{len(sep['vencidas'])}</div><div class="l">Vencidas</div></div>
@@ -887,6 +961,14 @@ def render(d, cur_cos, cos_em):
     recomendação forte, não como ordem.</p>
     <div class="items">{portao_html}</div>
   </section>''' if portao_html else ''}
+
+  {f'''<section data-annot>
+    <div class="head"><h2>A camada perguntou</h2><div class="rule"></div><span class="tag">dúvida · {n_duvidas}</span></div>
+    <p class="lead">O que ela leu e <b>não</b> teve confiança de fazer sozinha — então parou e perguntou,
+    em vez de escrever no seu cadastro. Uma resposta sua encerra: aceitar vira a mudança,
+    dispensar tira daqui. <b>Sem resposta ela expira e a pergunta se perde.</b></p>
+    <div class="items">{duvidas_html}</div>
+  </section>''' if duvidas_html else ''}
 
   <section data-annot>
     <div class="head"><h2>Hoje</h2><div class="rule"></div><span class="tag">agenda + vence hoje</span></div>
