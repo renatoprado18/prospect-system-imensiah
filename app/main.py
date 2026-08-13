@@ -18501,7 +18501,27 @@ async def get_action_proposals_list(
 
     # Auto-resolver ações onde usuario já respondeu (cleanup on read)
     # Why: proposta pode ser criada DEPOIS da resposta (analyzer roda async).
-    # Compara outgoing.enviado_em com a trigger message (ap.message_id), nao com ap.criado_em.
+    # Compara outgoing.enviado_em com a trigger message (ap.message_id).
+    #
+    # ⚠️ SÓ PROPOSTA COM MENSAGEM-GATILHO (13/08/26). O mecanismo inteiro
+    # pressupõe que a proposta NASCEU de uma mensagem: aí "o Renato respondeu ao
+    # contato depois dela" significa mesmo que a proposta perdeu objeto. Quando
+    # `message_id` é NULL isso deixa de valer — o COALESCE caía em `criado_em` e
+    # qualquer WhatsApp ao contato marcava a proposta como resolvida, por um ato
+    # que não tem relação nenhuma com a pergunta feita.
+    #
+    # Quem isso matava: a dúvida da camada (`camada_cadastro`), que não nasce de
+    # mensagem — ela nasce de um julgamento abaixo do piso de confiança
+    # (`services/agent_write.py`). A #1061 pergunta se deve criar task para um
+    # repasse mensal do projeto Despesas; bastava o Renato escrever ao contato
+    # sobre qualquer outro assunto para a pergunta virar "resolved" sem que ele a
+    # tivesse visto uma vez. Mesmo formato de [[feedback_incoming_nao_e_resposta]]:
+    # o ato precisa casar com o TEOR da condição de saída, não só vir depois dela.
+    #
+    # Medido antes de mexer: das 376 auto-resoluções da base, 364 (97%) têm
+    # mensagem-gatilho e seguem exatamente como antes; 12 foram fechadas por esse
+    # chute. Hoje o filtro só preserva 4 pendentes (3 `news_alert` + a #1061) —
+    # nenhuma delas nasce de mensagem.
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -18510,14 +18530,14 @@ async def get_action_proposals_list(
                 SET status = 'resolved', responded_at = NOW(),
                     ai_reasoning = COALESCE(ap.ai_reasoning, '') || ' | Auto-resolvido ao carregar dashboard'
                 WHERE ap.status = 'pending'
+                  AND ap.message_id IS NOT NULL
                   AND EXISTS (
                       SELECT 1 FROM messages m
                       JOIN conversations cv ON cv.id = m.conversation_id
                       WHERE cv.contact_id = ap.contact_id
                         AND m.direcao = 'outgoing'
-                        AND m.enviado_em > COALESCE(
-                            (SELECT trig.enviado_em FROM messages trig WHERE trig.id = ap.message_id),
-                            ap.criado_em
+                        AND m.enviado_em > (
+                            SELECT trig.enviado_em FROM messages trig WHERE trig.id = ap.message_id
                         )
                   )
             """)
