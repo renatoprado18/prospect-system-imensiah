@@ -84,11 +84,46 @@ Comparar com `SELECT COUNT(*) FROM system_memories WHERE fonte='claude_code_migr
 
 **C. Compromissos de HOJE** (nao amanha, nao semana): filtrar `cos_status` "Proximos 14 dias" por `data = HOJE` + cruzar Google Calendar. So exibir se ha.
 
-**D. Tasks INTEL overdue:**
+**D. Tasks INTEL — VENCE HOJE e ATRASADA sao DUAS coisas, e o Renato le diferente.**
+
+Ate 14/08/26 este check era uma query so, `data_vencimento < NOW()::date` com
+`status='pending'` — e tinha DOIS furos que se somavam. O `<` estrito deixava de
+fora tudo que vence HOJE, e o `status='pending'` deixava de fora o que ja esta
+`in_progress`. Como o check C (compromissos de hoje) le o `cos_status` + Google
+Calendar e **nao a tabela de tasks**, a task caia no vao entre os dois exatamente
+no dia em que mais importa. Medido na abertura de 14/08: **7 invisiveis** — 6
+vencendo no dia + 1 atrasada em andamento — e o check exibia ZERO. Entre elas a
+#999821 (proposta do Alfredo, pauta da retro daquela manha), a #999791 (pauta do
+Conselho Alba, com a reuniao decisiva as 15h30 do mesmo dia) e a #999848
+(logistica do dia 17, com viagem saindo as 22h). O Renato cobrou, e o gate do dia
+so apareceu porque estava escrito no board — nao porque o sistema o pegou.
+Padrao: [[feedback_filtro_vocabulario_errado_falha_calado]].
+
+**D1 — VENCE HOJE** (acao do dia; exibir SEMPRE que houver, mesmo com zero atrasada):
 ```sql
-SELECT id, titulo, data_vencimento FROM tasks WHERE status='pending' AND data_vencimento < NOW()::date ORDER BY data_vencimento LIMIT 10
+SELECT id, titulo, prioridade, status FROM tasks
+ WHERE status IN ('pending','in_progress') AND data_vencimento::date = NOW()::date
+ ORDER BY prioridade DESC NULLS LAST, id
 ```
-So exibir se count > 0.
+
+**D2 — ATRASADAS** (divida acumulada; ordenar pela mais velha):
+```sql
+SELECT id, titulo, data_vencimento, (NOW()::date - data_vencimento::date) AS dias_atraso,
+       count(*) OVER () AS total_atrasadas
+  FROM tasks
+ WHERE status IN ('pending','in_progress') AND data_vencimento < NOW()::date
+ ORDER BY data_vencimento LIMIT 10
+```
+
+Regras de leitura:
+- **Nunca fundir D1 com D2.** "Vence hoje" e' acao; "atrasada ha 20 dias" e' divida.
+  Misturar as duas apaga a unica que ainda da' pra cumprir no prazo.
+- `on_hold` fica de fora das DUAS **de proposito** — task parqueada nao se cobra
+  ([[feedback_aguardar_terceiro_on_hold]]). Nao "consertar" isso incluindo-a.
+- O `LIMIT 10` do D2 **trunca**: `total_atrasadas` vem na propria linha justamente
+  pra isso. Se for maior que 10, **dizer quantas ficaram de fora** — corte mudo
+  vira "so ha 10" na cabeca de quem le ([[feedback_regua_cobertura_parcial]]).
+- So exibir cada bloco se ele tiver linha.
 
 **E. Cost tracker (se ultima sessao >24h):**
 ```sql
