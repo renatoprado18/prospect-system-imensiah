@@ -59,8 +59,16 @@ def ler_contrato() -> dict:
     texto = open(MEMO, encoding="utf-8").read()
 
     # Linhas da tabela de baseline: | Entidade | **N** | tab1 · tab2 · ... |
+    #
+    # O `\*` no nome da entidade nao e' decorativo. Ate 14/08/26 o padrao aceitava
+    # so letras, e a linha `| **Lugar** | **2** | locais · locais_contatos |` — a
+    # 11a entidade, criada pela 074 no dia anterior — simplesmente nao casava. O
+    # verificador seguia imprimindo VERDE dizendo "6 entidades no baseline" contra
+    # as 7 do memo, sem nunca ter olhado `locais`/`locais_contatos`. Guarda que se
+    # abstem em silencio certifica o que nao checou ([[feedback_guarda_abstencao_vira_fabrica]]):
+    # por isso o total de entidades agora e' conferido contra o memo, logo abaixo.
     entidades = {}
-    for m in re.finditer(r"^\|\s*([A-Za-zÀ-ÿ ]+?)\s*\|\s*\*\*(\d+)\*\*\s*\|\s*(.+?)\s*\|$",
+    for m in re.finditer(r"^\|\s*\**\s*([A-Za-zÀ-ÿ ]+?)\s*\**\s*\|\s*\*\*(\d+)\*\*\s*\|\s*(.+?)\s*\|$",
                          texto, re.MULTILINE):
         nome, n, tabs = m.group(1).strip(), int(m.group(2)), m.group(3)
         # remove anotacoes entre parenteses ("(3 vazias)") antes de separar
