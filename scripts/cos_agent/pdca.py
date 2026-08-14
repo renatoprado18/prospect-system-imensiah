@@ -405,6 +405,82 @@ def bloco_cadastro(runs: list[dict]) -> None:
         print("   ruim: se o prompt não ensina o campo, o modelo não tem como preenchê-lo.")
 
 
+def bloco_board_hunt(ro_url: str) -> None:
+    """O convite a criar frente chega a projeto que nunca será frente (#999801).
+
+    POR QUE ESTE BLOCO EXISTE. O `b82d05f` resolveu o bloqueio certo — o agente
+    nunca consultava `board_hunt_frentes` — injetando a linha da frente no
+    prompt. Mas o bloco injetado é o MESMO texto para projeto SEM frente, e a
+    ressalva ("se for originação de conselho de verdade") é prosa dentro do
+    parágrafo que insiste. Prosa não é contrato ([[feedback_prompt_nao_le_comentario]]).
+
+    O CUSTO É ASSIMÉTRICO, e é por isso que se mede em vez de confiar: uma
+    frente inventada entra em `board_hunt_frentes`, que é a tabela de maior
+    autoridade da originação — o board hunt é a renda. Errar para menos custa
+    uma frente registrada à mão; errar para mais suja a fonte que decide.
+
+    A REGRA DE DECISÃO FOI FIXADA ANTES DA MEDIÇÃO, na própria #999801: havendo
+    QUALQUER frente criada a partir de projeto que não é originação, o bloco
+    injetado ganha duas variantes. Medido em 13/08: 34 projetos não-originação
+    receberam o convite em 1.524 julgamentos e nasceram ZERO frentes indevidas —
+    as duas criadas (Orbiz, sem projeto; Motiva, projeto #64 de originação) são
+    legítimas. Por isso a condicional NÃO foi implementada: mudar a regra depois
+    de ver o número é o viés que fixá-la antes existe para evitar
+    ([[feedback_otimizar_o_mensuravel_erra_o_alvo]]).
+
+    O que este bloco faz é impedir que esse "zero" vire conclusão permanente.
+    Exposição sem incidente não é segurança — é sorte ainda não gasta.
+    """
+    _h("6b. BOARD HUNT — o convite indevido virou frente inventada?")
+    with _conn(ro_url) as c, c.cursor() as cur:
+        cur.execute("SELECT count(*) n FROM projects WHERE status='ativo'")
+        ativos = cur.fetchone()["n"]
+        # ⚠️ `ativo`, não `active`. O primeiro script desta medição usou o inglês,
+        # casou zero linhas e devolveu "0 projetos ativos" sem erro nenhum
+        # ([[feedback_filtro_vocabulario_errado_falha_calado]]).
+        cur.execute("""SELECT count(*) n FROM projects
+                        WHERE status='ativo' AND lower(nome) LIKE 'originação conselho%'""")
+        orig = cur.fetchone()["n"]
+        cur.execute("""SELECT w.registro_id, w.valor_novo, w.confianca, w.criado_em,
+                              p.nome AS projeto
+                         FROM agent_writes w
+                         LEFT JOIN projects p
+                           ON p.id = (w.valor_novo->>'project_id')::int
+                        WHERE w.operacao = 'criar_frente_board_hunt'
+                        ORDER BY w.criado_em""")
+        criadas = cur.fetchall()
+
+    print(f"   {ativos} projetos ativos · {orig} são de originação → "
+          f"**{ativos - orig} recebem o convite sem serem candidatos**")
+    if not criadas:
+        print("   nenhuma frente criada pela camada até agora.")
+        return
+
+    indevidas = []
+    for x in criadas:
+        vn = x["valor_novo"]
+        if isinstance(vn, str):
+            vn = json.loads(vn)
+        proj = x["projeto"]
+        # Sem `project_id` NÃO é falso positivo: a frente pode nascer de uma
+        # conversa solta (foi o caso da Orbiz/Pretola, que existia no mundo e
+        # não no banco — o defeito que a operação foi criada pra resolver).
+        legitima = proj is None or str(proj).lower().startswith("originação conselho")
+        marca = "✅" if legitima else "❌ INDEVIDA"
+        print(f"     {marca} {str(vn.get('nome'))[:38]:40} ← {str(proj or 'sem projeto')[:38]}")
+        if not legitima:
+            indevidas.append(vn.get("nome"))
+
+    if indevidas:
+        print(f"\n   🔴 {len(indevidas)} frente(s) nasceram de projeto que não é originação.")
+        print("      A regra fixada na #999801 dispara AGORA: o bloco injetado precisa de")
+        print("      duas variantes — 'esta frente tem fase X, compare' para quem tem frente,")
+        print("      e nada para os outros. Custa uma condicional.")
+    else:
+        print("\n   Nenhuma indevida. O convite chega a quem não deveria, e o modelo tem")
+        print("   recusado — mas isso é resultado observado, não garantia de desenho.")
+
+
 def bloco_ajustes() -> None:
     _h("7. AJUSTES — o que faz disto um ciclo, e não um relatório")
     print(f"   Parâmetros hoje:  DEBOUNCE_MIN={DEBOUNCE_MIN} · TETO_DIARIO={TETO_DIARIO} · "
@@ -443,6 +519,7 @@ def main() -> int:
     bloco_frescor(runs)
     bloco_divergencia(runs)
     bloco_cadastro(runs)
+    bloco_board_hunt(ro)
     bloco_ajustes()
     print()
     return 0
