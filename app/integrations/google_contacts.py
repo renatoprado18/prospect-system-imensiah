@@ -4,10 +4,13 @@ Supports multiple Google accounts (personal + professional)
 """
 import os
 import json
+import logging
 import httpx
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode
+
+logger = logging.getLogger(__name__)
 
 from services.contact_dedup import get_name_score, normalize_phone
 from services.contact_identity import (
@@ -720,8 +723,48 @@ async def update_google_contact(
     contact_data: Dict,
     update_person_fields: str = "names,emailAddresses,phoneNumbers,organizations,addresses,relations,birthdays"
 ) -> bool:
-    """Update an existing Google contact"""
-    person = {}
+    """Update an existing Google contact.
+
+    ⚠️ ESTA FUNÇÃO NUNCA FUNCIONOU até 14/08/26, e falhava do jeito pior.
+    A People API EXIGE o `etag` da pessoa no corpo do PATCH — sem ele responde
+    `400 INVALID_ARGUMENT: "Request must set person.etag"`. O código montava o
+    corpo sem etag, recebia 400 em toda chamada e devolvia `False` mudo, sem
+    logar nada.
+
+    O DANO NÃO ERA "não atualizou". Em `contact_dedup.propagate_contact_to_google`
+    o `False` cai no `else`, que **cria um contato novo** — então cada tentativa
+    de atualizar produzia uma DUPLICATA no Google em vez de corrigir a ficha. É a
+    explicação mais provável para os 260 nomes divergentes entre INTEL e Google
+    que o board registra, e para as duplicatas que sobreviveram a merges.
+
+    Agora: busca o etag, normaliza o `resource_name` (chega com e sem o prefixo
+    `people/`, e concatenar cego gera `/people/people/cXXX` → 404) e **loga o
+    corpo do erro**. Falha silenciosa numa função de escrita externa é o que
+    permite um defeito viver meses.
+    """
+    # Aceita "people/cXXX" e "cXXX" — o chamador de `contact_dedup` passa o id
+    # cru vindo da coluna, e quem varre a API passa o resourceName inteiro.
+    rid = resource_name.split("people/")[-1]
+
+    # O etag é obrigatório e muda a cada escrita: tem que ser lido AGORA, não
+    # guardado. É o controle de concorrência da People API — se alguém editou o
+    # contato no celular no meio, o PATCH falha em vez de sobrescrever.
+    async with httpx.AsyncClient() as client:
+        got = await client.get(
+            f"{GOOGLE_PEOPLE_API}/people/{rid}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"personFields": "metadata"},
+        )
+        if got.status_code != 200:
+            logger.error("update_google_contact: GET %s falhou (%s): %s",
+                         rid, got.status_code, got.text[:200])
+            return False
+        etag = got.json().get("etag")
+        if not etag:
+            logger.error("update_google_contact: pessoa %s sem etag — PATCH seria 400", rid)
+            return False
+
+    person = {"etag": etag}
 
     # Names
     if contact_data.get("nome"):
@@ -806,7 +849,7 @@ async def update_google_contact(
 
     async with httpx.AsyncClient() as client:
         response = await client.patch(
-            f"{GOOGLE_PEOPLE_API}/people/{resource_name}:updateContact",
+            f"{GOOGLE_PEOPLE_API}/people/{rid}:updateContact",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json"
@@ -815,7 +858,13 @@ async def update_google_contact(
             json=person
         )
 
-        return response.status_code == 200
+        if response.status_code != 200:
+            # O corpo diz exatamente o que falta (foi assim que o etag apareceu).
+            # Sem este log, o chamador só vê `False` e cria uma duplicata.
+            logger.error("update_google_contact: PATCH %s falhou (%s): %s",
+                         rid, response.status_code, response.text[:300])
+            return False
+        return True
 
 
 async def delete_google_contact(access_token: str, resource_name: str) -> bool:
