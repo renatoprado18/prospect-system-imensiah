@@ -63,6 +63,18 @@ _MEM_CHARS = 2500
 # de uma nota.
 _NOTE_CHARS = 2500
 
+# 2500, era 400 — e 400 era o menor orçamento do prompt inteiro, empatado com o
+# de uma mensagem avulsa de WhatsApp. A descrição da frente não é rascunho: é
+# onde o Renato escreve à mão, em destaque, quando corrige um fato que a máquina
+# entendeu errado. Dar a ela 1/6 do espaço de uma nota do dia era inverter a
+# hierarquia que o próprio _SYSTEM declara logo abaixo.
+# Medido em 14/08 no prod: 13 das 40 frentes ativas passavam do corte, 7.650
+# caracteres invisíveis no total, e as maiores perdas eram justamente as frentes
+# de originação de conselho. Com 2500 as 13 cabem inteiras (a maior tem 1.877).
+# Mesmo raciocínio e mesmo valor de _MEM_CHARS/_NOTE_CHARS, de propósito: as três
+# são registro curado e disputam a mesma pergunta ("qual versão do fato vale?").
+_DESC_CHARS = 2500
+
 # Documentos de PROCESSO da sessão, não fato sobre nenhuma frente. Eles casam
 # com qualquer termo (são o log de tudo) e por isso apareciam em TODA frente:
 # medido em 28/07, o `session_locks` ocupava 1 dos 5 slots de memória das
@@ -118,7 +130,9 @@ Para a frente, decida:
 Regras duras:
 - **PARTICIPANTE COMPARTILHADO — não atribua a esta frente o assunto de outra.** Quem aparece marcado com "⚠️ TAMBÉM participa de" conversa com o Renato sobre VÁRIOS assuntos, e a DM dele chega aqui inteira. Uma mensagem dessa pessoa só é evidência DESTA frente se ela **menciona o objeto desta frente**. Se falar de dinheiro, prazo ou entrega de outro tema, **ignore e diga na `nota` que ignorou** — nunca registre como movimento daqui. Na dúvida sobre a qual frente uma mensagem pertence, ela NÃO é movimento desta.
 - **TAREFA PARQUEADA NÃO É PORTÃO.** Uma task marcada `[PARQUEADA]` foi tirada do radar deliberadamente pelo Renato (ou está na janela normal de espera por um terceiro). Ela **não conta como atrasada**, **não vira `precisa_de_voce`** e **não se cobra** — mesmo que a data de vencimento já tenha passado, que é o normal nesse estado. Só `[ATRASADA]` é atraso de verdade. Se o parqueio parecer errado (o terceiro já respondeu, o motivo caiu), diga isso na `nota` em vez de abrir portão.
-- **HIERARQUIA DAS FONTES.** Se o bloco "MEMÓRIA / DECISÕES REGISTRADAS" contradisser qualquer outra coisa (nota da frente, task, mensagem), **a MEMÓRIA vence** — ela é o registro durável, revisado e corrigido pelo Renato; nota e task são o rascunho do dia e envelhecem sem que ninguém volte pra consertar. Quando houver contradição, use o que diz a MEMÓRIA **e registre a divergência no campo `nota`**, nomeando o que contradiz (ex.: "a nota de 27/07 trata o Orestes como sócio; o memo diz que ele só financia — nota desatualizada").
+- **HIERARQUIA DAS FONTES.** Se o bloco "MEMÓRIA / DECISÕES REGISTRADAS" **ou a "DESCRIÇÃO DA FRENTE"** contradisser qualquer outra coisa (nota da frente, task, mensagem), **eles vencem** — são o registro durável, revisado e corrigido pelo Renato; nota e task são o rascunho do dia e envelhecem sem que ninguém volte pra consertar. Quando houver contradição, use o que dizem **e registre a divergência no campo `nota`**, nomeando o que contradiz (ex.: "a nota de 27/07 trata o Orestes como sócio; o memo diz que ele só financia — nota desatualizada").
+- **CORREÇÃO EXPLÍCITA MATA O FATO ANTIGO, onde quer que ele ainda esteja escrito.** Quando a descrição da frente ou a memória trouxer uma correção datada (típico: "⚠️ CORREÇÃO dd/mm", "não é X, é Y", "foi entendido errado"), o texto velho **continua existindo** dentro de tasks, notas e mensagens antigas — ninguém volta pra reescrever todas as superfícies. Isso NÃO o ressuscita. Não abra portão, não gere vigília e não relate movimento com base num fato que uma correção posterior desfez, mesmo que a task ainda diga o contrário; diga na `nota` que a task está desatualizada e por quê. Uma pendência que já foi corrigida uma vez e reaparece é **defeito de propagação, não informação nova**.
+- **TRECHO TRUNCADO NÃO É TRECHO AUSENTE.** Se um bloco terminar com "[…TRUNCADO — N caracteres omitidos]", você está lendo um pedaço. NUNCA conclua "não há registro de X", "nada foi corrigido" ou "segue sem movimento" a partir de um bloco cortado — o que falta pode ser exatamente a correção. Nesse caso, diga na `nota` que a leitura foi parcial.
 - Prioridade no INTEL: número MAIOR = mais importante (8-10 gate estratégico; 1-3 baixa).
 - Cite evidência ao afirmar (ID de task, quem disse no grupo). Nunca invente.
 - DATAS E VALORES: copie EXATO da fonte, nunca parafraseie nem aproxime (se a nota diz "17/08", escreva 17/08 — não "início de agosto" nem "01/08").
@@ -472,7 +486,36 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
     """Serializa o gather num texto compacto pro prompt."""
     p = g["project"]
     today = date.today().isoformat()
-    parts = [f"FRENTE: {p['nome']}", f"DESCRIÇÃO: {(p.get('descricao') or '')[:400]}", f"HOJE: {today}"]
+    # A DESCRIÇÃO É REGISTRO CURADO, e por isso tem o mesmo orçamento da memória.
+    #
+    # Até 14/08/26 ela vinha cortada em 400 caracteres — o MENOR orçamento do
+    # prompt inteiro, o mesmo de uma mensagem solta de WhatsApp, e 6× menor que
+    # uma nota do dia que a hierarquia logo abaixo declara como fonte FRACA. A
+    # superfície onde o Renato escreve à mão valia menos que o rascunho que ela
+    # deveria corrigir.
+    #
+    # Custou o caso MilClean, medido: em 11/08 ele corrigiu o mal-entendido do
+    # NDA na descrição do projeto #60, "em destaque". A descrição tem 1.782
+    # caracteres e a correção começa por volta do 490 — do lado invisível do
+    # corte. Em 13/08 a camada emitiu a vigília com o fato velho, e o diagnóstico
+    # registrado foi "a camada não respeita a correção". Não era: ela nunca a
+    # recebeu. Eram 13 das 40 frentes ativas perdendo texto, 7.650 caracteres
+    # invisíveis, concentrados nas frentes de originação — o motor de renda.
+    #
+    # E o corte era MUDO, que é o que fez três dias passarem sem ninguém notar
+    # ([[feedback_guarda_abstencao_vira_fabrica]]): quem lesse o prompt via uma
+    # descrição terminando em frase completa e não tinha como saber que faltava
+    # metade. Agora, se cortar, ele diz que cortou e quanto.
+    desc = p.get("descricao") or ""
+    if len(desc) > _DESC_CHARS:
+        desc = (desc[:_DESC_CHARS] +
+                f"\n[…TRUNCADO — {len(desc) - _DESC_CHARS} caracteres omitidos. "
+                f"Pode haver correção posterior neste trecho; não conclua daqui que "
+                f"um fato não foi corrigido.]")
+    parts = [f"FRENTE: {p['nome']}",
+             f"DESCRIÇÃO DA FRENTE (registro curado pelo Renato — mesma autoridade "
+             f"da MEMÓRIA; prevalece sobre notas e tasks):\n{desc}",
+             f"HOJE: {today}"]
 
     if g["members"]:
         # Participante compartilhado vem MARCADO. A DM dele traz assunto de todas
