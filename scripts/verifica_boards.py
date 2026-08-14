@@ -69,8 +69,18 @@ MEM = os.path.expanduser("~/.claude/projects/-Users-rap-prospect-system/memory")
 # o alarme acusou 167% — sobre um arquivo que a sessão vinha lendo INTEIRO sem
 # problema. Alarme sem dano demonstrado é o defeito que este mesmo dia
 # encontrou no monitor do RACI; corrigido antes de entrar no ar.
+#
+# 14/08/26 — VOLTA A 12 KB, porque a premissa do parágrafo acima caiu. Ela valia
+# enquanto o índice era um nível só: ali, cortar uma linha APAGAVA o ponteiro. Com
+# a partição em 2 níveis, cortar do `MEMORY.md` não apaga nada — desce pro
+# `MEMORY_NIVEL2.md`, que segue buscável. O alarme deixou de pedir esquecimento e
+# passou a pedir triagem, então pode voltar a ser exigente. Calibrado com dano
+# real: 9,1 KB no dia da partição (74%), dispara com ~50 entradas novas no nível 1
+# — que é exatamente quando a regra "memória nova nasce no nível 2" está sendo
+# furada. O `MEMORY_NIVEL2.md` NÃO entra aqui: não é lido na abertura, e teto de
+# leitura sobre arquivo que ninguém carrega é alarme sem dano — o erro de 07/08.
 BOARDS = {
-    "MEMORY.md":               (24576, "índice lido em TODA sessão — teto é o limite de leitura"),
+    "MEMORY.md":               (12288, "índice nível 1, lido em TODA sessão — acima disto, triar pro nível 2"),
     "session_locks.md":         (9216, "canal CoS⇄Dev"),
     "project_dev_backlog.md":   (9216, "roadmap dev"),
     "project_cos_status.md":    (9216, "board executivo"),
