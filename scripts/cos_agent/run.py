@@ -50,6 +50,7 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -520,6 +521,69 @@ def _chave_dedup(op: str, dados: dict, registro_id) -> str:
     return f"{op}:{alvo}"
 
 
+def _dedup_rodada(normalizados: list[tuple], placar: dict) -> list[tuple]:
+    """Uma escrita por alvo por rodada — a de MAIOR confiança, não a última.
+
+    O agente devolve um debriefing por frente, e o runner achatava todos numa
+    lista só. Quando duas frentes falavam do mesmo registro, as duas escreviam:
+    em 14/08 11:20:17 três `atualizar_fase_frente` caíram sobre `board_hunt_frentes#19`
+    (Motiva) na MESMA rodada — conf 0,85 → 0,90 → 0,92, cada `valor_anterior`
+    igual ao `valor_novo` do anterior. Como `nota` é sobrescrito inteiro, o texto
+    que sobrou foi o do último debriefing da lista. **A ordem decidia, não a
+    confiança** — e ordem aqui é acidente de iteração, não julgamento.
+
+    Isso não é o `_chave_dedup`, que protege o canal de PERGUNTAS entre rodadas
+    (a mesma dúvida 14×/dia). Este protege o CADASTRO dentro de uma rodada. Os
+    dois usam a mesma identidade — operação + alvo — de propósito: alvo é o que
+    define colisão, e ter duas noções de "mesmo alvo" seria a duplicação que a
+    auditoria vem catalogando.
+
+    O EXCEDENTE NÃO É DESCARTADO EM SILÊNCIO. Se propõe o mesmo conteúdo, é eco
+    e só se conta. Se propõe conteúdo DIFERENTE, duas leituras da mesma coisa
+    discordam — isso é dúvida, e dúvida tem destino: vira pergunta ao Renato,
+    como qualquer outra. Engolir a divergência devolveria pelo lado de cá o
+    mesmo buraco que a camada foi feita pra fechar.
+    """
+    grupos: dict[str, list[tuple]] = {}
+    for pos, item in enumerate(normalizados):
+        _d, _u, op, dados, reg_id, _conf = item
+        grupos.setdefault(_chave_dedup(op, dados, reg_id), []).append((pos, item))
+
+    escolhidos = []
+    for chave, itens in grupos.items():
+        if len(itens) == 1:
+            escolhidos.append(itens[0])
+            continue
+        # Empate de confiança cai no de menor posição — mas aí o excedente é
+        # divergente e vira pergunta logo abaixo, então o desempate não decide
+        # sozinho. `-pos` no critério mantém isso estável.
+        vencedor = max(itens, key=lambda p: (p[1][5], -p[0]))
+        escolhidos.append(vencedor)
+        for perdedor in itens:
+            if perdedor[0] == vencedor[0]:
+                continue
+            placar["suprimidas"] += 1
+            d, u, op, dados, reg_id, conf = perdedor[1]
+            divergente = dados != vencedor[1][3]
+            placar["detalhe"].append(
+                {"frente": d.get("frente"), "operacao": op, "status": "suprimida",
+                 "confianca": conf, "registro_id": reg_id,
+                 "venceu_com": vencedor[1][5], "divergente": divergente,
+                 "dados": {k: str(v)[:120] for k, v in dados.items()}})
+            if divergente:
+                placar["pendentes"].append(
+                    {"operacao": op, "dados": dados,
+                     "motivo": (f"Duas leituras discordam sobre o mesmo alvo nesta rodada. "
+                                f"Escrito o de confiança {vencedor[1][5]}; este ({conf}) diverge "
+                                f"no conteúdo. Motivo declarado: {(u.get('motivo') or '').strip()}"),
+                     "confianca": conf, "registro_id": reg_id,
+                     "frente": d.get("frente")})
+
+    # Ordem original preservada: o SAVEPOINT é numerado por posição e o placar é
+    # lido por humano — reordenar por confiança embaralharia o relato da rodada.
+    return [item for _, item in sorted(escolhidos, key=lambda p: p[0])]
+
+
 def abrir_proposta(owner_url: str, item: dict) -> bool:
     """A dúvida da camada vira pergunta ao Renato. Devolve True se abriu.
 
@@ -576,7 +640,7 @@ def abrir_proposta(owner_url: str, item: dict) -> bool:
         return False
 
 
-def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
+def persistir_atualizacoes(rw_url: str, debriefs: list[dict], run_id: str | None = None) -> dict:
     """Aplica o que o agente propôs mudar no cadastro. Devolve o placar.
 
     POR QUE O RUNNER, e não o agente. Mesma razão dos fatos: a credencial do
@@ -603,41 +667,44 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
     sys.path.insert(0, str(BASE.parent.parent / "app"))
     from services import agent_write  # noqa: E402
 
-    placar = {"escritas": 0, "propostas": 0, "recusadas": 0,
+    placar = {"escritas": 0, "propostas": 0, "recusadas": 0, "suprimidas": 0,
               "detalhe": [], "pendentes": []}
-    candidatos = [(d, u) for d in debriefs for u in (d.get("atualizacoes") or [])[:3]]
-    if not candidatos:
+    brutos = [(d, u) for d in debriefs for u in (d.get("atualizacoes") or [])[:3]]
+    if not brutos:
         return placar
 
-    with _conn(rw_url) as conexao:
-        for i, (d, u) in enumerate(candidatos):
-            op = (u.get("operacao") or "").strip()
-            # Cópia: o dict original ainda vai virar proposta pendente se a
-            # confiança for baixa, e mutar o que se mostra ao Renato é outro bug.
-            dados = dict(u.get("dados") or {})
-            motivo = (u.get("motivo") or "").strip()
+    # `registro_id` mora no nível de cima do contrato, mas o prompt só
+    # documentava a exigência em prosa até 11/08 — e prosa não é contrato
+    # ([[feedback_prompt_nao_le_comentario]]). Enquanto o agente aprende o
+    # formato novo, aceitamos também dentro de `dados`: deixá-lo ali seria
+    # "campo fora da operação" e recusaria a única operação de UPDATE que
+    # existe. Tolerar a forma errada aqui é barato; perder a operação não.
+    normalizados = []
+    for d, u in brutos:
+        # Cópia: o dict original ainda vai virar proposta pendente se a
+        # confiança for baixa, e mutar o que se mostra ao Renato é outro bug.
+        dados = dict(u.get("dados") or {})
+        reg_id = u.get("registro_id")
+        if "registro_id" in dados:
+            if reg_id is None:
+                reg_id = dados["registro_id"]
+            dados.pop("registro_id")
+        if reg_id is not None:
             try:
-                conf = float(u.get("confianca") or 0)
+                reg_id = int(reg_id)
             except (TypeError, ValueError):
-                conf = 0.0
+                reg_id = None
+        try:
+            conf = float(u.get("confianca") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        normalizados.append((d, u, (u.get("operacao") or "").strip(), dados, reg_id, conf))
 
-            # `registro_id` mora no nível de cima do contrato, mas o prompt só
-            # documentava a exigência em prosa até 11/08 — e prosa não é contrato
-            # ([[feedback_prompt_nao_le_comentario]]). Enquanto o agente aprende o
-            # formato novo, aceitamos também dentro de `dados`: deixá-lo ali seria
-            # "campo fora da operação" e recusaria a única operação de UPDATE que
-            # existe. Tolerar a forma errada aqui é barato; perder a operação não.
-            reg_id = u.get("registro_id")
-            if "registro_id" in dados:
-                if reg_id is None:
-                    reg_id = dados["registro_id"]
-                dados.pop("registro_id")
-            if reg_id is not None:
-                try:
-                    reg_id = int(reg_id)
-                except (TypeError, ValueError):
-                    reg_id = None
+    candidatos = _dedup_rodada(normalizados, placar)
 
+    with _conn(rw_url) as conexao:
+        for i, (d, u, op, dados, reg_id, conf) in enumerate(candidatos):
+            motivo = (u.get("motivo") or "").strip()
             # SAVEPOINT por item. Sem ele, uma recusa vinda do BANCO (e não da
             # lista fechada) aborta a transação inteira e todas as escritas
             # seguintes morrem com `InFailedSqlTransaction` — erro que aponta pro
@@ -654,6 +721,11 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict]) -> dict:
                     op, dados,
                     motivo=motivo, confianca=conf,
                     agente="cos_agent_local",
+                    # `agent_writes.run_id` existia e vinha NULL nas 147 escritas
+                    # desde 10/08. Sem ele não dá pra perguntar "o que ESTA rodada
+                    # escreveu" — só por `criado_em`, que é frágil e me fez agrupar
+                    # rodadas diferentes ao auditar esta própria cascata.
+                    run_id=run_id,
                     fato_origem=(u.get("fato_origem") or "").strip() or None,
                     registro_id=reg_id,
                     conn=conexao,
@@ -1037,8 +1109,12 @@ def main() -> int:
     # nada foi escrito desde agosto.
     rw_url = (os.getenv("COS_RW_URL") or "").strip()
     cadastro = None
+    # Identidade da rodada, gravada nos dois lados: em `agent_writes.run_id` e no
+    # payload do `cos_daily_review`. É o que permite ir do julgamento à escrita
+    # que ele causou, e vice-versa — hoje só dava por `criado_em`.
+    run_id = uuid.uuid4().hex[:12]
     if rw_url:
-        pl = persistir_atualizacoes(rw_url, ok)
+        pl = persistir_atualizacoes(rw_url, ok, run_id=run_id)
         # A dúvida vira PERGUNTA. Até aqui ela só ia pro stderr, que ninguém
         # abre — dúvida que não chega a ele é indistinguível de dúvida que não
         # existiu, e era esse o buraco que a diretriz de 10/08 mandava fechar.
@@ -1049,12 +1125,18 @@ def main() -> int:
         cadastro = {
             "escritas": pl["escritas"], "duvidas": pl["propostas"],
             "perguntas_abertas": abertas, "recusadas": pl["recusadas"],
+            # Colisão suprimida É medida. Se este número subir, o corte de ≤3 por
+            # frente está deixando duas frentes disputarem o mesmo registro, e o
+            # conserto passa a ser no prompt, não aqui.
+            "suprimidas": pl["suprimidas"],
             "recusas": [x for x in pl["detalhe"] if x.get("status") == "recusada"],
+            "colisoes": [x for x in pl["detalhe"] if x.get("status") == "suprimida"],
         }
-        if pl["escritas"] or pl["propostas"] or pl["recusadas"]:
+        if pl["escritas"] or pl["propostas"] or pl["recusadas"] or pl["suprimidas"]:
             print(f"[cos-agent] cadastro: {pl['escritas']} escrita(s), "
                   f"{pl['propostas']} dúvida(s) → {abertas} pergunta(s) nova(s), "
-                  f"{pl['recusadas']} recusada(s)")
+                  f"{pl['recusadas']} recusada(s), "
+                  f"{pl['suprimidas']} colisão(ões) suprimida(s)")
             for det in pl["detalhe"]:
                 # O ERRO na mesma linha. Antes só saía status/operação/frente, e
                 # a recusa virava um fato sem causa: dava pra contar, não dava
@@ -1092,6 +1174,7 @@ def main() -> int:
     custo = sum((d.get("_meta", {}).get("custo_usd") or 0) for d in ok)
     payload = {
         "run_at": datetime.now(timezone.utc).isoformat(),
+        "run_id": run_id,          # correlaciona com `agent_writes.run_id`
         "n_frentes": len(m["frentes"]),
         "motor": "agente_local",
         "triagem": {**triagem, "julgadas_agora": len(ok),

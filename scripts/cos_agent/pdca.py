@@ -392,6 +392,25 @@ def bloco_cadastro(runs: list[dict]) -> None:
         print("      0,75, ou o piso está mal calibrado — ele é chute fundamentado, não")
         print("      medição, e esta é a retro que existe pra decidir isso.")
 
+    # COLISÃO NA MESMA RODADA (16/08). Duas frentes propondo escrita sobre o
+    # mesmo registro: o runner agora fica com a de maior confiança e a divergente
+    # vira pergunta. Medir aqui porque o conserto do EXCESSO não é o dedup — é o
+    # prompt: se o número subir, são as frentes que estão se sobrepondo, e o
+    # dedup só estaria escondendo isso bem.
+    sup = sum(c.get("suprimidas") or 0 for c in (r["p"]["cadastro"] for r in com))
+    if sup:
+        colisoes: dict[str, int] = {}
+        divergentes = 0
+        for r in com:
+            for x in r["p"]["cadastro"].get("colisoes") or []:
+                colisoes[f"{x.get('operacao')}#{x.get('registro_id')}"] = \
+                    colisoes.get(f"{x.get('operacao')}#{x.get('registro_id')}", 0) + 1
+                divergentes += 1 if x.get("divergente") else 0
+        print(f"\n   colisões suprimidas {sup} ({divergentes} com conteúdo divergente → viraram pergunta)")
+        for alvo, n in sorted(colisoes.items(), key=lambda kv: -kv[1])[:5]:
+            print(f"     {n:3d}× {alvo}")
+        print("   Alvo repetido na lista é sinal de frentes se sobrepondo no prompt.")
+
     por_op: dict[str, list[str]] = {}
     for r in com:
         for x in r["p"]["cadastro"].get("recusas") or []:
