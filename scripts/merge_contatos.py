@@ -175,6 +175,14 @@ def merge(cur, fica: int, absorvidas: list, aplicar: bool) -> dict:
         except psycopg2.Error as e:
             raise RuntimeError(f"{tabela}.{col}: {e}") from e
 
+    # ANTES do DELETE: depois dele estas linhas não existem mais e o
+    # `google_contact_id` da ficha absorvida some do banco para sempre — é
+    # exatamente por isso que o passivo acumulado é irrecuperável por consulta.
+    cur.execute("""SELECT id, google_contact_id FROM contacts
+                    WHERE id = ANY(%s) AND google_contact_id IS NOT NULL""",
+                (absorvidas,))
+    gids_orfaos = [r["google_contact_id"] for r in cur.fetchall()]
+
     if aplicar:
         cur.execute("DELETE FROM contacts WHERE id = ANY(%s)", (absorvidas,))
         movidos["contacts(apagadas)"] = cur.rowcount
@@ -188,6 +196,33 @@ def merge(cur, fica: int, absorvidas: list, aplicar: bool) -> dict:
                         (gid_candidato, fica))
             if cur.rowcount:
                 movidos["gid_escalar(adotado)"] = cur.rowcount
+
+        # ⚠️ ESTE SCRIPT NÃO APAGA A FICHA NO GOOGLE — e isso tem consequência.
+        #
+        # Ele consolida os `google_contact_id` no mapa multi-conta (acima), mas
+        # não chama a People API. A ficha absorvida continua viva na agenda; e
+        # como o sync completo traz de volta o que existe no Google, ela
+        # REAPARECE como duplicata nova no INTEL na rodada seguinte — foi o que
+        # aconteceu com a Manuela e a Wanelise em 26/07. O trabalho volta como
+        # novidade e ninguém liga uma coisa à outra.
+        #
+        # A rota e o `merge_duplicates.py` passaram a usar `duplicados.merge_par`
+        # em 16/08, que propaga por dentro (diretriz do Renato: "consistência
+        # INTEL⇄Google é por CAMINHO, não por desenho"). Este script tem
+        # implementação própria — SQL direto, com a consolidação de gids que os
+        # outros dois não têm — e ligá-lo ao serviço é frente própria, aberta no
+        # backlog. Até lá, o aviso é gritado em vez de omitido: silêncio aqui é
+        # que produziu o passivo que ninguém consegue medir (não há tabela de
+        # auditoria de merge, então os órfãos já criados são irrecuperáveis por
+        # consulta).
+        if gids_orfaos:
+            movidos["google(NAO_APAGADO)"] = len(gids_orfaos)
+            print(f"\n  ⚠️  {len(gids_orfaos)} ficha(s) seguem VIVAS no Google: "
+                  f"{', '.join(str(g) for g in gids_orfaos[:5])}"
+                  f"{' …' if len(gids_orfaos) > 5 else ''}", file=sys.stderr)
+            print("      O próximo sync completo pode recriá-las como duplicatas. "
+                  "Apague-as na agenda ou refunda pela tela (/contatos), que propaga.",
+                  file=sys.stderr)
     return dict(movidos)
 
 

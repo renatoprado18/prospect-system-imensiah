@@ -11,7 +11,7 @@ Data: 2026-03-25
 """
 
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set
 import json
 import re
 import logging
@@ -367,6 +367,95 @@ def encontrar_duplicados(
         "threshold": threshold,
         "duplicates": duplicates
     }
+
+
+async def merge_par(
+    keep_id: int,
+    merge_id: int,
+    field_choices: Optional[Dict] = None,
+    propagate: bool = True,
+    google_contacts_module=None,
+) -> Dict[str, Any]:
+    """Funde DOIS contatos e propaga ao Google — um caminho só, para todo mundo.
+
+    DIRETRIZ DO RENATO (14/08/2026): *"consistência INTEL⇄Google é por CAMINHO,
+    não por desenho"*. Até aqui a propagação morava na ROTA (`main.py`), não no
+    serviço: quem fundia pela tela via a ficha sumir do Google, e quem fundia por
+    script (`scripts/merge_duplicates.py`, o caminho REAL dos mutirões — 293
+    duplicatas absorvidas só em 06/08) deixava a ficha viva lá. E o nome da outra
+    função dizia o problema em voz alta: `merge_duplicate_contacts_with_propagation`
+    — propagar era VARIANTE, quando devia ser o default.
+
+    POR QUE ISSO NÃO SE CONSERTA SOZINHO NO SYNC. O sync completo traz de volta o
+    que existe no Google: a ficha que não foi apagada lá **recria a duplicata**
+    aqui na rodada seguinte (medido em 26/07 com a Manuela e a Wanelise). O
+    mutirão de dedup e o sync ficam então em disputa permanente, e o trabalho
+    manual de fundir volta como novidade.
+
+    ⚠️ A ORDEM AQUI NÃO É ARBITRÁRIA. Os ids do Google são lidos ANTES do merge,
+    porque `merge_contatos` DELETA a linha de `merge_id` — depois dela o
+    `google_contact_id` da ficha absorvida não existe em lugar nenhum, e a
+    propagação fica sem alvo. Foi assim que o passado ficou imensurável: não há
+    tabela de auditoria de merge, então os órfãos já criados no Google não são
+    recuperáveis por consulta. Este conserto vale do futuro em diante.
+
+    `propagate=False` existe para o caso legítimo de fundir sem tocar no Google
+    (restauração, teste), e é explícito de propósito: o default silencioso era
+    justamente o defeito.
+    """
+    # Import local da propagação: este módulo é o que TEM banco; `contact_dedup`
+    # é puro (recebe conexão de fora) e não deve ganhar `get_db` por causa disto.
+    from services.contact_dedup import propagate_merge_to_google
+
+    if keep_id == merge_id:
+        return {"error": "keep_id e merge_id são o mesmo contato"}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM contacts WHERE id = %s", (merge_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return {"error": f"contato {merge_id} não existe"}
+        # Cópia do estado ANTERIOR: depois do merge esta linha não existe mais.
+        absorvido = dict(row)
+
+    resultado = merge_contatos(keep_id, merge_id, field_choices)
+    if "error" in resultado:
+        return resultado
+
+    resultado["google_propagation"] = None
+    if not propagate:
+        return resultado
+
+    # Nome DIFERENTE do parâmetro de propósito: `import x as google_contacts_module`
+    # dentro da função tornaria o nome local em todo o corpo, e a leitura logo
+    # acima (`is None`) passaria a ver a variável antes da atribuição em algum
+    # refactor futuro — o UnboundLocalError por import sombreado que este repo já
+    # pagou uma vez ([[feedback_import_sombreado_unboundlocal]]).
+    gmod = google_contacts_module
+    if gmod is None:
+        import integrations.google_contacts as _gc
+        gmod = _gc
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM contacts WHERE id = %s", (keep_id,))
+            sobrevivente = dict(cursor.fetchone())
+            resultado["google_propagation"] = await propagate_merge_to_google(
+                sobrevivente, [absorvido], conn, gmod
+            )
+    except Exception as e:                                      # noqa: BLE001
+        # O merge local JÁ aconteceu e é irreversível: falhar aqui não pode
+        # engolir o resultado nem fingir que propagou. O erro viaja no retorno
+        # para quem chamou decidir — e fica no log, porque script em mutirão
+        # ninguém lê o retorno item a item.
+        logger.error("merge_par: merge %s→%s feito, propagação FALHOU: %s",
+                     merge_id, keep_id, e)
+        resultado["google_propagation"] = {"error": f"{type(e).__name__}: {e}"}
+
+    return resultado
+
 
 
 def merge_contatos(keep_id: int, merge_id: int, field_choices: Optional[Dict] = None) -> Dict:

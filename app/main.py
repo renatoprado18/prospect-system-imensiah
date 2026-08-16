@@ -7491,32 +7491,23 @@ async def merge_contacts_endpoint(request: Request):
         keep_id = contact_ids[0]  # First ID is primary
         merge_id = contact_ids[1]
 
-        # Use merge_contatos from duplicados.py which now supports field_choices
-        merge_result = merge_contatos(keep_id, merge_id, field_choices)
+        # 16/08/26 — UM CAMINHO SÓ. A propagação ao Google morava AQUI, na rota,
+        # e por isso o merge por script (`scripts/merge_duplicates.py`, o caminho
+        # real dos mutirões) deixava a ficha viva no Google — e o sync completo a
+        # trazia de volta como duplicata nova no dia seguinte. Diretriz do
+        # Renato: "consistência INTEL⇄Google é por CAMINHO, não por desenho".
+        # `merge_par` é o serviço; a rota não reimplementa mais nada.
+        from services.duplicados import merge_par
+
+        merge_result = await merge_par(
+            keep_id, merge_id, field_choices,
+            propagate=propagate, google_contacts_module=google_contacts_module)
 
         if "error" in merge_result:
             conn.close()
             raise HTTPException(status_code=400, detail=merge_result["error"])
 
-        # Propagate to Google if requested
-        google_results = {}
-        if propagate:
-            try:
-                # Get updated contact and deleted contact info
-                cursor.execute("SELECT * FROM contacts WHERE id = %s", (keep_id,))
-                merged_contact = row_to_dict(cursor.fetchone())
-
-                # Find the deleted contact's Google ID for propagation
-                deleted_contact = next((c for c in contacts if c['id'] == merge_id), None)
-                if deleted_contact and deleted_contact.get('google_contact_id'):
-                    google_results = await propagate_merge_to_google(
-                        merged_contact,
-                        [deleted_contact],
-                        conn,
-                        google_contacts_module
-                    )
-            except Exception as e:
-                google_results = {"error": str(e)}
+        google_results = merge_result.get("google_propagation") or {}
 
         conn.close()
         return {
