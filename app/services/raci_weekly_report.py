@@ -493,19 +493,52 @@ def mark_concluidos_as_reported(empresa_id: str) -> int:
 JABO_PROJECT_ID = 28
 
 
-def _infer_task_responsavel(titulo: str) -> str:
-    """Infere o responsavel do prefixo do titulo da task Jabô.
+def _infer_task_responsavel(titulo: str, contato_nome: Optional[str] = None) -> str:
+    """Responsavel da task Jabô: o VÍNCULO primeiro, o prefixo do titulo depois.
 
     "[Jabô/Andressa] Enviar..." -> "Andressa"
-    "[Jabô] Classificar..."      -> "—" (tag de projeto, sem pessoa)
-    "Investigar Fiama..."        -> "—"
+    "[Jabô] Classificar..."      -> vínculo, ou "—" (tag de projeto, sem pessoa)
+    "Investigar Fiama..."        -> vínculo, ou "—"
+
+    ATÉ 16/08/2026 ISTO SÓ LIA O PREFIXO — e o prefixo existe em pouquíssimas
+    tasks, então o RACI saía com "—" em quase toda linha. `tasks.contact_id`
+    estava preenchido em 36 das 61 do #28 (a Andressa é dona de 3 pendentes) e
+    ninguém lia: campo cheio sem consumidor, o mesmo padrão que este backlog vem
+    catalogando ([[feedback_consumidor_morto_wiring]]).
+
+    Por que isso importa mais que estética: o RACI vai para um grupo onde a
+    outra pessoa procura o próprio nome. Uma matriz em que o trabalho dela
+    aparece como "—" não a reconhece — e reconhecimento é a função da peça, não
+    um efeito colateral dela.
+
+    O prefixo VENCE o vínculo quando existe: ele é declaração explícita de
+    quem escreveu a task, e `contact_id` às vezes marca o interlocutor do
+    assunto e não o dono do trabalho.
+
+    ⚠️ E POR ISSO O VÍNCULO SOZINHO NÃO BASTA. Medido em 16/08: "Convidar
+    Rodrigo a visitar a fazenda" e "Avaliar visita a Lisboa" têm `contact_id` do
+    Rodrigo — que é o ASSUNTO, não o executor; quem convida é o Renato. Atribuir
+    por vínculo cru mandaria ao grupo uma matriz dando tarefa a quem não a tem.
+    Só conta o vínculo de quem o PROJETO declara como executor (`papel` do
+    `project_members`) — `contato_executor` já chega filtrado por isso. Numa peça
+    que vai para terceiros, "—" honesto vale mais que um nome errado.
     """
     m = re.match(r'^\s*\[([^\]]+)\]', titulo or '')
     if m and '/' in m.group(1):
         resp = m.group(1).split('/', 1)[1].strip()
         if resp:
             return resp
+    if contato_nome:
+        return contato_nome.split()[0]     # primeiro nome, como no resto da peça
     return '—'
+
+
+# Papel de `project_members` que caracteriza QUEM EXECUTA. "R:" é a notação RACI
+# escrita à mão nos papéis do #28 ("Executora operacional (R: prospecção...)");
+# "execut" pega "Gerente da fazenda — executa classificação". Contraparte,
+# prospect, decisor e cadeia regional ficam de fora de propósito: participam da
+# frente sem serem donos de linha.
+_PAPEL_EXECUTOR = re.compile(r'\bR:|execut', re.IGNORECASE)
 
 
 def _strip_task_prefix(titulo: str) -> str:
@@ -527,12 +560,18 @@ def generate_jabo_report(cursor) -> Optional[Dict]:
 
     `cursor` = RealDictCursor do INTEL (get_db()).
     """
+    # `public.` explícito e JOIN no contato: as views `copilot.*` traduzem nomes
+    # de coluna, e sem o schema a errada parece existir ([[feedback_copilot_view_verify_consumer]]).
     cursor.execute("""
-        SELECT id, titulo, status, prioridade, data_vencimento,
-               data_conclusao, atualizado_em
-        FROM tasks
-        WHERE project_id = %s
-          AND status NOT IN ('cancelled', 'on_hold')
+        SELECT t.id, t.titulo, t.status, t.prioridade, t.data_vencimento,
+               t.data_conclusao, t.atualizado_em,
+               c.nome AS contato_nome, pm.papel AS contato_papel
+        FROM public.tasks t
+        LEFT JOIN public.contacts c ON c.id = t.contact_id
+        LEFT JOIN public.project_members pm
+               ON pm.contact_id = t.contact_id AND pm.project_id = t.project_id
+        WHERE t.project_id = %s
+          AND t.status NOT IN ('cancelled', 'on_hold')
     """, (JABO_PROJECT_ID,))
     rows = cursor.fetchall()
     if not rows:
@@ -561,7 +600,10 @@ def generate_jabo_report(cursor) -> Optional[Dict]:
             'acao': _strip_task_prefix(t['titulo']),
             'prazo': prazo_date.strftime('%d/%m') if prazo_date else '—',
             'prazo_date': prazo_date,
-            'responsavel': _infer_task_responsavel(t['titulo']),
+            'responsavel': _infer_task_responsavel(
+                t['titulo'],
+                t.get('contato_nome') if _PAPEL_EXECUTOR.search(t.get('contato_papel') or '')
+                else None),
             'status': t['status'],
             'updated_at': updated_at,
             'notas': '',
@@ -608,6 +650,103 @@ def generate_jabo_report(cursor) -> Optional[Dict]:
     }
 
 
+def _intel_base_url() -> str:
+    """Domínio canônico do INTEL, com env PRÓPRIA — de propósito não herda
+    `BASE_URL`: em 16/08/2026 ela valia `prospects.almeida-prado.com`, o domínio
+    antigo. Os dois respondem 200 hoje, então o link não quebraria; o problema é
+    que um preview semanal ensina o destinatário para onde olhar, e apontar pro
+    host velho o mantém vivo por inércia. Link quebrado num preview é pior que
+    link ausente — treina a pessoa a ignorar o preview inteiro."""
+    return os.getenv("INTEL_PUBLIC_URL", "https://intel.almeida-prado.com").rstrip("/")
+
+
+def jabo_reportes_pendentes(cursor, group_jid: Optional[str] = None) -> Dict:
+    """O que o outro lado reportou no grupo DESDE o último RACI que saiu.
+
+    POR QUE ISTO EXISTE (16/08/2026, pedido do Renato: "a Andressa tem enviado
+    diversas atualizações e não estamos fazendo o RACI semanal; não quero
+    desmotivá-la"). O preview chegava a ele toda segunda e não dizia a única
+    coisa que decide se ele para tudo e dispara: **quantas vezes a outra pessoa
+    escreveu sem receber nada de volta**. Medido naquele dia: RACI parado desde
+    03/08, e a Andressa reportando em 04, 05, 11 e 12/08 — cinco toques, zero
+    retorno. O preview de 10/08 chegou e não foi disparado; nada nele informava
+    esse silêncio acumulado.
+
+    Isto NÃO entra no texto que vai ao grupo — seria devolver a ela um resumo do
+    que ela mesma escreveu. É contexto para quem decide disparar.
+    """
+    if group_jid is None:
+        cursor.execute("""
+            SELECT group_jid FROM project_whatsapp_groups
+            WHERE project_id = %s AND ativo = TRUE LIMIT 1
+        """, (JABO_PROJECT_ID,))
+        row = cursor.fetchone()
+        if not row:
+            return {"desde": None, "dias": None, "reportes": []}
+        group_jid = row["group_jid"]
+
+    # Âncora = último RACI QUE SAIU no grupo, não o último preview gerado. É a
+    # diferença entre "a máquina produziu" e "a pessoa recebeu" — e era
+    # exatamente essa confusão que fazia o placar do cron parecer saudável
+    # ([[feedback_medir_o_consumidor_certo]]).
+    cursor.execute("""
+        SELECT MAX(timestamp) AS ts FROM group_messages
+        WHERE group_jid = %s AND from_me = TRUE AND content ILIKE %s
+    """, (group_jid, '%RACI%'))
+    r = cursor.fetchone()
+    desde = r["ts"] if r else None
+
+    cursor.execute("""
+        SELECT timestamp, sender_name, content FROM group_messages
+        WHERE group_jid = %s AND from_me = FALSE
+          AND (%s::timestamp IS NULL OR timestamp > %s)
+        ORDER BY timestamp
+    """, (group_jid, desde, desde))
+    reportes = [dict(x) for x in cursor.fetchall()]
+
+    dias = (datetime.now() - desde).days if desde else None
+    return {"desde": desde, "dias": dias, "reportes": reportes}
+
+
+def _bloco_reportes(ctx: Dict) -> str:
+    """Cabeçalho do preview: o silêncio acumulado, em uma olhada."""
+    reportes, dias = ctx["reportes"], ctx["dias"]
+    if not reportes:
+        if dias is not None and dias > 10:
+            return (f"⚠️ *Último RACI foi há {dias} dias* — e ninguém escreveu no "
+                    f"grupo desde então.\n\n")
+        return ""
+
+    quem = {}
+    for r in reportes:
+        nome = (r.get("sender_name") or "alguém").split()[0]
+        quem[nome] = quem.get(nome, 0) + 1
+    resumo = " · ".join(f"*{n}* {c}×" for n, c in
+                        sorted(quem.items(), key=lambda kv: -kv[1]))
+
+    linhas = [f"🔔 *{len(reportes)} atualizações no grupo sem retorno* — {resumo}"]
+    if dias is not None:
+        linhas.append(f"_Último RACI enviado há *{dias} dias*._")
+    linhas.append("")
+    # As 3 mais recentes, na íntegra curta: quem decide disparar precisa ver o
+    # TEOR, não só a contagem. Contagem sozinha vira número que se ignora.
+    #
+    # A amostra pula mensagens muito curtas ("Olá! Bom dia!"), que ocupariam a
+    # vaga de uma atualização real — mas a CONTAGEM acima inclui todas: são
+    # toques sem retorno do mesmo jeito. Corte por COMPRIMENTO, nunca por
+    # palavra-chave: filtro de vocabulário erra calado e descarta justamente o
+    # que foi escrito fora do padrão esperado ([[feedback_filtro_vocabulario_errado_falha_calado]]).
+    substantivas = [r for r in reportes
+                    if len(" ".join((r.get("content") or "").split())) >= 25]
+    for r in (substantivas or reportes)[-3:]:
+        quando = r["timestamp"].strftime("%d/%m") if r.get("timestamp") else "—"
+        nome = (r.get("sender_name") or "—").split()[0]
+        txt = " ".join((r.get("content") or "").split())[:150]
+        linhas.append(f"• _{quando}_ *{nome}*: {txt}")
+    linhas.append("")
+    return "\n".join(linhas)
+
+
 def build_jabo_preview() -> Optional[str]:
     """Monta o preview do RACI Jabô pronto pro Renato revisar e postar no grupo.
 
@@ -628,12 +767,23 @@ def build_jabo_preview() -> Optional[str]:
         """, (JABO_PROJECT_ID,))
         g = cursor.fetchone()
         destino = (g['group_name'] if g else None) or 'Governança Jabô'
+        # Mesma conexão: o bloco de reportes é do wrapper, não do relatório.
+        try:
+            ctx = jabo_reportes_pendentes(cursor)
+        except Exception as e:                                  # noqa: BLE001
+            # Preview sem o bloco vale mais que preview nenhum — mas a falha TEM
+            # que aparecer, senão o silêncio some junto com o medidor dele.
+            logger.warning("build_jabo_preview: reportes pendentes falharam: %s", e)
+            ctx = {"desde": None, "dias": None, "reportes": []}
 
     message = format_raci_whatsapp(report, interactive=False)
+    disparo = f"{_intel_base_url()}/projetos/{JABO_PROJECT_ID}/raci"
     return (
         f"📝 *PREVIEW RACI — Governança Jabô*\n"
-        f"_Destino: {destino}_\n"
-        f"_Revise, edite se quiser, e cole no grupo._\n"
+        f"_Destino: {destino}_\n\n"
+        f"{_bloco_reportes(ctx)}"
+        f"👉 Enviar com 1 clique: {disparo}\n"
+        f"_(ou copie o texto abaixo e cole no grupo)_\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{message}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
