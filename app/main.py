@@ -10901,6 +10901,47 @@ async def cron_jabo_pipeline_sheet(request: Request):
                 "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/cron/jabo-group-raci")
+@track_cron_run
+async def cron_jabo_group_raci(request: Request, dry_run: bool = False):
+    """Cron diário: o grupo Governança Jabô atualiza as tasks do #28 sozinho.
+
+    Decisão do Renato em 16/08/26 — o RACI do Jabô não passa mais pelo clique
+    dele. O que sustenta abrir mão do gate: das 91 propostas de RACI já geradas a
+    partir de grupos, os descartes de alta confiança dizem "evidência stale" ou
+    "capturada na ponte manual", não "errada". O gate filtrava timing, e o preço
+    foi o RACI parado de 03/08 a 16/08 com a Andressa reportando 6× sem retorno.
+
+    Vale SÓ para o Jabô (governança familiar, executora é a contraparte).
+    Vallen/Alba/Despertar continuam shadow-first — ver services/raci_group_shadow.py.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.jabo_group_raci import sincronizar
+
+    try:
+        r = await sincronizar(dry_run=dry_run)
+        return {"status": "ok", "job": "jabo-group-raci", **r}
+    except Exception as e:
+        logger.exception("cron_jabo_group_raci: exception fatal")
+        return {"status": "error", "job": "jabo-group-raci",
+                "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/jabo/raci-placar")
+async def api_jabo_raci_placar(dias: int = 30):
+    """Quantas vezes a executora precisou consertar a máquina.
+
+    É a medição que decide se o auto-apply se estende a clientes. Fica em
+    endpoint próprio porque número que só existe em log não é medição — e com 1
+    proposta aplicada em 91 no caminho antigo, a precisão real nunca chegou a ser
+    observada.
+    """
+    from services.jabo_group_raci import placar_correcoes
+    return placar_correcoes(dias=dias)
+
+
 @app.get("/api/cos/check-g-ledger")
 async def api_check_g_ledger(request: Request, dias: int = 14):
     """Leitura do ledger: falso negativo por gate, com o não-medido à vista.

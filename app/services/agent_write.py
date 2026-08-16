@@ -115,6 +115,26 @@ OPERACOES = {
                 "data_vencimento", "prioridade", "status", "origem"),
         descricao="Compromisso explícito no fio ('Qua 12/08?') vira tarefa com dono e data.",
     ),
+    "atualizar_status_raci": Operacao(
+        nome="atualizar_status_raci",
+        # `public.` explícito: as views `copilot.*` traduzem nomes de coluna e
+        # sem o schema a errada parece existir ([[feedback_copilot_view_verify_consumer]]).
+        tabela="public.raci_itens",
+        tipo="update",
+        # POR QUE `raci_itens` E NÃO `tasks`. Medido em 16/08: a peça que vai ao
+        # grupo é montada por `raci_matrix` a partir dos 10 itens curados de
+        # `raci_itens` — e os 10 têm `task_id = NULL`. Atualizar `tasks` mexeria
+        # no backlog do Renato sem mudar UMA linha do que a executora lê. É a
+        # armadilha de escrever no consumidor errado
+        # ([[feedback_medir_o_consumidor_certo]]): a escrita teria sucesso, o
+        # livro-razão registraria, e o efeito pretendido não existiria.
+        #
+        # `notas` fica de fora: é texto curado à mão e seria sobrescrito inteiro
+        # — o dano da cascata de 14/08. `concluido_em_fonte` é a PROCEDÊNCIA, e
+        # existe desde a 073; é ela que deixa o auto-update visível a quem lê.
+        campos=("status", "concluido_em", "concluido_em_fonte"),
+        descricao="Quem executa reporta no grupo que fez, e o RACI ainda diz pendente.",
+    ),
     "registrar_nota_projeto": Operacao(
         nome="registrar_nota_projeto",
         tabela="project_notes",

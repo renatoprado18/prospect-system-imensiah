@@ -243,6 +243,20 @@ _SCHEDULER_JOBS = [
     # livre: 12 grafias em 49 linhas).
     ("jabo-pipeline-sheet", "/api/cron/jabo-pipeline-sheet",
      CronTrigger(day_of_week="mon", hour=11, minute=0)),
+    # 16/08/26 — O GRUPO DA GOVERNANCA JABO ATUALIZA O RACI SOZINHO. Decisao do
+    # Renato: o RACI do Jabo nao passa mais pelo clique dele. O que sustenta
+    # abrir mao do gate: dos 71 descartes do shadow do ConselhoOS, os de alta
+    # confianca dizem "evidencia stale" ou "capturada na ponte manual", nao
+    # "errada" — o gate filtrava TIMING. E o preco foi o RACI parado de 03/08 a
+    # 16/08 com a Andressa reportando 6x sem retorno.
+    # DIARIO as 10h UTC (7h BRT), antes do preview de segunda (11h UTC): assim a
+    # peca que o Renato revisa ja sai com o que o grupo trouxe. Diario e nao
+    # horario porque quem reporta escreve uma ou duas vezes por dia, e cada
+    # rodada custa uma chamada de LLM sobre a janela inteira.
+    # Vale SO pro Jabo (governanca familiar). Vallen/Alba/Despertar continuam
+    # shadow-first — ver services/raci_group_shadow.py.
+    ("jabo-group-raci", "/api/cron/jabo-group-raci",
+     CronTrigger(hour=10, minute=0)),
     # 28/06/26 — F3.1 WA Triage sweep. Janela 4h batched Sonnet classifica
     # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
     # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
