@@ -704,7 +704,14 @@ def jabo_reportes_pendentes(cursor, group_jid: Optional[str] = None) -> Dict:
     """, (group_jid, desde, desde))
     reportes = [dict(x) for x in cursor.fetchall()]
 
-    dias = (datetime.now() - desde).days if desde else None
+    # Idade calculada no banco: `group_messages.timestamp` é UTC e o processo
+    # roda em BRT — subtrair um do outro erra em 3h e pode virar um dia inteiro
+    # na fronteira ([[feedback_hora_do_banco_e_utc]]).
+    dias = None
+    if desde:
+        cursor.execute(
+            "SELECT EXTRACT(DAY FROM (now() AT TIME ZONE 'UTC') - %s)::int AS d", (desde,))
+        dias = max(0, (cursor.fetchone() or {}).get("d") or 0)
     return {"desde": desde, "dias": dias, "reportes": reportes}
 
 
@@ -776,11 +783,23 @@ def build_jabo_preview() -> Optional[str]:
             logger.warning("build_jabo_preview: reportes pendentes falharam: %s", e)
             ctx = {"desde": None, "dias": None, "reportes": []}
 
+    # O follow-up da medição do auto-update viaja aqui, na superfície que ele já
+    # lê toda segunda — e só quando a decisão passa a ser possível. Prometer
+    # "olhe o placar em 30 dias" seria passar trabalho a ele, que é justamente o
+    # que a ferramenta existe para não fazer.
+    try:
+        from services.jabo_group_raci import bloco_veredito_para_preview
+        veredito = bloco_veredito_para_preview()
+    except Exception as e:                                      # noqa: BLE001
+        logger.warning("build_jabo_preview: veredito indisponível: %s", e)
+        veredito = ""
+
     message = format_raci_whatsapp(report, interactive=False)
     disparo = f"{_intel_base_url()}/projetos/{JABO_PROJECT_ID}/raci"
     return (
         f"📝 *PREVIEW RACI — Governança Jabô*\n"
         f"_Destino: {destino}_\n\n"
+        f"{veredito}"
         f"{_bloco_reportes(ctx)}"
         f"👉 Enviar com 1 clique: {disparo}\n"
         f"_(ou copie o texto abaixo e cole no grupo)_\n"

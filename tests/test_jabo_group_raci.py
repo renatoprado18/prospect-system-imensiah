@@ -143,3 +143,46 @@ class TestContratoDaOperacao:
     def test_procedencia_faz_parte_da_operacao(self):
         from services import agent_write
         assert "concluido_em_fonte" in agent_write.OPERACOES["atualizar_status_raci"].campos
+
+
+class TestVereditoSeCobraSozinho:
+    """O follow-up não pode depender de alguém lembrar de abrir um endpoint.
+
+    Ao entregar o auto-apply a proposta foi "deixe rodar 30 dias e olhe o
+    placar" — e o Renato respondeu que isso é passar trabalho a ele. O veredito
+    passou a viajar no preview semanal, que ele já lê, e só aparece quando a
+    decisão é possível.
+    """
+
+    def test_fica_calado_antes_dos_30_dias(self, monkeypatch):
+        monkeypatch.setattr(J, "veredito_medicao",
+                            lambda: {"status": "cedo", "dias": 3, "faltam": 27})
+        assert J.bloco_veredito_para_preview() == ""
+
+    def test_amostra_curta_e_informacao_nao_silencio(self, monkeypatch):
+        """Poucas escritas em 30 dias significa que o caminho quase não agiu —
+        e isso também é resposta, não motivo para não dizer nada."""
+        monkeypatch.setattr(J, "veredito_medicao", lambda: {
+            "status": "amostra_curta", "dias": 31, "aplicadas": 2,
+            "correcoes": 0, "minimo": 8})
+        b = J.bloco_veredito_para_preview()
+        assert "amostra curta" in b and "2 escritas" in b and "mínimo 8" in b
+
+    def test_veredito_pronto_traz_taxa_e_recomendacao(self, monkeypatch):
+        monkeypatch.setattr(J, "veredito_medicao", lambda: {
+            "status": "pronto", "dias": 31, "aplicadas": 20, "correcoes": 1,
+            "taxa_correcao": 0.05, "desfeitas": 0,
+            "recomendacao": "estender", "corte": 0.15})
+        b = J.bloco_veredito_para_preview()
+        assert "20 escritas" in b and "1 correções" in b and "estender" in b
+
+    def test_corte_declarado_antes_do_resultado(self, monkeypatch):
+        """A régua não pode mudar conforme o número — isso é racionalização."""
+        assert J.AMOSTRA_MINIMA == 8 and J.JANELA_VEREDITO_DIAS == 30
+
+    def test_taxa_alta_recomenda_nao_estender(self, monkeypatch):
+        monkeypatch.setattr(J, "veredito_medicao", lambda: {
+            "status": "pronto", "dias": 31, "aplicadas": 10, "correcoes": 4,
+            "taxa_correcao": 0.4, "desfeitas": 1,
+            "recomendacao": "manter só no Jabô", "corte": 0.15})
+        assert "manter só no Jabô" in J.bloco_veredito_para_preview()

@@ -420,6 +420,83 @@ async def sincronizar(dry_run: bool = False, backfill: bool = False) -> Dict:
     return placar
 
 
+# Amostra mínima para o veredito valer. O sistema já tem o precedente: em 14/08
+# a decisão de subir o TETO_DIARIO da camada foi barrada porque havia 1 portão
+# medido contra os ≥15 que a regra exige. Declarar o mínimo ANTES de olhar o
+# resultado é o que impede de ler sorte como precisão.
+AMOSTRA_MINIMA = 8
+JANELA_VEREDITO_DIAS = 30
+
+
+def veredito_medicao() -> Dict:
+    """O follow-up que se cobra sozinho.
+
+    POR QUE ISTO EXISTE. Ao entregar o auto-apply eu disse ao Renato "deixe rodar
+    30 dias e olhe o placar" — e ele respondeu que isso é passar trabalho a ele.
+    Está certo, e é a regra dele: [[feedback_ferramenta_nao_vira_tarefa_do_renato]].
+    Um número que só existe se alguém lembrar de abrir um endpoint é consumidor
+    morto com outro nome. Então o veredito viaja no preview semanal do RACI, que
+    ele JÁ lê, e só aparece quando a decisão passa a ser possível — nem antes
+    (seria ruído semanal), nem por superfície nova
+    ([[feedback_superficie_nova_mata_o_aviso]]).
+
+    Devolve `status`:
+      cedo          — menos de 30 dias de dados: fica calado
+      amostra_curta — 30 dias, mas poucas escritas. É informação, não fracasso:
+                      significa que o caminho quase não age, e isso também é
+                      resposta ([[feedback_regua_cobertura_parcial]])
+      pronto        — dá para decidir, com o número na mão
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        # A idade se calcula NO BANCO. `examinada_em` grava UTC (default da
+        # coluna) e `datetime.now()` do processo é BRT: subtrair um do outro
+        # devolveu `dias = -1` na primeira execução — o medidor nasceria com o
+        # relógio errado, e um veredito que dispara 1 dia cedo ou tarde é
+        # exatamente o tipo de erro que ninguém confere depois.
+        cur.execute("""
+            SELECT MIN(examinada_em) AS ini,
+                   EXTRACT(DAY FROM (now() AT TIME ZONE 'UTC') - MIN(examinada_em))::int AS dias
+              FROM jabo_group_reads
+        """)
+        row = cur.fetchone() or {}
+        inicio, dias = row.get("ini"), row.get("dias")
+    if not inicio:
+        return {"status": "cedo", "dias": 0}
+    dias = max(0, dias or 0)
+    if dias < JANELA_VEREDITO_DIAS:
+        return {"status": "cedo", "dias": dias, "faltam": JANELA_VEREDITO_DIAS - dias}
+
+    p = placar_correcoes(dias=dias)
+    aplicadas, correcoes = p["aplicadas"], p["correcoes"]
+    if aplicadas < AMOSTRA_MINIMA:
+        return {"status": "amostra_curta", "dias": dias, **p,
+                "minimo": AMOSTRA_MINIMA}
+    taxa = p["taxa_correcao"] or 0
+    return {"status": "pronto", "dias": dias, **p,
+            # O corte é declarado aqui e não no texto: recomendação que muda de
+            # régua conforme o resultado não é recomendação, é racionalização.
+            "recomendacao": "estender" if taxa <= 0.15 else "manter só no Jabô",
+            "corte": 0.15}
+
+
+def bloco_veredito_para_preview() -> str:
+    """Uma linha no preview semanal quando — e só quando — dá para decidir."""
+    v = veredito_medicao()
+    if v["status"] == "cedo":
+        return ""
+    if v["status"] == "amostra_curta":
+        return (f"📐 *Auto-update do RACI — {v['dias']} dias, amostra curta:* "
+                f"{v['aplicadas']} escritas (mínimo {v['minimo']} pra concluir algo), "
+                f"{v['correcoes']} correções. O caminho quase não agiu — isso também "
+                f"é resposta.\n\n")
+    return (f"📐 *Auto-update do RACI — {v['dias']} dias, dá pra decidir:* "
+            f"{v['aplicadas']} escritas · *{v['correcoes']} correções* "
+            f"(taxa {v['taxa_correcao']:.0%}, corte {v['corte']:.0%}) · "
+            f"{v['desfeitas']} desfeitas. → **{v['recomendacao']}** "
+            f"(estender = clientes; hoje só o Jabô).\n\n")
+
+
 def placar_correcoes(dias: int = 30) -> Dict:
     """A medição que decide se isto se estende a clientes.
 
