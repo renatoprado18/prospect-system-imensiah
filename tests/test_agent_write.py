@@ -180,6 +180,7 @@ def test_desfazer_update_restaura(monkeypatch):
     from services import agent_write
     cur = _Cur(linha_existente={
         "id": 10, "tabela": "board_hunt_frentes", "registro_id": 7,
+        "operacao": "atualizar_fase_frente",
         "valor_anterior": json.dumps({"fase": 2, "status": "ativo"}),
         "desfeito_em": None,
     })
@@ -188,6 +189,9 @@ def test_desfazer_update_restaura(monkeypatch):
     r = agent_write.desfazer(10)
     assert r["status"] == "revertido"
     assert any("UPDATE board_hunt_frentes SET" in s for s in cur.sqls)
+    # Reverter também é mexer na linha: o frescor tem que apontar pra agora, não
+    # voltar pro timestamp que a escrita desfeita substituiu.
+    assert any("atualizado_em = now()" in s for s in cur.sqls)
 
 
 def test_desfazer_duas_vezes_e_inocuo(monkeypatch):
@@ -256,3 +260,68 @@ def test_nenhuma_operacao_de_delete():
     from services import agent_write
     tipos = {op.tipo for op in agent_write.OPERACOES.values()}
     assert tipos <= {"insert", "update"}, f"tipo destrutivo na lista: {tipos}"
+
+
+# ───────────────────── frescor: o UPDATE carimba `atualizado_em` ─────────────────────
+#
+# Medido em 17/08/2026: o item 10 do RACI do Jabô foi para `em_andamento` pela
+# camada em 16/08 12:45 e seguia com `atualizado_em = 2026-07-29 19:20`. O default
+# `CURRENT_TIMESTAMP` da coluna só vale no INSERT — num UPDATE ninguém o reavalia.
+# Quem paga é quem lê o frescor: `generate_raci_report` separa "ninguém arregaçou"
+# de "tem movimento mas falta entregar" por um cooldown de 72h sobre esse campo, e
+# apresentava como abandonada uma linha que a camada tinha acabado de mexer.
+
+def test_update_carimba_atualizado_em(monkeypatch):
+    from services import agent_write as mod
+    cur = _Cur(linha_existente={"status": "pendente", "concluido_em": None,
+                                "concluido_em_fonte": None})
+    monkeypatch.setattr(mod, "get_db", lambda: _Conn(cur))
+    mod.escrever(
+        "atualizar_status_raci", {"status": "em_andamento"},
+        motivo="a Andressa reportou no grupo que as amostras foram enviadas",
+        confianca=0.9, registro_id=10,
+    )
+    update = next(s for s in cur.sqls if s.startswith("UPDATE public.raci_itens"))
+    assert "atualizado_em = now()" in update, (
+        "linha mudou de estado e o frescor ficou no valor antigo")
+
+
+def test_carimbo_vai_no_mesmo_update(monkeypatch):
+    """Uma segunda query deixaria uma janela em que a linha já mudou de status e
+    ainda jura não ter sido tocada — curta, mas lida por quem passar no meio."""
+    from services import agent_write as mod
+    cur = _Cur(linha_existente={"fase": 2, "status": "ativo", "nota": None,
+                                "piso_alvo": None})
+    monkeypatch.setattr(mod, "get_db", lambda: _Conn(cur))
+    mod.escrever(
+        "atualizar_fase_frente", {"fase": 3},
+        motivo="o contato aceitou conversar e a frente saiu de prospecção",
+        confianca=0.9, registro_id=7,
+    )
+    updates = [s for s in cur.sqls if s.startswith("UPDATE board_hunt_frentes")]
+    assert len(updates) == 1, f"carimbo saiu em query separada: {updates}"
+    assert "fase = %s" in updates[0] and "atualizado_em = now()" in updates[0]
+
+
+def test_insert_nao_carimba(aw):
+    """No INSERT o default da coluna resolve. Carimbar aqui seria escrever uma
+    coluna que a operação não declara — o que este módulo existe pra impedir."""
+    mod, cur = aw
+    mod.escrever(
+        "criar_task_followup", {"titulo": "ligar pro Pretola", "project_id": 28},
+        motivo="compromisso explícito no fio ('qua 12/08?')", confianca=0.9,
+    )
+    insert = next(s for s in cur.sqls if s.startswith("INSERT INTO tasks"))
+    assert "atualizado_em" not in insert
+
+
+def test_todo_update_tem_carimbo_declarado():
+    """Controle sobre a LISTA, não sobre uma operação: operação de update nova
+    entra sem carimbo e o defeito volta calado no alvo novo — foi assim que ele
+    passou por `atualizar_fase_frente` e `atualizar_status_raci` ao mesmo tempo."""
+    from services import agent_write
+    sem_carimbo = [op.nome for op in agent_write.OPERACOES.values()
+                   if op.tipo == "update" and not op.carimbo_atualizacao]
+    assert not sem_carimbo, (
+        f"update sem coluna de frescor declarada: {sem_carimbo} — se a tabela "
+        f"realmente não tem a coluna, diga isso num comentário na operação")

@@ -68,6 +68,23 @@ class Operacao:
     tipo: str            # 'insert' | 'update'
     campos: tuple        # colunas que a operação pode tocar — nada além disto
     descricao: str
+    # Coluna de "quando esta linha mudou pela última vez", carimbada com `now()`
+    # em todo UPDATE desta operação. DECLARADA, não descoberta em runtime: o
+    # módulo inteiro se apoia em "o que não está na lista não acontece", e
+    # introspecção de schema faria o comportamento variar com o banco.
+    #
+    # POR QUE ISSO PRECISOU DE UM CAMPO. O default `CURRENT_TIMESTAMP` só vale
+    # no INSERT; num UPDATE ele não é reavaliado. Medido em 17/08: o item 10 do
+    # RACI do Jabô foi para `em_andamento` pela camada em 16/08 12:45 e seguia
+    # com `atualizado_em = 2026-07-29 19:20`. As duas tabelas de update da lista
+    # (`raci_itens` e `board_hunt_frentes`) têm a coluna e nenhuma era
+    # carimbada, então o defeito nunca foi só do RACI.
+    #
+    # O dano é de quem lê o frescor: `generate_raci_report` decide entre "ninguém
+    # arregaçou" e "tem movimento mas falta entregar" por um cooldown de 72h
+    # sobre esse timestamp. Sem carimbo, uma linha que a camada acabou de mexer
+    # é apresentada como abandonada — e ninguém confere um timestamp.
+    carimbo_atualizacao: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +115,7 @@ OPERACOES = {
         # Só JULGAMENTO. Dias/temperatura/bola/próximo passo derivam a cada
         # rodada; gravá-los refaz o defeito que a página já perdeu uma vez.
         campos=("fase", "status", "nota", "piso_alvo"),
+        carimbo_atualizacao="atualizado_em",
         descricao="O fato move a frente de fase (contato aceitou conversar, reunião marcada).",
     ),
     "ligar_contato_a_projeto": Operacao(
@@ -133,6 +151,7 @@ OPERACOES = {
         # — o dano da cascata de 14/08. `concluido_em_fonte` é a PROCEDÊNCIA, e
         # existe desde a 073; é ela que deixa o auto-update visível a quem lê.
         campos=("status", "concluido_em", "concluido_em_fonte"),
+        carimbo_atualizacao="atualizado_em",
         descricao="Quem executa reporta no grupo que fez, e o RACI ainda diz pendente.",
     ),
     "registrar_nota_projeto": Operacao(
@@ -192,6 +211,11 @@ def escrever(
     `motivo` é obrigatório e vai para a auditoria em português: o livro-razão
     tem que ser julgável por um humano sem ler código.
 
+    Num UPDATE, a coluna `carimbo_atualizacao` da operação (quando declarada) vai
+    para `now()` junto. Ela NÃO entra no livro-razão de propósito: seu valor é
+    sempre o instante da escrita, que `agent_writes.criado_em` já guarda —
+    registrar o mesmo fato duas vezes só dá ao leitor duas coisas para conferir.
+
     `conn` existe para o runner do agente local (`scripts/cos_agent/run.py`),
     que roda fora do app e tem a própria conexão via COS_RW_URL. A alternativa
     seria ele reimplementar a lista fechada — que é exatamente o defeito que
@@ -240,6 +264,11 @@ def escrever(
             valor_anterior = {k: _serializa(row[k]) for k in op.campos}
 
             sets = ", ".join(f"{k} = %s" for k in dados)
+            # O carimbo vai no MESMO UPDATE, não numa segunda query: uma linha
+            # que muda de estado e mantém o timestamp velho por meio instante já
+            # é lida por quem passar no meio.
+            if op.carimbo_atualizacao:
+                sets += f", {op.carimbo_atualizacao} = now()"
             cur.execute(
                 f"UPDATE {op.tabela} SET {sets} WHERE id = %s RETURNING id",
                 (*(_para_o_banco(v) for v in dados.values()), registro_id),
@@ -296,6 +325,14 @@ def desfazer(write_id: int, por: str = "renato") -> Dict[str, Any]:
             if isinstance(anterior, str):
                 anterior = json.loads(anterior)
             sets = ", ".join(f"{k} = %s" for k in anterior)
+            # Desfazer também é uma mudança, e o carimbo vai para AGORA — não
+            # volta ao que era. Restaurar o timestamp antigo faria a linha jurar
+            # que ninguém a tocou desde julho, quando na verdade ela foi escrita
+            # e revertida hoje; o rastro do que aconteceu é o livro-razão, e o
+            # `atualizado_em` responde outra pergunta ("está fresco?").
+            op_desfeita = OPERACOES.get(w["operacao"])
+            if op_desfeita and op_desfeita.carimbo_atualizacao:
+                sets += f", {op_desfeita.carimbo_atualizacao} = now()"
             cur.execute(
                 f"UPDATE {w['tabela']} SET {sets} WHERE id = %s",
                 (*(_para_o_banco(v) for v in anterior.values()), w["registro_id"]),
