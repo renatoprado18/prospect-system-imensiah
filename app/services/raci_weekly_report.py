@@ -334,10 +334,16 @@ async def send_raci_to_groups() -> Dict:
     """Preview semanal do RACI. Hoje sobra só a Governança Jabô.
 
     Os conselhos (ConselhoOS) saíram em 29/07 — ver `_preview_conselhos_enabled`.
-    O **Jabô continua** porque não tem substituto: o RACI dele são as *tasks* do
-    projeto #28, e a página `/projetos/28/raci` lê `raci_itens` (INTEL +
-    ConselhoOS), onde ele tem **zero** linhas. Desligar os dois deixaria a
-    governança da fazenda sem superfície nenhuma.
+    O **Jabô continua** porque é a superfície que avisa quando o RACI travou (foi
+    ela que expôs o silêncio de 03 a 16/08).
+
+    ⚠️ ESTE DOCSTRING DIZIA, ATÉ 17/08, que "o RACI do Jabô são as tasks do #28 e
+    a página `/projetos/28/raci` tem zero linhas em `raci_itens`". Era verdade em
+    29/07 e envelheceu calado: hoje o #28 tem **10 itens curados** em
+    `raci_itens`, são eles que a página mostra, é deles que sai o texto enviado ao
+    grupo (conferido nos RACIs de 29/07 e 03/08, ambos no formato do
+    `raci_matrix`), e é neles que o auto-update escreve. A afirmação velha é o que
+    manteve o preview lendo `tasks` por três semanas — ver `build_jabo_preview`.
 
     Mantem o nome da funcao pra nao quebrar callers (cron_raci_weekly_report).
     """
@@ -434,9 +440,9 @@ async def send_raci_to_groups() -> Dict:
                 results["errors"] += 1
 
     # --- Governança Jabô (nativo INTEL, fora do ConselhoOS) ---
-    # A governanca da fazenda nao e empresa do ConselhoOS; o RACI de facto sao
-    # as tasks do projeto #28. Gera o mesmo preview a partir delas. build_jabo_
-    # preview abre a propria conexao (fora do with acima).
+    # A governanca da fazenda nao e empresa do ConselhoOS: o RACI dela sao os 10
+    # itens de `raci_itens` do #28, e o preview sai da MESMA funcao que o botao de
+    # envio usa. build_jabo_preview abre a propria conexao (fora do with acima).
     try:
         jabo_preview = build_jabo_preview()
         if jabo_preview:
@@ -548,12 +554,16 @@ def _strip_task_prefix(titulo: str) -> str:
 
 
 def generate_jabo_report(cursor) -> Optional[Dict]:
-    """RACI semanal da Governança Jabô a partir das tasks do projeto #28 (INTEL).
+    """As tasks do projeto #28 (INTEL) nos buckets do RACI.
 
-    A governanca da fazenda NAO vive no ConselhoOS — as tasks do #28 sao o
-    "RACI" de facto (mantidas no fluxo normal do Renato/CoS). Espelha os buckets
-    de generate_raci_report (urgente / atrasada-com-movimento / no-prazo /
-    concluida) usando os campos de task. Statuses INTEL:
+    ⚠️ NÃO É A PEÇA QUE VAI AO GRUPO, e chamar isto de "o RACI do Jabô" foi o
+    erro que `build_jabo_preview` conserta em 17/08: o RACI que a Andressa recebe
+    sai de `raci_itens` via `raci_matrix`. Estas tasks são o backlog do Renato no
+    projeto — trabalho real, mas outro conjunto (em 17/08, zero itens em comum
+    com os 10 do RACI). Serve ao `_bloco_backlog_tasks`, como contexto.
+
+    Espelha os buckets de generate_raci_report (urgente / atrasada-com-movimento
+    / no-prazo / concluida) usando os campos de task. Statuses INTEL:
     pending/completed/cancelled/on_hold (nao ha 'em_andamento'). on_hold e
     cancelled ficam de fora (fora do radar). Responsavel inferido do titulo.
     Retorna o mesmo shape de dict que format_raci_whatsapp consome.
@@ -754,19 +764,82 @@ def _bloco_reportes(ctx: Dict) -> str:
     return "\n".join(linhas)
 
 
+def _bloco_backlog_tasks(report: Optional[Dict]) -> str:
+    """As tasks do #28 que pedem ação — rotuladas como o que NÃO vai ao grupo.
+
+    Até 17/08 estas tasks ERAM o corpo do preview, e é por isso que o bloco
+    existe em vez de a fonte simplesmente ser trocada: elas são trabalho real do
+    Renato no Jabô (14 linhas hoje), e tirá-las sem substituto removeria de um
+    preview semanal informação que ele vinha recebendo — o tipo de "conserto"
+    que a pessoa descobre pela ausência.
+
+    Só o acionável entra (vencidas + com movimento recente), e contado, não
+    listado inteiro: o preview já carrega veredito, silêncio acumulado e a peça
+    do grupo. Repetir 14 linhas de backlog aqui competiria com o que ele precisa
+    decidir em trinta segundos.
+    """
+    if not report:
+        return ""
+    urgentes = report.get('urgentes') or []
+    atrasadas = report.get('atrasadas_mov') or []
+    if not (urgentes or atrasadas):
+        return ""
+
+    linhas = [f"📌 *Seu backlog do #28 — {len(urgentes) + len(atrasadas)} em atraso* "
+              f"_(não vai ao grupo)_"]
+    for e in (urgentes + atrasadas)[:3]:
+        linhas.append(f"• {_clip(e['acao'], 70)} — *{e['responsavel']}* ({e['prazo']})")
+    resto = len(urgentes) + len(atrasadas) - 3
+    if resto > 0:
+        linhas.append(f"_+{resto} em {_intel_base_url()}/projetos/{JABO_PROJECT_ID}_")
+    linhas.append("")
+    return "\n".join(linhas)
+
+
 def build_jabo_preview() -> Optional[str]:
     """Monta o preview do RACI Jabô pronto pro Renato revisar e postar no grupo.
 
-    Espelha o wrapper de preview do send_raci_to_groups (ConselhoOS), mas a
-    fonte e o INTEL (tasks #28) e nao ha loop de resposta (interactive=False).
+    ⚠️ O TEXTO PRONTO PRA COPIAR VEM DA MESMA FONTE QUE O BOTÃO ENVIA, e essa é
+    a razão de ser desta função hoje. Até 17/08 ele vinha de `generate_jabo_report`
+    (as *tasks* do #28) enquanto o "Enviar com 1 clique" — a página
+    `/projetos/28/raci` — monta o texto com `raci_matrix.get_matrix`, sobre os 10
+    itens curados de `raci_itens`. Medido naquele dia: **os dois conjuntos não
+    tinham UM item em comum** (14 tasks operacionais × 10 frentes de exportação).
+    O Renato revisava um texto e disparava outro, e o gate humano validava uma
+    peça que nunca chegava a ninguém.
+
+    Isso vinha piorando por desenho: o auto-update do grupo (`jabo_group_raci`,
+    no ar desde 16/08) escreve em `raci_itens` — quanto melhor ele funcionasse,
+    mais o que a Andressa recebia se afastava do que ele tinha aprovado. O
+    primeiro caso já está no banco: o item "Envio de amostras" saiu de `pendente`
+    (RACI de 03/08) para `em_andamento`, e nenhum preview mostrou isso.
+
+    É a mesma correção do merge de contato em 16/08 (`5b2a7c7`): quem prepara e
+    quem executa passam pela MESMA função, senão a divergência é questão de
+    tempo. As tasks continuam no preview, no `_bloco_backlog_tasks` e nomeadas
+    como o que não vai ao grupo.
+
     Abre a propria conexao — chamado DEPOIS do bloco with do ConselhoOS.
     """
     from database import get_db
+    from services.raci_matrix import format_for_whatsapp, get_matrix
+
+    # A peça que vai ao grupo. `get_matrix` abre a própria conexão e ainda une o
+    # ConselhoOS na leitura — é exatamente o que a página faz.
+    matrix = get_matrix(JABO_PROJECT_ID)
+    if matrix.get("error"):
+        logger.warning("build_jabo_preview: matriz do #%s indisponível: %s",
+                       JABO_PROJECT_ID, matrix["error"])
+        return None
+    message = format_for_whatsapp(matrix)
+    if not (matrix.get("itens") or []):
+        return None
+
     with get_db() as conn:
         cursor = conn.cursor()
+        # As tasks agora são CONTEXTO, não a peça — e o preview não morre se elas
+        # sumirem: quem manda em existir preview é o RACI, acima.
         report = generate_jabo_report(cursor)
-        if not report:
-            return None
         cursor.execute("""
             SELECT group_name FROM project_whatsapp_groups
             WHERE project_id = %s AND ativo = TRUE
@@ -794,15 +867,15 @@ def build_jabo_preview() -> Optional[str]:
         logger.warning("build_jabo_preview: veredito indisponível: %s", e)
         veredito = ""
 
-    message = format_raci_whatsapp(report, interactive=False)
     disparo = f"{_intel_base_url()}/projetos/{JABO_PROJECT_ID}/raci"
     return (
         f"📝 *PREVIEW RACI — Governança Jabô*\n"
         f"_Destino: {destino}_\n\n"
         f"{veredito}"
         f"{_bloco_reportes(ctx)}"
+        f"{_bloco_backlog_tasks(report)}"
         f"👉 Enviar com 1 clique: {disparo}\n"
-        f"_(ou copie o texto abaixo e cole no grupo)_\n"
+        f"_(ou copie o texto abaixo e cole no grupo — é o mesmo texto)_\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{message}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
