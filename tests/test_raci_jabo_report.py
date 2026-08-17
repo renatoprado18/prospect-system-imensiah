@@ -302,8 +302,9 @@ class TestResponsavelPorVinculo:
 class _CursorPreview:
     """Cursor do wrapper: tasks, nome do grupo, e a âncora/reportes do grupo."""
 
-    def __init__(self, tasks, group_name="🌱 Governança Jabô"):
+    def __init__(self, tasks, group_name="🌱 Governança Jabô", reportes=()):
         self._tasks = tasks
+        self._reportes = list(reportes)
         self._fetchone = [
             {"group_name": group_name},          # destino
             {"group_jid": "jid@g.us"},           # jabo_reportes_pendentes: jid
@@ -318,11 +319,13 @@ class _CursorPreview:
         return self._fetchone.pop(0) if self._fetchone else None
 
     def fetchall(self):
-        # generate_jabo_report é o primeiro a chamar fetchall; reportes vêm vazios
+        # generate_jabo_report é o primeiro a chamar fetchall; os reportes vêm
+        # depois. Deixar reportes sempre vazios tornava o teste de espaçamento um
+        # falso positivo: sem bloco de reportes, nada tinha em que colar.
         if self._tasks is not None:
             t, self._tasks = self._tasks, None
             return t
-        return []
+        return self._reportes
 
 
 class _ConnPreview:
@@ -347,9 +350,9 @@ _MATRIZ_FAKE = {
 }
 
 
-def _preview_com(monkeypatch, tasks, matriz=_MATRIZ_FAKE):
+def _preview_com(monkeypatch, tasks, matriz=_MATRIZ_FAKE, reportes=()):
     from services import raci_matrix
-    cur = _CursorPreview(tasks)
+    cur = _CursorPreview(tasks, reportes=reportes)
     monkeypatch.setattr(m, "get_db", lambda: _ConnPreview(cur), raising=False)
     monkeypatch.setattr("database.get_db", lambda: _ConnPreview(cur), raising=False)
     monkeypatch.setattr(raci_matrix, "get_matrix", lambda pid, **k: matriz)
@@ -406,3 +409,28 @@ class TestPreviewUsaAFonteDoBotao:
 
     def test_matriz_com_erro_nao_manda_preview_meio_pronto(self, monkeypatch):
         assert _preview_com(monkeypatch, [], matriz={"error": "projeto não encontrado"}) is None
+
+
+class TestEspacamentoEntreBlocos:
+    """Os blocos são concatenados direto no wrapper. Um `join` que termina em UMA
+    quebra faz o bloco seguinte colar na última bullet do anterior — dois blocos
+    viram um parágrafo e a peça deixa de ser varrível de olho."""
+
+    _REPORTES = [_msg(17, "Andressa Santos",
+                      "Atualização: follow-up enviado para a Coffee Lab e para a Garagem do Café")]
+
+    def _p(self, monkeypatch):
+        return _preview_com(
+            monkeypatch,
+            [_task(1, "[Jabô/Andressa] TASK ATRASADA", "pending",
+                   date.today() - timedelta(days=5))],
+            reportes=self._REPORTES)
+
+    def test_reportes_e_backlog_nao_colam(self, monkeypatch):
+        p = self._p(monkeypatch)
+        assert "sem retorno" in p, "o fake não produziu bloco de reportes — teste vazio"
+        assert "\n\n📌" in p, "o bloco de backlog colou no de reportes"
+
+    def test_backlog_nao_cola_no_link_de_disparo(self, monkeypatch):
+        p = self._p(monkeypatch)
+        assert "\n\n👉" in p, "o link de disparo colou no bloco anterior"

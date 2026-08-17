@@ -760,8 +760,11 @@ def _bloco_reportes(ctx: Dict) -> str:
         nome = (r.get("sender_name") or "—").split()[0]
         txt = " ".join((r.get("content") or "").split())[:150]
         linhas.append(f"• _{quando}_ *{nome}*: {txt}")
-    linhas.append("")
-    return "\n".join(linhas)
+    # Duas quebras, não uma: os blocos do preview são concatenados direto, e com
+    # `join` sozinho o próximo cola na última bullet. Passou despercebido enquanto
+    # o vizinho era só o "👉 Enviar"; com um bloco de conteúdo embaixo, os dois
+    # viram um parágrafo só e a peça deixa de ser varrível de olho.
+    return "\n".join(linhas) + "\n\n"
 
 
 def _bloco_backlog_tasks(report: Optional[Dict]) -> str:
@@ -792,8 +795,7 @@ def _bloco_backlog_tasks(report: Optional[Dict]) -> str:
     resto = len(urgentes) + len(atrasadas) - 3
     if resto > 0:
         linhas.append(f"_+{resto} em {_intel_base_url()}/projetos/{JABO_PROJECT_ID}_")
-    linhas.append("")
-    return "\n".join(linhas)
+    return "\n".join(linhas) + "\n\n"
 
 
 def build_jabo_preview() -> Optional[str]:
