@@ -4,11 +4,17 @@
 PEDIDO (Renato, 07/08/2026): "cria uma tela para eu decidir qual. A ou B, eu
 clico, copio e colo."
 
-São 327 pessoas cadastradas dos dois lados com nomes diferentes, e não dá pra
-automatizar: às vezes o INTEL tem o nome melhor ("Wanelise B Carvalho" contra
-"Dra. Vanelise", grafado errado no Google), às vezes tem lixo
-("Wayner. Kummp@Estrela. Com. Br" contra "Estrela - Wayner"). É julgamento, não
-regra.
+Onde INTEL e Google discordam do nome não dá pra automatizar: às vezes o INTEL
+tem o nome melhor ("Wanelise B Carvalho" contra "Dra. Vanelise", grafado errado
+no Google), às vezes tem lixo ("Wayner. Kummp@Estrela. Com. Br" contra "Estrela
+- Wayner"). É julgamento, não regra.
+
+QUANTAS SÃO, A TELA É QUE DIZ — número não fica escrito aqui. A versão anterior
+deste docstring cravava "327 pessoas" e o board carregou "260 nomes divergentes"
+por semanas; quando a conta foi refeita (18/08/26) eram 45 decisões reais dentro
+de 460 casos casados, e as outras 415 nem eram decisão dele. Número de banco em
+comentário envelhece calado e vira diagnóstico errado — foi assim que o RACI do
+Jabô quebrou em 17/08.
 
 O DESENHO SEGUE O QUE JÁ FUNCIONA nas outras telas: escolha em localStorage,
 botão que copia tudo, e a sessão grava. Sem POST — a página roda em `file://` e
@@ -27,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from datetime import datetime
 
 sys.path.insert(0, "/Users/rap/prospect-system/app")
@@ -54,9 +61,42 @@ def chave(v):
     return d[-8:] if len(d) >= 8 else ""
 
 
+TITULOS = {"dr", "dra", "prof", "sr", "sra", "eng", "phd", "jr", "filho", "neto",
+           "de", "da", "do", "dos", "das", "e", "the", "of"}
+
+
+def norm(n):
+    return (n or "").strip().lower()
+
+
+def tokens(n):
+    s = unicodedata.normalize("NFKD", n or "").encode("ascii", "ignore").decode().lower()
+    return {t for t in re.split(r"[^a-z]+", s) if len(t) >= 3 and t not in TITULOS}
+
+
 async def coletar():
+    """Devolve (decidir, dupes, compartilhados) — três coisas diferentes.
+
+    RE-MEDIÇÃO DE 18/08/26. Esta função contava 460 "divergências" e chamava
+    todas de decisão do Renato. Só 45 eram. O erro era duplo:
+
+    1. `g.setdefault(telefone, ...)` guardava UMA entrada do Google por telefone.
+       Quando o Google tem duas fichas da mesma pessoa (o `712c9c9` mostrou que
+       toda tentativa de corrigir criava duplicata em vez de corrigir), o INTEL
+       era comparado contra a que a varredura viu primeiro — e "divergia" de uma
+       grafia que ele mesmo já tinha certa na outra ficha. São 181 casos, e em
+       180 deles o nome do INTEL já bate com uma das grafias: não há A ou B a
+       decidir, há lixo a limpar no Google.
+    2. Telefone compartilhado casa como se fosse a mesma pessoa. `Copersucar` no
+       INTEL e `Sidnei Rosa` no Google, mesmo número, é a empresa e quem atende
+       — não é nome errado. São 234, e 230 sem uma única mensagem trocada.
+
+    Uma tela que empilha 460 decisões quando 8 têm histórico não pede julgamento,
+    pede paciência — e é o Renato quem paga. Os três baldes saem separados: ele
+    decide o que é decisão, e os outros dois viram número no rodapé.
+    """
     import integrations.google_contacts as gc
-    g = {}
+    por_tel = {}
     for conta in ("renato@almeida-prado.com", "renato.almeida.prado@gmail.com"):
         t = await gc.get_valid_token(conta)
         if not t:
@@ -68,7 +108,7 @@ async def coletar():
             for pn in (p.get("phoneNumbers") or []):
                 k = chave(pn.get("value"))
                 if k:
-                    g.setdefault(k, (nome, rid))
+                    por_tel.setdefault(k, []).append((nome, rid, conta))
 
     conn = psycopg2.connect(env("DATABASE_URL"))
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -76,21 +116,43 @@ async def coletar():
                           (SELECT count(*) FROM messages m WHERE m.contact_id = c.id) AS msgs
                      FROM contacts c
                     WHERE c.telefones IS NOT NULL AND c.telefones::text <> '[]'""")
-    pares = []
+    decidir, dupes, compartilhados = [], [], []
     for f in cur.fetchall():
         tels = [t.get("number") for t in (f["telefones"] or []) if isinstance(t, dict)]
         ks = [chave(t) for t in tels if chave(t)]
-        achado = next((g[k] for k in ks if k in g), None)
-        if not achado:
+        entradas = next((por_tel[k] for k in ks if k in por_tel), None)
+        if not entradas:
             continue
-        nome_g, rid = achado
-        if (f["nome"] or "").strip().lower() == nome_g.strip().lower():
+
+        nomes = {norm(n) for n, _r, _c in entradas}
+        por_conta = {}
+        for n, _r, c in entradas:
+            por_conta.setdefault(c, set()).add(norm(n))
+        # duas grafias no MESMO Google = duplicata de lá. A mesma pessoa nas duas
+        # contas é normal e não conta.
+        colisao = next((v for v in por_conta.values() if len(v) > 1), None)
+
+        if norm(f["nome"]) in nomes and not colisao:
             continue
-        pares.append({"id": f["id"], "intel": f["nome"], "google": nome_g,
-                      "rid": rid, "msgs": f["msgs"], "empresa": f["empresa"],
-                      "tel": tels[0] if tels else ""})
-    pares.sort(key=lambda x: -x["msgs"])
-    return pares
+
+        base = {"id": f["id"], "intel": f["nome"], "msgs": f["msgs"],
+                "empresa": f["empresa"], "tel": tels[0] if tels else "",
+                "google_todos": sorted({n for n, _r, _c in entradas}),
+                "intel_bate": norm(f["nome"]) in nomes}
+
+        if colisao:
+            ts = [tokens(n) for n in colisao]
+            mesma_pessoa = any(ts[i] & ts[j]
+                               for i in range(len(ts)) for j in range(i + 1, len(ts)))
+            (dupes if mesma_pessoa else compartilhados).append(base)
+            continue
+
+        nome_g, rid, _c = entradas[0]
+        decidir.append({**base, "google": nome_g, "rid": rid})
+
+    for l in (decidir, dupes, compartilhados):
+        l.sort(key=lambda x: -x["msgs"])
+    return decidir, dupes, compartilhados
 
 
 CSS = """
@@ -170,7 +232,7 @@ pintar();
 """
 
 
-def render(pares):
+def render(pares, dupes=(), compartilhados=()):
     ago = datetime.now()
     linhas = []
     for p in pares:
@@ -195,6 +257,12 @@ por regra: às vezes o INTEL tem o nome melhor (<i>Wanelise B Carvalho</i> contr
 eu gravo dos dois lados.<br><b>Ordenadas por histórico:</b> as {com_hist} primeiras são de gente com
 quem você já trocou mensagem. Depois delas, é cadastro morto — pare quando quiser.</p>
 {''.join(linhas)}
+<p class="nota"><b>Tirei {len(dupes) + len(compartilhados)} da sua frente</b>, que a versão anterior
+desta tela contava como decisão sua: <b>{len(dupes)}</b> são a mesma pessoa cadastrada duas vezes no
+Google (em {sum(1 for d in dupes if d.get('intel_bate'))} delas o INTEL já está certo — é limpeza lá,
+não escolha aqui) e <b>{len(compartilhados)}</b> são telefone compartilhado, onde o INTEL guarda a
+empresa e o Google guarda quem atende (<i>Copersucar</i> × <i>Sidnei Rosa</i>);
+{sum(1 for c in compartilhados if c['msgs'] == 0)} delas sem uma única mensagem trocada.</p>
 <p class="nota">Gerado {ago:%d/%m/%Y %H:%M}. Nada é alterado por esta página: ela só registra a
 escolha pra você copiar.</p>
 <div class="barra">
@@ -249,9 +317,12 @@ def main():
         os.environ.setdefault(k, env(k))
     os.environ.setdefault("DB_TARGET", "prod")
     os.environ.setdefault("ALLOW_PROD_FROM_LOCAL", "1")
-    pares = asyncio.run(coletar())
-    open(SAIDA, "w").write(render(pares))
-    print(f"→ {SAIDA} ({len(pares)} pares)")
+    pares, dupes, compartilhados = asyncio.run(coletar())
+    open(SAIDA, "w").write(render(pares, dupes, compartilhados))
+    print(f"→ {SAIDA} ({len(pares)} decisões reais — "
+          f"{sum(1 for p in pares if p['msgs'] > 0)} com histórico)")
+    print(f"   fora da fila: {len(dupes)} duplicatas no Google · "
+          f"{len(compartilhados)} telefones compartilhados")
     subprocess.run(["open", SAIDA])
     return 0
 
