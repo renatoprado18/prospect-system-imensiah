@@ -4290,6 +4290,7 @@ def _load_railway_crons() -> List[Dict]:
         {"path": "/api/cron/proactive-check", "schedule": "*/30 * * * *", "source": "railway"},
         {"path": "/api/cron/run-whatsapp-sync", "schedule": "5 * * * *", "source": "railway"},
         {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
+        {"path": "/api/cron/run-group-messages", "schedule": "40 * * * *", "source": "railway"},
         {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
     ]
 
@@ -10495,9 +10496,14 @@ async def cron_daily_sync(request: Request):
     # (timeout 240s). findChats + enrichment de N grupos era >60s mesmo com
     # to_thread no save final.
 
-    async def step_group_messages():
-        from services.group_message_sync import sync_group_messages
-        return await sync_group_messages(limit_per_group=50)
+    # group_messages_sync migrado pra cron isolado /api/cron/run-group-messages
+    # (paginado por cursor, timeout 240s, de hora em hora).
+    # Why: 49 grupos = 49 chamadas HTTP sequenciais a Evolution, e desde o
+    # 2da93e3 (05/08) cada uma pagina ate alcancar o historico. Estourou os 90s
+    # a partir de 06/08 e pintou o daily-sync de `error` 13 dias seguidos sem
+    # perder UMA mensagem — o webhook grava em tempo real pelo mesmo criterio
+    # (sync_enabled=TRUE), e a janela das 5h UTC somou 10 msgs em 13 dias.
+    # O trabalho e real; so nao cabia nesta janela.
 
     async def step_auto_publish():
         # Hard timeout per-step pra evitar bloquear daily-sync inteiro.
@@ -10651,7 +10657,6 @@ async def cron_daily_sync(request: Request):
         run_step("campaigns", step_campaigns, timeout=90.0),
         run_step("avatar_fetch", step_avatars, timeout=60.0),
         run_step("group_docs", step_group_docs, timeout=90.0),
-        run_step("group_messages_sync", step_group_messages, timeout=90.0),
         run_step("linkedin_enrichment", step_linkedin_enrichment, timeout=120.0),
         run_step("auto_publish", step_auto_publish),  # ja tem wait_for interno 90s
         run_step("cron_cleanup_stuck", step_cron_cleanup_stuck, timeout=30.0),
@@ -11512,6 +11517,79 @@ async def cron_run_social_groups(request: Request):
         return {
             "status": "error",
             "job": "run-social-groups",
+            "error": f"{type(e).__name__}: {e}",
+            "offset_used": offset,
+        }
+
+
+@app.get("/api/cron/run-group-messages")
+@track_cron_run
+async def cron_run_group_messages(request: Request):
+    """
+    Cron paginado: pull das mensagens dos grupos com sync_enabled.
+
+    Schedule (worker Railway): `40 * * * *`, hora em hora. Timeout 240s.
+
+    POR QUE EXISTE (18/08/26). Era o step `group_messages_sync` dentro do
+    daily-sync, com timeout de 90s — e o `2da93e3` (05/08) fez o sync PAGINAR
+    ate alcancar o que ja tem, porque pedir 50 por dia perdia 63% do que existe.
+    O conserto estava certo e encareceu cada grupo; a janela de 90s ficou onde
+    estava. A partir de 06/08 o step estourou TODO DIA, e como `_detect_error`
+    pinta o job inteiro quando qualquer step falha (regra 6 do cron_telemetry),
+    o daily-sync saiu `error` 13 dias seguidos. Um conserto quebrou o alarme de
+    outro job, calado.
+
+    **Sem perder dado**: quem grava as ~200 msgs/dia e o webhook da Evolution,
+    em tempo real e pelo MESMO criterio (`sync_enabled=TRUE`); nos 13 dias de
+    timeout a janela das 5h UTC gravou 10 mensagens no total. O dano era o
+    alarme — job sempre-vermelho ensina a ignorar os outros 12 passos.
+
+    O pull continua valendo como REDE: o webhook perde o que chega com a
+    instancia fora do ar. Mas rede de seguranca nao precisa caber numa janela de
+    90s — paginado, cada rodada leva um pedaco e o cursor retoma. Mesmo desenho
+    de run-social-groups e run-whatsapp-sync, que sairam do daily-sync pelo
+    mesmo motivo.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.group_message_sync import sync_group_messages
+
+    BATCH = int(os.getenv("GROUP_MESSAGES_BATCH", "12"))
+    offset = _read_cron_cursor("group_messages")
+
+    try:
+        result = await _aio.wait_for(
+            sync_group_messages(limit_per_group=50, limit=BATCH, offset=offset),
+            timeout=240.0,
+        )
+        next_offset = int(result.get("next_offset", 0))
+        total = int(result.get("total_groups", 0))
+        _write_cron_cursor("group_messages", next_offset, total)
+        return {
+            "status": "ok",
+            "job": "run-group-messages",
+            "offset_used": offset,
+            "next_offset": next_offset,
+            "more_pages": result.get("more_pages", False),
+            "result": result,
+        }
+    except _aio.TimeoutError:
+        # Cursor NAO avanca no timeout: o pedaco que nao coube volta na proxima
+        # rodada. Avancar aqui puliria grupos calado.
+        logger.error(f"cron_run_group_messages: sync_group_messages > 240s (offset={offset})")
+        return {
+            "status": "error",
+            "job": "run-group-messages",
+            "error": "sync_group_messages timeout > 240s",
+            "offset_used": offset,
+        }
+    except Exception as e:
+        logger.exception("cron_run_group_messages: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-group-messages",
             "error": f"{type(e).__name__}: {e}",
             "offset_used": offset,
         }

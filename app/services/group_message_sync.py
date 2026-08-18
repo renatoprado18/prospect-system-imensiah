@@ -18,16 +18,44 @@ from services.tz import UTC
 logger = logging.getLogger(__name__)
 
 
-async def sync_group_messages(limit_per_group: int = 50) -> Dict:
+async def sync_group_messages(
+    limit_per_group: int = 50,
+    limit: int = None,
+    offset: int = 0,
+) -> Dict:
     """
     Sincroniza mensagens dos grupos marcados para sync.
-    Chamado pelo cron daily-sync.
+
+    Chamado pelo cron isolado /api/cron/run-group-messages (paginado) e pelo
+    group_digest (varredura completa, sem limit).
+
+    PAGINACAO (18/08/26): sao 49 grupos com sync_enabled, cada um uma chamada
+    HTTP sequencial a Evolution — a varredura completa passou de 90s em 06/08 e
+    o step dentro do daily-sync passou a estourar TODO DIA. Com `limit`/`offset`
+    o cron processa um pedaco por rodada e retoma pelo cursor, mesmo desenho de
+    run-social-groups e run-whatsapp-sync. Sem `limit`, varre tudo (default
+    preservado pros chamadores antigos).
     """
     from services.social_groups import get_sync_enabled_groups
 
-    groups = get_sync_enabled_groups()
-    if not groups:
-        return {"skipped": "no groups with sync enabled"}
+    all_groups = get_sync_enabled_groups()
+    if not all_groups:
+        return {"skipped": "no groups with sync enabled",
+                "total_groups": 0, "next_offset": 0, "more_pages": False}
+
+    total_groups = len(all_groups)
+    if limit:
+        # offset alem do fim = volta pro comeco (a fila e circular, nao acaba)
+        if offset >= total_groups:
+            offset = 0
+        groups = all_groups[offset:offset + limit]
+        next_offset = offset + len(groups)
+        more_pages = next_offset < total_groups
+        if not more_pages:
+            next_offset = 0
+    else:
+        groups = all_groups
+        next_offset, more_pages = 0, False
 
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
@@ -36,7 +64,11 @@ async def sync_group_messages(limit_per_group: int = 50) -> Dict:
     if not base_url:
         return {"error": "Evolution API not configured"}
 
-    results = {"groups_synced": 0, "messages_saved": 0, "errors": 0}
+    results = {
+        "groups_synced": 0, "messages_saved": 0, "errors": 0,
+        "total_groups": total_groups, "offset_used": offset,
+        "next_offset": next_offset, "more_pages": more_pages,
+    }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         for group in groups:
