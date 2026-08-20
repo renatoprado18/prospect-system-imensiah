@@ -1075,13 +1075,23 @@ async def handle_fathom_webhook(
     try:
         stats = await process_fathom_meeting(payload, project_id=None)
         skipped = stats.get("skipped") or {}
+        # `origem_itens` e `projeto_origem` no log de propósito: sem eles, a
+        # única forma de saber se o fallback de 20/08 pegou numa reunião real é
+        # arqueologia no banco. Decidido não fazer backfill dos 42
+        # encaminhamentos históricos — então o que resta é ver o mecanismo
+        # funcionar daqui pra frente, e isso precisa estar visível.
         logger.info(
-            "Fathom webhook processado: rec_id=%s contatos=%s memorias_novas=%s tarefas_novas=%s tarefas_delegadas=%s skipped=%s",
+            "Fathom webhook processado: rec_id=%s contatos=%s memorias_novas=%s "
+            "tarefas_novas=%s tarefas_delegadas=%s itens=%s(%s) projeto=%s(%s) skipped=%s",
             stats.get("recording_id"),
             len(stats.get("matched_contacts", [])),
             len(stats.get("memorias_criadas") or []),
             len(stats.get("tarefas_criadas") or []),
             stats.get("tarefas_delegadas", 0),
+            stats.get("itens_encontrados", 0),
+            stats.get("origem_itens"),
+            stats.get("projeto_id"),
+            stats.get("projeto_origem"),
             skipped,
         )
         return {"status": "processed", **stats}
