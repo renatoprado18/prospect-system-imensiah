@@ -63,6 +63,7 @@ def relogio_falso(monkeypatch):
     return estado
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_ciclo_cobre_todos_os_grupos(sync_fake):
     """Rodadas sucessivas visitam os 49 — nenhum grupo fica fora do ciclo."""
@@ -75,6 +76,7 @@ async def test_ciclo_cobre_todos_os_grupos(sync_fake):
     assert len(vistos) == 49, f"ficaram de fora: {49 - len(vistos)} grupos"
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_cursor_volta_ao_topo_no_fim(sync_fake):
     """A fila é circular: alcançar o fim reseta pra 0, senão o cron para calado."""
@@ -84,6 +86,7 @@ async def test_cursor_volta_ao_topo_no_fim(sync_fake):
     assert r["more_pages"] is False
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_offset_alem_do_fim_nao_perde_rodada(sync_fake):
     """Grupo removido entre rodadas deixa o cursor além do fim. Volta ao topo em
@@ -92,6 +95,7 @@ async def test_offset_alem_do_fim_nao_perde_rodada(sync_fake):
     assert r["groups_synced"] == 12, "rodada perdida com cursor além do fim"
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_chamador_sem_limit_varre_tudo(sync_fake):
     """O group_digest chama sem `limit` e depende da varredura completa."""
@@ -100,6 +104,7 @@ async def test_chamador_sem_limit_varre_tudo(sync_fake):
     assert r["more_pages"] is False
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_lista_vazia_devolve_cursor(sync_fake, monkeypatch):
     """Sem grupos habilitados o endpoint lê next_offset do retorno — faltar a
@@ -111,6 +116,7 @@ async def test_lista_vazia_devolve_cursor(sync_fake, monkeypatch):
     assert r["more_pages"] is False
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_rodada_parcial_avanca_o_cursor(sync_fake, relogio_falso):
     """O DEFEITO DE 20/08: com corte só por `limit`, um lote caro estourava o
@@ -126,6 +132,7 @@ async def test_rodada_parcial_avanca_o_cursor(sync_fake, relogio_falso):
     assert r["more_pages"] is True
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_lote_caro_nao_trava_a_fila(sync_fake, relogio_falso):
     """Rodadas sucessivas sobre um lote sempre caro ainda percorrem os 49 —
@@ -144,6 +151,7 @@ async def test_lote_caro_nao_trava_a_fila(sync_fake, relogio_falso):
     assert offset == 0, "não voltou ao topo"
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_grupo_patologico_conta_como_erro_dele(sync_fake, monkeypatch):
     """Um grupo que sozinho consumiria a janela não pode levar a rodada junto."""
@@ -163,6 +171,7 @@ async def test_grupo_patologico_conta_como_erro_dele(sync_fake, monkeypatch):
     assert r["next_offset"] == 5, "o grupo travado não pode parar o cursor"
 
 
+@pytest.mark.sync_grupo_real
 @pytest.mark.asyncio
 async def test_sem_budget_processa_o_lote_inteiro(sync_fake):
     """O `group_digest` chama sem budget e depende do lote completo."""

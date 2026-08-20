@@ -32,9 +32,12 @@ try:
 except ImportError:
     pass
 
-# Force banco local
-if not os.getenv("DATABASE_URL") and not os.getenv("POSTGRES_URL"):
-    os.environ["DATABASE_URL"] = "postgresql://localhost:5432/intel"
+# O alvo do banco é decidido em tests/conftest.py (`_travar_no_banco_local`), que
+# roda ANTES deste módulo. A guarda que existia aqui vinha depois do `load_dotenv`
+# acima e por isso nunca disparava: dizia "Force banco local" e a suíte inteira
+# rodava contra o Neon de PRODUÇÃO — inclusive o `save_system_memory` e o DELETE
+# do fixture abaixo. Não reintroduzir a checagem aqui: `load_dotenv` sem
+# `override=True` já não desfaz o que o conftest deixou no ambiente.
 
 
 requires_voyage = pytest.mark.skipif(
