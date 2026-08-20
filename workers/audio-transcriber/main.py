@@ -162,9 +162,13 @@ _SCHEDULER_JOBS = [
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     # 18/08/26 — saiu do daily-sync, onde estourava os 90s TODO DIA desde 06/08 e
     # pintava o job inteiro de `error` sem perder mensagem (o webhook cobre). Aqui
-    # e paginado por cursor: 12 dos 49 grupos por rodada, volta ao topo no fim.
-    # Minuto 40 pra nao competir com o whatsapp-sync (:05) nem o social-groups (:20).
-    ("run-group-messages", "/api/cron/run-group-messages", CronTrigger(minute=40)),
+    # e paginado por cursor, com corte por orcamento de tempo.
+    # 20/08/26 — de hora em hora pra 4×/dia: em 2 dias, 40 rodadas success
+    # salvaram 1 mensagem. O webhook cobre; isto e rede, e rede nao corre de hora
+    # em hora gastando 200s de Evolution. Minuto 40 pra nao competir com o
+    # whatsapp-sync (:05) nem o social-groups (:20).
+    ("run-group-messages", "/api/cron/run-group-messages",
+     CronTrigger(hour="1,7,13,19", minute=40)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e

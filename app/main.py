@@ -4290,7 +4290,7 @@ def _load_railway_crons() -> List[Dict]:
         {"path": "/api/cron/proactive-check", "schedule": "*/30 * * * *", "source": "railway"},
         {"path": "/api/cron/run-whatsapp-sync", "schedule": "5 * * * *", "source": "railway"},
         {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
-        {"path": "/api/cron/run-group-messages", "schedule": "40 * * * *", "source": "railway"},
+        {"path": "/api/cron/run-group-messages", "schedule": "40 1,7,13,19 * * *", "source": "railway"},
         {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
     ]
 
@@ -11528,7 +11528,12 @@ async def cron_run_group_messages(request: Request):
     """
     Cron paginado: pull das mensagens dos grupos com sync_enabled.
 
-    Schedule (worker Railway): `40 * * * *`, hora em hora. Timeout 240s.
+    Schedule (worker Railway): `40 */6 * * *` — 4×/dia. Era hora em hora até
+    20/08, e a medição derrubou a frequência: **40 rodadas bem-sucedidas
+    salvaram 1 mensagem no total**. O webhook grava tudo em tempo real; este pull
+    é rede pro que chega com a instância fora do ar, e rede não precisa correr de
+    hora em hora gastando 200s de Evolution por rodada. Com batch de 25 o ciclo
+    dos 49 grupos fecha em ~2 rodadas (12h de janela máxima).
 
     POR QUE EXISTE (18/08/26). Era o step `group_messages_sync` dentro do
     daily-sync, com timeout de 90s — e o `2da93e3` (05/08) fez o sync PAGINAR
@@ -11556,13 +11561,18 @@ async def cron_run_group_messages(request: Request):
     import asyncio as _aio
     from services.group_message_sync import sync_group_messages
 
-    BATCH = int(os.getenv("GROUP_MESSAGES_BATCH", "12"))
+    BATCH = int(os.getenv("GROUP_MESSAGES_BATCH", "25"))
+    BUDGET = float(os.getenv("GROUP_MESSAGES_BUDGET_S", "200"))
     offset = _read_cron_cursor("group_messages")
 
     try:
+        # O corte e o RELOGIO, nao o wait_for: a rodada para sozinha em BUDGET e
+        # devolve o cursor pelo que cobriu. O wait_for continua aqui como rede
+        # (margem folgada sobre o budget), nao como mecanismo de corte.
         result = await _aio.wait_for(
-            sync_group_messages(limit_per_group=50, limit=BATCH, offset=offset),
-            timeout=240.0,
+            sync_group_messages(limit_per_group=50, limit=BATCH, offset=offset,
+                                budget_s=BUDGET),
+            timeout=BUDGET + 90.0,
         )
         next_offset = int(result.get("next_offset", 0))
         total = int(result.get("total_groups", 0))
@@ -11573,16 +11583,18 @@ async def cron_run_group_messages(request: Request):
             "offset_used": offset,
             "next_offset": next_offset,
             "more_pages": result.get("more_pages", False),
+            "parcial": result.get("parcial", False),
             "result": result,
         }
     except _aio.TimeoutError:
-        # Cursor NAO avanca no timeout: o pedaco que nao coube volta na proxima
-        # rodada. Avancar aqui puliria grupos calado.
-        logger.error(f"cron_run_group_messages: sync_group_messages > 240s (offset={offset})")
+        # Nao deveria acontecer: o budget corta antes. Se cair aqui, um unico
+        # grupo furou o `timeout_por_grupo` — o cursor NAO avanca de proposito,
+        # pra nao pular ninguem calado.
+        logger.error(f"cron_run_group_messages: estourou o budget+margem (offset={offset})")
         return {
             "status": "error",
             "job": "run-group-messages",
-            "error": "sync_group_messages timeout > 240s",
+            "error": f"sync_group_messages > {BUDGET + 90.0}s apesar do budget",
             "offset_used": offset,
         }
     except Exception as e:

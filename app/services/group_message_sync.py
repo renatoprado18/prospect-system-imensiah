@@ -4,9 +4,11 @@ Group Message Sync - Sincroniza mensagens de grupos WhatsApp marcados para sync.
 Busca mensagens novas dos grupos com sync_enabled=TRUE e salva na tabela group_messages.
 Cruza remetentes com contatos INTEL pelo telefone.
 """
+import asyncio
 import os
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List
 import httpx
@@ -22,6 +24,8 @@ async def sync_group_messages(
     limit_per_group: int = 50,
     limit: int = None,
     offset: int = 0,
+    budget_s: float = None,
+    timeout_por_grupo: float = 45.0,
 ) -> Dict:
     """
     Sincroniza mensagens dos grupos marcados para sync.
@@ -35,6 +39,19 @@ async def sync_group_messages(
     o cron processa um pedaco por rodada e retoma pelo cursor, mesmo desenho de
     run-social-groups e run-whatsapp-sync. Sem `limit`, varre tudo (default
     preservado pros chamadores antigos).
+
+    ORCAMENTO DE TEMPO (20/08/26) — o conserto de 18/08 trocou o defeito de lugar
+    em vez de tirar. Com corte so por `limit`, uma rodada de 12 grupos oscilava
+    entre 2,3s e >240s (18% das rodadas estouraram em 2 dias), e como o cursor
+    NAO avanca no timeout, um lote caro **trava a fila ali**: os grupos seguintes
+    nunca chegam a vez, e o job volta a ser sempre-vermelho — que e exatamente o
+    problema que esta frente veio consertar.
+
+    Agora quem corta e o RELOGIO: processa grupos ate `budget_s` e devolve
+    `next_offset` pelo que REALMENTE processou. A rodada termina sozinha antes do
+    limite, o cursor sempre anda e a categoria "timeout" deixa de existir.
+    `timeout_por_grupo` cobre o caso restante — um unico grupo patologico que
+    sozinho consumiria a janela conta como erro DELE, nao da rodada.
     """
     from services.social_groups import get_sync_enabled_groups
 
@@ -68,23 +85,48 @@ async def sync_group_messages(
         "groups_synced": 0, "messages_saved": 0, "errors": 0,
         "total_groups": total_groups, "offset_used": offset,
         "next_offset": next_offset, "more_pages": more_pages,
+        "parcial": False,
     }
 
+    inicio = time.monotonic()
+    processados = 0
     async with httpx.AsyncClient(timeout=60.0) as client:
         for group in groups:
+            # Antes de PEGAR o proximo, nao depois: parar no meio de um grupo
+            # deixaria o cursor mentindo sobre o que foi coberto.
+            if budget_s and (time.monotonic() - inicio) >= budget_s:
+                results["parcial"] = True
+                break
+
             jid = group['group_jid']
             name = group['group_name']
 
             try:
-                saved = await _sync_single_group(
-                    client, base_url, api_key, instance,
-                    jid, name, limit_per_group
+                saved = await asyncio.wait_for(
+                    _sync_single_group(
+                        client, base_url, api_key, instance,
+                        jid, name, limit_per_group
+                    ),
+                    timeout=timeout_por_grupo,
                 )
                 results["messages_saved"] += saved
                 results["groups_synced"] += 1
+            except asyncio.TimeoutError:
+                # Grupo que sozinho estoura a janela. Conta como erro dele e a
+                # fila segue — antes, levava a rodada inteira junto.
+                logger.error(f"group sync timeout > {timeout_por_grupo}s: {name}")
+                results["errors"] += 1
             except Exception as e:
                 logger.error(f"Error syncing group {name}: {e}")
                 results["errors"] += 1
+            processados += 1
+
+    # O cursor anda pelo que foi coberto de fato. Numa rodada parcial o resto do
+    # lote volta na proxima, sem pular ninguem e sem repetir o que ja passou.
+    if limit:
+        alcancou_fim = offset + processados >= total_groups
+        results["next_offset"] = 0 if alcancou_fim else offset + processados
+        results["more_pages"] = not alcancou_fim
 
     return results
 

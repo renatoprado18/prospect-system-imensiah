@@ -47,6 +47,22 @@ def sync_fake(monkeypatch):
     return gms
 
 
+@pytest.fixture
+def relogio_falso(monkeypatch):
+    """Relógio controlado: cada grupo sincronizado "gasta" N segundos."""
+    from services import group_message_sync as gms
+
+    estado = {"agora": 0.0, "custo": 0.0}
+    monkeypatch.setattr(gms.time, "monotonic", lambda: estado["agora"])
+
+    async def _um(client, base_url, api_key, instance, jid, name, limit):
+        estado["agora"] += estado["custo"]
+        return 1
+
+    monkeypatch.setattr(gms, "_sync_single_group", _um)
+    return estado
+
+
 @pytest.mark.asyncio
 async def test_ciclo_cobre_todos_os_grupos(sync_fake):
     """Rodadas sucessivas visitam os 49 — nenhum grupo fica fora do ciclo."""
@@ -93,6 +109,66 @@ async def test_lista_vazia_devolve_cursor(sync_fake, monkeypatch):
     r = await sync_fake.sync_group_messages(limit_per_group=50, limit=12, offset=0)
     assert r["next_offset"] == 0
     assert r["more_pages"] is False
+
+
+@pytest.mark.asyncio
+async def test_rodada_parcial_avanca_o_cursor(sync_fake, relogio_falso):
+    """O DEFEITO DE 20/08: com corte só por `limit`, um lote caro estourava o
+    timeout, o cursor NÃO avançava e a fila travava ali — os grupos seguintes
+    nunca chegavam a vez e o job voltava a ser sempre-vermelho. Agora quem corta
+    é o relógio: a rodada para sozinha e devolve o cursor pelo que cobriu."""
+    relogio_falso["custo"] = 30.0  # cada grupo custa 30s
+    r = await sync_fake.sync_group_messages(limit_per_group=50, limit=25,
+                                            offset=0, budget_s=200)
+    assert r["parcial"] is True, "não sinalizou rodada parcial"
+    assert r["groups_synced"] == 7, f"cobriu {r['groups_synced']}, esperado 7 (200s / 30s)"
+    assert r["next_offset"] == 7, "cursor não andou pelo que foi coberto"
+    assert r["more_pages"] is True
+
+
+@pytest.mark.asyncio
+async def test_lote_caro_nao_trava_a_fila(sync_fake, relogio_falso):
+    """Rodadas sucessivas sobre um lote sempre caro ainda percorrem os 49 —
+    é o teste que falha se o cursor voltar a ficar preso."""
+    relogio_falso["custo"] = 30.0
+    offset, coberto, rodadas = 0, 0, 0
+    while rodadas < 12:
+        r = await sync_fake.sync_group_messages(limit_per_group=50, limit=25,
+                                                offset=offset, budget_s=200)
+        coberto += r["groups_synced"]
+        offset = r["next_offset"]
+        rodadas += 1
+        if offset == 0:
+            break
+    assert coberto >= 49, f"ciclo não fechou: {coberto} de 49 em {rodadas} rodadas"
+    assert offset == 0, "não voltou ao topo"
+
+
+@pytest.mark.asyncio
+async def test_grupo_patologico_conta_como_erro_dele(sync_fake, monkeypatch):
+    """Um grupo que sozinho consumiria a janela não pode levar a rodada junto."""
+    import asyncio as _aio
+    from services import group_message_sync as gms
+
+    async def _um(client, base_url, api_key, instance, jid, name, limit):
+        if jid == "3@g.us":
+            await _aio.sleep(9999)
+        return 1
+
+    monkeypatch.setattr(gms, "_sync_single_group", _um)
+    r = await gms.sync_group_messages(limit_per_group=50, limit=5, offset=0,
+                                      timeout_por_grupo=0.01)
+    assert r["errors"] == 1
+    assert r["groups_synced"] == 4, "os outros do lote deviam ter passado"
+    assert r["next_offset"] == 5, "o grupo travado não pode parar o cursor"
+
+
+@pytest.mark.asyncio
+async def test_sem_budget_processa_o_lote_inteiro(sync_fake):
+    """O `group_digest` chama sem budget e depende do lote completo."""
+    r = await sync_fake.sync_group_messages(limit_per_group=50, limit=25, offset=0)
+    assert r["groups_synced"] == 25
+    assert r["parcial"] is False
 
 
 def test_step_saiu_do_daily_sync():
