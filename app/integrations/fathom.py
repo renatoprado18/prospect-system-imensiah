@@ -19,6 +19,7 @@ import hashlib
 import base64
 import time
 import logging
+import unicodedata
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 import json
@@ -715,6 +716,13 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
     title = adapted.get("title") or "Reuniao Fathom"
     summary_md = adapted.get("summary") or ""
     action_items = adapted.get("action_items") or []
+    # Conta FREE não gera `action_items` (o recap diz "Upgrade to Premium").
+    # Sem este fallback a reunião entra sem UMA task, e nada avisa — foi assim
+    # que 2 das 6 atribuições ao Renato se perderam em 60 dias de reuniões Alba.
+    origem_itens = "action_items"
+    if not action_items:
+        action_items = _proximos_passos_do_resumo(summary_md)
+        origem_itens = "proximos_passos_md" if action_items else "nenhuma"
     date_iso = adapted.get("date") or ""
     share_url = adapted.get("share_url") or ""
     attendees = meeting_payload.get("calendar_invitees") or []
@@ -920,6 +928,19 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 })
             conn.commit()
 
+    # Projeto não veio do chamador (é o caso do WEBHOOK, que sempre passou None):
+    # inferir pelos participantes. Sem isto o bloco abaixo nunca roda.
+    projeto_origem = "parametro" if project_id else None
+    if not project_id and matched_contacts:
+        with get_db() as conn:
+            project_id, projeto_origem = _projeto_dos_participantes(
+                conn.cursor(), matched_contacts, titulo=title)
+        if project_id:
+            logger.info("Fathom: projeto #%s inferido pelos participantes (%s)",
+                        project_id, projeto_origem)
+        else:
+            logger.info("Fathom: sem nota de projeto — %s", projeto_origem)
+
     nota_id = None
     if project_id and matched_contacts:
         # Dedup de project_note tambem
@@ -985,7 +1006,14 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
         "memorias_criadas": novas_memorias,
         "tarefas_criadas": novas_tarefas,
         "tarefas_delegadas": delegadas_count,  # RACI-aware: tasks com R != Renato
+        # De onde vieram os itens: 'action_items' (Premium), 'proximos_passos_md'
+        # (fallback do resumo) ou 'nenhuma'. Sem isso, reunião sem encaminhamento
+        # e reunião cujo importador não achou nada são a MESMA linha de log.
+        "origem_itens": origem_itens,
+        "itens_encontrados": len(action_items),
         "nota_projeto_id": nota_id,
+        "projeto_id": project_id,
+        "projeto_origem": projeto_origem,  # 'parametro' | como foi inferido | por que não
         "playbook": playbook_stats,
         "skipped": {
             "memorias": skipped_memorias,
@@ -1065,6 +1093,140 @@ async def handle_fathom_webhook(
 # =============================================================================
 # Helpers internos (top-level pra ficar fora da classe)
 # =============================================================================
+
+def _tokens_nome(texto: str) -> set:
+    """Palavras significativas (≥4 letras, sem acento) pra casar título×projeto."""
+    s = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode().lower()
+    gen = {"reuniao", "conselho", "projeto", "online", "call", "remota", "presencial",
+           "alinhamento", "com", "para", "sobre"}
+    return {t for t in re.split(r"[^a-z0-9]+", s) if len(t) >= 4 and t not in gen}
+
+
+def _projeto_dos_participantes(cur, matched_contacts: List[Dict], titulo: str = "") -> tuple:
+    """Infere o projeto da reunião pelos participantes. Devolve (id, motivo).
+
+    POR QUE EXISTE (20/08/26). `handle_fathom_webhook` chamava
+    `process_fathom_meeting(payload, project_id=None)`, e o bloco de
+    `project_notes` roda `if project_id and matched_contacts` — na prática **o
+    webhook não criava nota de projeto**: em toda a base há UMA nota com autor
+    `fathom_webhook`, contra o resto todo manual. Caminho wirado e morto
+    ([[feedback_consumidor_morto_wiring]]).
+
+    AMBIGUIDADE NÃO VIRA PALPITE, e a régua foi endurecida por um falso positivo
+    medido antes de subir: "Renatão, Rodrigo - Des. SW" caía no projeto
+    "Originação Conselho — Canal Orbiz" só porque era o único projeto ativo
+    daquele participante. **Um participante em um projeto não é evidência de que
+    a reunião é sobre ele** — gente séria participa de mais de uma coisa. Nota no
+    projeto errado é pior que nota nenhuma: passa a contar como registro daquela
+    frente, e escrever no alvo errado não dá erro nenhum (a lição de 16/08, 3×).
+
+    Ordem: (1) o título nomeia um candidato — é o sinal mais forte, porque o
+    Renato nomeia a reunião pelo assunto; (2) dois ou mais participantes no mesmo
+    projeto; (3) desiste.
+    """
+    ids = [c["id"] for c in matched_contacts]
+    if not ids:
+        return None, "sem_participante_casado"
+
+    cur.execute(
+        """
+        SELECT p.id, p.nome, COUNT(DISTINCT pm.contact_id) AS quantos
+          FROM projects p
+          JOIN project_members pm ON pm.project_id = p.id
+         WHERE pm.contact_id = ANY(%s) AND p.status = 'ativo'
+         GROUP BY p.id, p.nome
+         ORDER BY quantos DESC, p.id
+        """,
+        (ids,),
+    )
+    candidatos = cur.fetchall()
+    if not candidatos:
+        return None, "nenhum_projeto_ativo"
+
+    # (1) O título nomeia UM dos candidatos. "Reunião de Conselho (Alba)" com o
+    # projeto "Alba Consultoria" na lista é evidência direta; dois candidatos
+    # nomeados no mesmo título não é.
+    if titulo:
+        tt = _tokens_nome(titulo)
+        nomeados = [c for c in candidatos if tt & _tokens_nome(c["nome"])]
+        if len(nomeados) == 1:
+            return nomeados[0]["id"], "titulo_nomeia_o_projeto"
+
+    # (2) Vários participantes da reunião no mesmo projeto, com folga sobre o 2º.
+    topo = candidatos[0]
+    if topo["quantos"] >= 2 and (len(candidatos) == 1 or topo["quantos"] > candidatos[1]["quantos"]):
+        return topo["id"], f"participantes_no_projeto({topo['quantos']})"
+
+    if len(candidatos) == 1:
+        return None, "so_um_participante_num_projeto"
+    return None, f"ambiguo_{len(candidatos)}_projetos"
+
+
+_SECOES_PROXIMOS = (
+    "proximos passos", "próximos passos", "next steps", "action items",
+    "acoes", "ações", "encaminhamentos", "proximas acoes", "próximas ações",
+)
+
+# `  - [**Renato:** Consolidar os questionarios.](https://fathom.video/...)`
+_BULLET = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+_LINK_MD = re.compile(r"^\[(.+)\]\((\S+)\)$", re.DOTALL)
+
+
+def _proximos_passos_do_resumo(summary_md: str) -> List[Dict]:
+    """Extrai os próximos passos do markdown do resumo, no formato de action_item.
+
+    POR QUE EXISTE (20/08/26). `process_fathom_meeting` só olhava
+    `action_items[]`, e a conta do Fathom é FREE — o próprio recap diz "Upgrade
+    to Premium to unlock AI generated action items". Medido em 5 reuniões Alba
+    de 60 dias: **3 vieram com `action_items` vazio** e produziram zero task e
+    zero nota, apesar de o resumo trazer `## Próximos Passos` com dono nomeado.
+    Das 6 atribuições ao Renato, 1 virou task pelo Fathom, 3 saíram no trabalho
+    manual da CoS e **2 se perderam** — sem nenhum sinal de que havia item não
+    capturado. Falha calada de importador é indistinguível de reunião sem
+    encaminhamento.
+
+    O "**Dono:**" é PRESERVADO no início da descrição de propósito: é o que o
+    `raci_parser` lê pra nascer `delegated` quando a bola não é do Renato
+    (`_PREFIX_PATTERN` casa "Nome: "). Tirar o prefixo aqui jogaria tarefa dos
+    outros na caixa dele.
+    """
+    if not summary_md:
+        return []
+
+    linhas = summary_md.splitlines()
+    dentro = False
+    itens: List[Dict] = []
+    for linha in linhas:
+        cab = re.match(r"^(#{1,6})\s+(.*)$", linha.strip())
+        if cab:
+            titulo_sec = cab.group(2).strip().lower().rstrip(":")
+            # Só entra em cabeçalho de nível <= 2: "### Soluções Propostas" é
+            # subseção de Tópicos, não lista de encaminhamento.
+            dentro = len(cab.group(1)) <= 2 and any(s in titulo_sec for s in _SECOES_PROXIMOS)
+            continue
+        if not dentro:
+            continue
+        if linha.strip().startswith("---"):
+            dentro = False  # rodapé "Gravacao Fathom: ..."
+            continue
+
+        m = _BULLET.match(linha)
+        if not m:
+            continue
+        corpo = m.group(1).strip()
+        url = ""
+        link = _LINK_MD.match(corpo)
+        if link:
+            corpo, url = link.group(1).strip(), link.group(2).strip()
+        # `**Renato:**` -> `Renato:` — o negrito atrapalha o _PREFIX_PATTERN,
+        # que espera a maiúscula logo no começo da string.
+        corpo = corpo.replace("**", "").strip()
+        if not corpo:
+            continue
+        itens.append({"description": corpo, "recording_playback_url": url})
+
+    return itens
+
 
 def _adapt_meeting_to_summary(meeting: Dict) -> Dict:
     """Converte item da /meetings pro formato legacy de get_meeting_summary."""
