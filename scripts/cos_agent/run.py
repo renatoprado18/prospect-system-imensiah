@@ -640,6 +640,31 @@ def abrir_proposta(owner_url: str, item: dict) -> bool:
         return False
 
 
+
+def _payload_recusado(dados: dict) -> dict:
+    """O payload que o banco recusou, com o TIPO de cada campo.
+
+    POR QUE O TIPO. Em 12/08 uma nota falhou com `can't adapt type 'dict'` — 1
+    em 147 escritas, com `_para_o_banco` já no lugar e outras 5 notas passando no
+    MESMO run. Não deu pra consertar o contrato porque o registro da recusa
+    guardava `str(v)[:120]` por campo: `str()` de um dict aninhado corta no meio
+    e apaga justamente o que se precisa saber — qual campo era dict, e com que
+    forma. Guardava o suficiente pra contar a recusa e não pra explicá-la.
+
+    Agora vai `tipo` (o diagnóstico direto de "can't adapt type X") e o valor
+    serializado por JSON, que preserva a estrutura aninhada. `default=str` cobre
+    o que não for serializável sem derrubar o registro do erro — perder o
+    diagnóstico por causa do diagnóstico seria o mesmo buraco de novo.
+    """
+    out = {}
+    for k, v in (dados or {}).items():
+        try:
+            amostra = json.dumps(v, ensure_ascii=False, default=str)
+        except Exception as e:  # pragma: no cover — defensivo
+            amostra = f"<não serializável: {type(e).__name__}>"
+        out[k] = {"tipo": type(v).__name__, "valor": amostra[:400]}
+    return out
+
 def persistir_atualizacoes(rw_url: str, debriefs: list[dict], run_id: str | None = None) -> dict:
     """Aplica o que o agente propôs mudar no cadastro. Devolve o placar.
 
@@ -760,7 +785,7 @@ def persistir_atualizacoes(rw_url: str, debriefs: list[dict], run_id: str | None
                     {"frente": d.get("frente"), "operacao": op, "status": "recusada",
                      "erro": f"{type(e).__name__}: {e}"[:300],
                      "confianca": conf, "registro_id": reg_id,
-                     "dados": {k: str(v)[:120] for k, v in dados.items()}})
+                     "dados": _payload_recusado(dados)})
     return placar
 
 

@@ -188,6 +188,40 @@ def test_propostas_identicas_na_mesma_frente_viram_uma(runner):
         f"veio {pl['suprimidas']}")
 
 
+def test_recusa_guarda_o_TIPO_do_campo_que_o_banco_rejeitou(runner, monkeypatch):
+    """Recusa contada sem diagnóstico é recusa que ninguém conserta.
+
+    Em 12/08 uma nota falhou com `can't adapt type 'dict'` — 1 em 147, com
+    `_para_o_banco` já no lugar e 5 notas passando no mesmo run. O conserto
+    travou porque o registro guardava `str(v)[:120]` por campo: `str()` de um
+    dict aninhado corta no meio e apaga exatamente o que se precisa saber.
+    Agora o tipo vai junto, e a próxima ocorrência se explica sozinha.
+    """
+    mod, _ = runner
+
+    def explode(*a, **k):
+        raise TypeError("can't adapt type 'dict'")
+
+    monkeypatch.setattr(mod, "_escrever_com_portao", explode, raising=False)
+    import services.agent_write as aw
+    monkeypatch.setattr(aw, "escrever", explode)
+
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief([{
+        "operacao": "registrar_nota_projeto",
+        "dados": {"project_id": 1, "tipo": "camada", "conteudo": "x",
+                  "metadata": {"origem": {"grupo": "Jabô", "msg_id": 42}}},
+        "motivo": "registro", "confianca": 0.9,
+    }]))
+
+    assert pl["recusadas"] == 1
+    campos = pl["detalhe"][0]["dados"]
+    assert campos["metadata"]["tipo"] == "dict", (
+        f"o tipo do campo não foi registrado: {campos['metadata']}")
+    assert "msg_id" in campos["metadata"]["valor"], (
+        "a estrutura aninhada foi truncada — é ela que explica o `can't adapt`")
+    assert campos["project_id"]["tipo"] == "int"
+
+
 def test_sem_atualizacoes_nao_abre_conexao(monkeypatch):
     """Rodada normal não paga conexão à toa — a maioria não muda nada."""
     mod = _runner()
@@ -372,7 +406,11 @@ def test_recusa_carrega_o_motivo(runner):
     det = pl["detalhe"][0]
     assert det["erro"], "recusa sem motivo é recusa que não se corrige"
     assert "OperacaoNaoPermitida" in det["erro"], "o tipo do erro identifica a causa"
-    assert det["dados"] == {"id": "1"}, "sem o que foi proposto não dá pra julgar"
+    # Formato mudou em 21/08: cada campo vira {tipo, valor}. `str(v)[:120]` por
+    # campo destruía a estrutura de dicts aninhados, que é justamente o que
+    # explica um `can't adapt type 'dict'`.
+    assert det["dados"] == {"id": {"tipo": "int", "valor": "1"}}, (
+        "sem o que foi proposto não dá pra julgar")
 
 
 def test_recusa_do_banco_nao_derruba_a_escrita_seguinte():
