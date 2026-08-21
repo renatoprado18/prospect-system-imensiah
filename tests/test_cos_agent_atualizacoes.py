@@ -147,6 +147,34 @@ def test_confianca_ausente_nao_vira_escrita(runner):
 
 
 def test_teto_de_tres_por_frente(runner):
+    """Seis propostas na mesma frente, três entram.
+
+    As propostas precisam ter ALVOS distintos. A versão anterior mandava seis
+    cópias idênticas e passou a falhar quando o dedup do `381a2c1` entrou; mudar
+    só o conteúdo não resolve, porque a chave do dedup é **operação + alvo**
+    (aqui, o `project_id`) — de propósito: duas leituras do mesmo alvo que
+    discordam são dúvida, e dúvida vira pergunta ao Renato.
+
+    O teto continuava funcionando o tempo todo (o corte é `[:3]` em
+    `persistir_atualizacoes`); quem mudou foi o que acontece DEPOIS dele.
+    """
+    mod, _ = runner
+    seis = [{
+        "operacao": "registrar_nota_projeto",
+        "dados": {"project_id": i + 1, "tipo": "camada", "conteudo": f"fato {i}"},
+        "motivo": "registro do fato interpretado", "confianca": 0.9,
+    } for i in range(6)]
+    pl = mod.persistir_atualizacoes("postgres://fake", _debrief(seis))
+    assert pl["escritas"] == 3, (
+        f"teto por frente não foi respeitado: {pl['escritas']} escritas "
+        f"(suprimidas={pl['suprimidas']}, propostas={pl['propostas']})")
+
+
+def test_propostas_identicas_na_mesma_frente_viram_uma(runner):
+    """O outro lado da moeda, que o teste acima escondia: seis repetições do
+    MESMO fato não viram seis notas. O dedup (`381a2c1`) fica com a de maior
+    confiança e conta as demais em `suprimidas` — sem isso, a camada repetiria
+    o mesmo registro três vezes por rodada."""
     mod, _ = runner
     uma = {
         "operacao": "registrar_nota_projeto",
@@ -154,7 +182,10 @@ def test_teto_de_tres_por_frente(runner):
         "motivo": "registro do fato interpretado", "confianca": 0.9,
     }
     pl = mod.persistir_atualizacoes("postgres://fake", _debrief([uma] * 6))
-    assert pl["escritas"] == 3, "teto por frente não foi respeitado"
+    assert pl["escritas"] == 1, f"o mesmo fato virou {pl['escritas']} notas"
+    assert pl["suprimidas"] == 2, (
+        f"as duas que sobraram do teto deviam contar como suprimidas, "
+        f"veio {pl['suprimidas']}")
 
 
 def test_sem_atualizacoes_nao_abre_conexao(monkeypatch):
@@ -434,10 +465,17 @@ def test_prompt_ensina_o_registro_id_no_exemplo():
     assert "atualizar_fase_frente" in exemplo
 
 
-def test_prompt_ensina_as_cinco_operacoes():
-    """Operação que o portão aceita e o prompt não ensina é capacidade morta."""
+def test_prompt_ensina_as_operacoes_da_camada_de_frentes():
+    """Operação que o portão aceita e o prompt não ensina é capacidade morta.
+
+    Filtra por `agente`: a lista fechada é compartilhada com o processador do
+    grupo Jabô, e `atualizar_status_raci` é dele — cobrá-la no prompt de frentes
+    acusava capacidade morta onde só havia OUTRO consumidor (21/08). O dono vem
+    declarado na própria `Operacao`, pra não virar lista paralela aqui."""
     from services import agent_write
     prompt = (_ROOT / "scripts" / "cos_agent" / "prompt_frente.md").read_text(encoding="utf-8")
-    for nome in agent_write.OPERACOES:
+    da_camada = [n for n, o in agent_write.OPERACOES.items() if o.agente == "frente"]
+    assert da_camada, "nenhuma operação marcada como da camada de frentes"
+    for nome in da_camada:
         assert nome in prompt, f"o prompt não ensina `{nome}` — o agente não vai propor"
     assert "0.75" in prompt, "o prompt não diz qual é o piso de confiança"

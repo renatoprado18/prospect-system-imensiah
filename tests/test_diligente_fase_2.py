@@ -141,21 +141,47 @@ def test_get_blocked_to_escalate_filtra_corretamente(cleanup_intents):
 
 
 @pytest.mark.asyncio
-async def test_escalate_blocked_envia_e_marca(cleanup_intents):
+async def test_escalate_blocked_emite_signal_e_marca(cleanup_intents):
+    """Escala via SIGNAL, não por WhatsApp direto.
+
+    ⚠️ ESTE TESTE PROTEGIA UM CAMINHO MORTO. Ele patcheava
+    `services.intel_bot.send_intel_notification` e exigia que fosse chamado —
+    mas o A6 (porta-voz único, 12/07) mudou o escalate pra `emit_signal` com
+    urgência 8, e é a urgent da Tônia que decide se interrompe. O mock nunca era
+    chamado, e a falha ficou invisível porque a suíte não terminava (só apareceu
+    em 21/08, depois que ela voltou a rodar em 15s).
+
+    Pior que inútil: como estava, PASSARIA se alguém voltasse a mandar WA direto
+    do escalate — exatamente a violação que o porta-voz único existe pra impedir.
+    Agora o WA direto é o que faz o teste falhar.
+    """
     a = open_intent(intent_text="travado faz tempo", status="blocked", blocker="motivo X")
     cleanup_intents.append(a["id"])
     _force_updated_at(a["id"], datetime.utcnow() - timedelta(minutes=90))
 
-    fake_send = AsyncMock(return_value=True)
-    with patch("services.intel_bot.send_intel_notification", fake_send):
+    emitidos = []
+
+    def fake_emit(conn, **kw):
+        emitidos.append(kw)
+        return True
+
+    wa_direto = AsyncMock(return_value=True)
+    with patch("services.detectors._base.emit_signal", fake_emit), \
+         patch("services.intel_bot.send_intel_notification", wa_direto):
         escalated = await escalate_blocked_intents()
 
     assert any(e["id"] == a["id"] for e in escalated), "deveria ter escalado o intent A"
-    fake_send.assert_called()
-    # Mensagem contem o id e blocker
-    sent_text = fake_send.call_args[0][0]
-    assert f"#{a['id']}" in sent_text
-    assert "motivo X" in sent_text
+    assert emitidos, "não emitiu signal — o escalate ficou mudo"
+
+    sig = next((e for e in emitidos if e.get("tipo") == "agent_intent_blocked"), None)
+    assert sig is not None, f"signal com tipo errado: {[e.get('tipo') for e in emitidos]}"
+    assert sig["urgencia"] == 8, (
+        f"urgência {sig['urgencia']} — abaixo de 8 a urgent da Tônia não surfaça")
+    ctx = sig.get("contexto") or {}
+    assert ctx.get("intent_id") == a["id"]
+    assert "motivo X" in (ctx.get("blocker") or ""), "o motivo do bloqueio não viajou"
+
+    wa_direto.assert_not_called()  # porta-voz único: quem fala com o Renato é a Tônia
 
     # escalated_at agora preenchido
     refreshed = get_intent(a["id"])

@@ -5,9 +5,30 @@ Pytest fixtures compartilhadas para todos os testes.
 """
 import os
 import re
+import sys
 
 import pytest
 from datetime import datetime, timedelta
+
+
+def _bootstrap_sys_path() -> None:
+    """Põe a raiz e `app/` no sys.path — o ESTADO que realmente vazava entre arquivos.
+
+    `tests/test_circulos.py` sozinho nem era coletado:
+
+        from app.services.circulos import ...   ->  app/services/circulos.py
+        from database import get_db             ->  ModuleNotFoundError
+
+    porque `app/` só entra no path quando ALGUM outro arquivo de teste o insere.
+    Na suíte inteira ele passava a existir por efeito colateral de quem rodou
+    antes; sozinho, quebrava. Cada arquivo repetia esse bootstrap por conta
+    própria (ou esquecia). O conftest é o único lugar que o pytest garante rodar
+    primeiro — é aqui que isso pertence.
+    """
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for p in (raiz, os.path.join(raiz, "app")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
 
 
 def _travar_no_banco_local() -> None:
@@ -52,6 +73,7 @@ def _travar_no_banco_local() -> None:
     os.environ.pop("ALLOW_PROD_FROM_LOCAL", None)
 
 
+_bootstrap_sys_path()
 _travar_no_banco_local()
 
 

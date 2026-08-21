@@ -9,7 +9,26 @@ O que testa:
 5. mode='keyword' continua funcionando como antes
 
 Skip automatico se VOYAGE_API_KEY nao estiver no env (evita falsos negativos
-em CI sem credencial).
+em CI sem credencial) E se a Voyage recusar por 429/5xx.
+
+⚠️ POR QUE OS 5 TESTES SEMANTICOS PULAM COM FREQUENCIA (medido 21/08/26). A chave
+do `.env` e `pa-`, presa no free tier de **3 RPM** — ver
+[[reference_voyage_rate_limits]], que ja registra: *"em uso real (~1 query/msg)
+nunca bate limite; so em testes batch"*. O fixture cria 3 memorias, e 3 chamadas
+em rajada estouram a cota; o rate limit e da NOSSA conta, nao um defeito do
+codigo.
+
+Antes disso os dois testes ficavam VERMELHOS por indisponibilidade externa, e
+vermelho cronico ensina a ignorar vermelho — o mesmo mal do `daily-sync` que saia
+`error` 13 dias seguidos sem perder dado. `embed_sync.indisponivel` distingue "a
+API recusou" de "o vetor veio errado": no primeiro caso pula dizendo por que, no
+segundo continua falhando, porque ai o defeito e nosso.
+
+Os testes que NAO dependem da API (literal pgvector, extensao instalada, coluna
+`embedding` presente) rodam sempre — o arquivo nao vira skip integral.
+
+Pra roda-los de verdade: espacar as chamadas ou destravar o tier (a memoria
+explica como; o gargalo e RPM, nao custo).
 
 Rodar:
     python -m pytest tests/test_f6_vector_search.py -v
@@ -46,9 +65,19 @@ requires_voyage = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def memory_ids():
     """Cria 3 memorias de teste e remove no teardown.
+
+    ESCOPO `module` DE PROPOSITO (21/08/26). Como `function`, as 3 memorias eram
+    recriadas pra CADA um dos 5 testes que pedem o fixture — 15 chamadas ao
+    Voyage numa rajada, o que rendia `429 Too Many Requests` e dois vermelhos
+    cronicos na suite. Nao eram defeito nosso, mas vermelho cronico ensina a
+    ignorar vermelho: e o mesmo mal do `daily-sync` que saia `error` 13 dias
+    seguidos sem perder dado. Com `module`, sao 3 chamadas por rodada.
+
+    Os testes que usam o fixture so LEEM as memorias, entao compartilhar e
+    seguro; quem escrever nelas tem que voltar pra `function`.
 
     Memorias com mesma ideia central (cansaco/exaustao) mas palavras diferentes —
     teste valida que semantic acha as 3 mesmo quando query usa palavra ausente
@@ -63,6 +92,8 @@ def memory_ids():
         ("Domingo de novo cansado de mais", "Notei que após semana de muita reunião, o corpo cobra. Padrão claro."),
         ("Acordei exausto antes da viagem", "Mesmo após 8h de sono, peso de exaustão. Possível ansiedade antecipatória."),
     ]
+    from services.embeddings import embed_sync
+
     for titulo, conteudo in fixtures:
         mid = save_system_memory(
             titulo=titulo,
@@ -74,9 +105,26 @@ def memory_ids():
         assert mid is not None, "save_system_memory returned None — embedding/insert failed"
         ids.append(mid)
 
+    # A verificação vem DEPOIS de gravar, não antes: o 429 da Voyage é
+    # intermitente sob rajada — uma sonda prévia passava e as chamadas seguintes
+    # estouravam, deixando as memórias sem embedding e o teste vermelho por
+    # indisponibilidade externa. `indisponivel` (ver embed_sync) diz se a API
+    # recusou; nesse caso não há medição possível, e acusar defeito nosso é o
+    # vermelho crônico que ensina a ignorar vermelho.
+    if embed_sync.indisponivel:
+        _apagar(ids)
+        pytest.skip("Voyage recusou (429/5xx) durante o setup — sem medição possível")
+
     yield ids
 
     # Teardown
+    _apagar(ids)
+
+
+def _apagar(ids):
+    if not ids:
+        return
+    from database import get_db
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM system_memories WHERE id = ANY(%s::int[])", (ids,))
@@ -89,7 +137,11 @@ def test_embed_sync_returns_correct_dims():
     from services.embeddings import embed_sync, VOYAGE_DIMS
 
     vec = embed_sync("o renato saiu drenado da reuniao")
-    assert vec is not None, "embed_sync returned None — Voyage API may be down or key invalid"
+    if vec is None and embed_sync.indisponivel:
+        pytest.skip("Voyage recusou (429/5xx) — indisponibilidade externa, não defeito nosso")
+    assert vec is not None, (
+        "embed_sync devolveu None com a API respondendo — resposta malformada "
+        "ou chave inválida, e aí o defeito é nosso")
     assert isinstance(vec, list)
     assert len(vec) == VOYAGE_DIMS == 1024
     assert all(isinstance(x, float) for x in vec)

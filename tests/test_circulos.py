@@ -21,6 +21,8 @@ from app.services.circulos import (
     calcular_health_score,
     CIRCULO_CONFIG,
     TAG_OVERRIDES,
+    TAG_PROFISSIONAL_OVERRIDES,
+    calcular_circulo_profissional,
     BONUS_TAGS
 )
 
@@ -92,10 +94,32 @@ class TestCalcularScoreCirculo:
         assert circulo == 1
         assert "Tag especial" in reasons[0]
 
-    def test_tag_conselho_circulo_2(self, contact_conselho):
-        circulo, score, reasons = calcular_score_circulo(contact_conselho)
-        assert circulo == 2
-        assert "Tag especial" in reasons[0]
+    def test_tag_conselho_e_do_eixo_profissional(self, contact_conselho):
+        """`conselho` migrou pro eixo PROFISSIONAL quando os círculos viraram
+        dois (pessoal × profissional). Este teste esperava círculo 2 do
+        `calcular_score_circulo`, que hoje só olha as tags pessoais — e por isso
+        acusava regressão onde houve redesenho.
+
+        O círculo NÃO é cravado aqui: sai do próprio `TAG_PROFISSIONAL_OVERRIDES`
+        (hoje R3 = Networking, junto com prospect e fornecedor — taxonomia
+        deliberada, documentada acima da tabela). Cravar o número foi o erro que
+        quebrou a versão anterior deste teste, e eu o repeti na primeira tentativa
+        do conserto. O que se testa é a PROPRIEDADE: a tag é reconhecida como
+        override e não cai no caminho de frequência.
+
+        ⚠️ Os syncs (whatsapp/gmail) continuam chamando `calcular_score_circulo`,
+        que só olha as tags pessoais — quem tem só tag de conselho NÃO recebe o
+        override profissional por aquele caminho. É decisão de produto em aberto,
+        não defeito deste teste.
+        """
+        esperado = next(c for c, tags in TAG_PROFISSIONAL_OVERRIDES.items()
+                        if "conselho" in tags)
+        circulo, reasons = calcular_circulo_profissional(contact_conselho)
+        assert circulo == esperado, (
+            f"tag `conselho` está declarada no círculo {esperado} profissional "
+            f"mas o cálculo devolveu {circulo} — o override não foi aplicado")
+        assert any("tag" in r.lower() for r in reasons), (
+            f"veio por frequência, não por override: {reasons}")
 
     def test_contato_ativo_circulo_2_ou_3(self, contact_ativo):
         circulo, score, reasons = calcular_score_circulo(contact_ativo)
@@ -160,14 +184,19 @@ class TestCalcularHealthScore:
         assert health == 100
 
     def test_contato_atrasado_health_baixo(self):
-        # Circulo 2 tem frequencia de 14 dias
-        # 30 dias sem contato = muito atrasado
+        """Atraso é RELATIVO à frequência do círculo — o número vem do config.
+
+        A versão anterior cravava "círculo 2 tem frequência de 14 dias" e passou
+        a falhar quando o config virou 30. O que importa não é o número, é a
+        propriedade: passar bem do prazo derruba o health.
+        """
+        freq = CIRCULO_CONFIG[2]["frequencia_dias"]
         contact = {
             "circulo": 2,
-            "ultimo_contato": (datetime.now() - timedelta(days=30)).isoformat()
+            "ultimo_contato": (datetime.now() - timedelta(days=freq * 2 - 1)).isoformat()
         }
         health = calcular_health_score(contact, 2)
-        assert health < 50
+        assert health < 50, f"quase 2x a frequência ({freq}d) deveria derrubar o health"
 
     def test_sem_contato_health_minimo(self):
         contact = {"circulo": 1, "ultimo_contato": None}
@@ -210,19 +239,28 @@ class TestCirculoConfig:
         assert CIRCULO_CONFIG[1]["frequencia_dias"] <= 7
 
     def test_circulo_5_menos_frequente(self):
-        assert CIRCULO_CONFIG[5]["frequencia_dias"] >= 365
+        """Propriedade, não número: o arquivo é o mais tolerante de todos.
+        Cravar 365 quebrou quando o config pessoal passou a usar 180."""
+        freqs = [CIRCULO_CONFIG[i]["frequencia_dias"] for i in range(1, 5)]
+        assert CIRCULO_CONFIG[5]["frequencia_dias"] >= max(freqs)
 
 
 class TestTagOverrides:
     """Testes para tags de override"""
 
     def test_familia_tags_exist(self):
-        assert "familia" in TAG_OVERRIDES[1]
-        assert "family" in TAG_OVERRIDES[1]
+        """O eixo pessoal usa o VÍNCULO, não o rótulo genérico: "familia" e
+        "family" saíram quando as tags viraram específicas (filho/pai/mae)."""
+        assert "filho" in TAG_OVERRIDES[1]
+        assert "mae" in TAG_OVERRIDES[1]
+        assert "esposa" in TAG_OVERRIDES[1]
 
     def test_conselho_tags_exist(self):
-        assert "conselho" in TAG_OVERRIDES[2]
-        assert "board" in TAG_OVERRIDES[2]
+        """`conselho` vive no eixo PROFISSIONAL — procurar no pessoal foi o que
+        fez este teste acusar regressão inexistente."""
+        profissionais = {t for tags in TAG_PROFISSIONAL_OVERRIDES.values() for t in tags}
+        assert "conselho" in profissionais
+        assert "board" in profissionais
 
 
 class TestBonusTags:

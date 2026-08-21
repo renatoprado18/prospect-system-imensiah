@@ -85,6 +85,14 @@ class Operacao:
     # sobre esse timestamp. Sem carimbo, uma linha que a camada acabou de mexer
     # é apresentada como abandonada — e ninguém confere um timestamp.
     carimbo_atualizacao: str = ""
+    # QUEM propõe esta operação. A lista é compartilhada por mais de um agente —
+    # a camada que lê FRENTES (`scripts/cos_agent/prompt_frente.md`) e o
+    # processador do grupo Jabô (`services/jabo_group_raci.py`) — e o portão é o
+    # mesmo pros dois. Sem declarar o dono, o controle que verifica "toda
+    # operação do portão está ensinada no prompt" acusa capacidade morta onde só
+    # há outro consumidor: foi o que aconteceu com `atualizar_status_raci` em
+    # 21/08. Declarado, não inferido, pelo mesmo motivo do resto do módulo.
+    agente: str = "frente"
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +160,7 @@ OPERACOES = {
         # existe desde a 073; é ela que deixa o auto-update visível a quem lê.
         campos=("status", "concluido_em", "concluido_em_fonte"),
         carimbo_atualizacao="atualizado_em",
+        agente="jabo_group_raci",
         descricao="Quem executa reporta no grupo que fez, e o RACI ainda diz pendente.",
     ),
     "registrar_nota_projeto": Operacao(

@@ -132,6 +132,7 @@ async def embed(
         _cache[cache_key] = vec
         if len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
+        embed_sync.indisponivel = False
         return vec
 
     except httpx.HTTPStatusError as e:
@@ -188,10 +189,25 @@ def embed_sync(text: str, *, input_type: str = "document") -> Optional[List[floa
         _cache[cache_key] = vec
         if len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
+        embed_sync.indisponivel = False
         return vec
     except Exception as e:
+        # `indisponivel` distingue "a Voyage recusou" de "o vetor veio errado".
+        # Ambos devolvem None — e quem chama não tinha como saber qual foi, então
+        # rate limit da API se apresentava como defeito nosso (dois vermelhos
+        # crônicos na suíte, 21/08). Mesmo mal do booleano mudo que escondeu o
+        # `etag` do Google por meses: função de I/O externo que falha calada
+        # empurra o diagnóstico pro lugar errado.
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        embed_sync.indisponivel = status in (429, 500, 502, 503, 504) or status is None
         logger.error(f"embed_sync error: {e}")
         return None
+
+
+# True quando a ÚLTIMA chamada falhou por indisponibilidade da Voyage (429/5xx),
+# não por resposta malformada. Quem consome decide: teste pula em vez de acusar
+# defeito nosso; produção pode degradar pra keyword sem alarme falso.
+embed_sync.indisponivel = False
 
 
 def embedding_to_pg_literal(vec: List[float]) -> str:

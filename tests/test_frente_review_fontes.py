@@ -47,10 +47,20 @@ def gather(memories=None, notes=None):
 
 def test_a_regra_de_hierarquia_esta_no_system_e_nao_so_num_comentario():
     """O modelo lê o system prompt; não lê comentário Python. A regra tem que
-    estar onde ele enxerga."""
+    estar onde ele enxerga.
+
+    Verifica a REGRA, não a frase. A versão anterior exigia o literal
+    "memória vence" e passou a falhar quando a hierarquia foi ampliada para
+    incluir a descrição da frente ("**eles vencem**") — o prompt tinha ficado
+    mais forte e o teste acusou perda. Casar substring exata de prompt quebra na
+    redação e cala na regressão de verdade.
+    """
     s = fr._SYSTEM.lower()
-    assert "hierarquia das fontes" in s
-    assert "memória vence" in s
+    assert "hierarquia das fontes" in s, "a hierarquia sumiu do system"
+    assert "memória" in s, "o system não nomeia a memória como fonte"
+    assert "vence" in s, (
+        "o system não diz que o registro durável PREVALECE — sem isso a "
+        "hierarquia vira enfeite")
 
 
 def test_o_system_manda_registrar_a_divergencia_e_nao_so_escolher():
