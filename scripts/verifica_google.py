@@ -125,6 +125,7 @@ def classificar(fichas_google, contatos, nao_fundir=frozenset()):
 
     rid_do_intel = {c["google_contact_id"] for c in contatos if c["google_contact_id"]}
     conta_do_rid = {p["rid"]: p["conta"] for p in fichas_google}
+    por_rid_nome = {p["rid"]: p["nome"] for p in fichas_google}
 
     # Duplicata DENTRO do INTEL: dois contatos distintos no mesmo telefone. Saiu
     # da primeira rodada deste script — "Leo" #16072 e "Leo" #21985 apareciam
@@ -192,14 +193,30 @@ def classificar(fichas_google, contatos, nao_fundir=frozenset()):
         # de merge.
         conta_vinculada = conta_do_rid.get(f["google_contact_id"]) if f["google_contact_id"] else None
         if conta_vinculada:
+            principal = por_rid_nome.get(f["google_contact_id"], "")
             for e in entradas:
-                if (e["conta"] == conta_vinculada
+                if not (e["conta"] == conta_vinculada
                         and e["rid"] != f["google_contact_id"]
                         and e["rid"] not in rid_do_intel):
-                    baldes["orfa"].append({
-                        "id": f["id"], "intel": f["nome"], "msgs": f["msgs"],
-                        "orfa_nome": e["nome"], "orfa_rid": e["rid"], "conta": e["conta"],
-                        "vinculado_a": f["google_contact_id"]})
+                    continue
+                # ⚠️ NÃO BASTA COMPARTILHAR O TELEFONE (medido 22/08/26, antes de
+                # apagar). Sem exigir parentesco de nome, este balde acusava 231
+                # "órfãs" — e a maioria era COLEGA DE TRABALHO no telefone da
+                # empresa: a ficha #697 ("Vanessa Ikeno") arrastava Magda
+                # Glasser, Lucca Najar, Camila Lisbôa e mais quatro, todos com
+                # e-mail @carambola.com.vc; a #2856 arrastava meia Amcham.
+                # Apagar teria destruído dezenas de contatos reais da agenda.
+                #
+                # É a MESMA premissa falsa que já custou dois baldes hoje
+                # ("mesmo telefone = mesma pessoa"), e o caso Douglas × Orestes
+                # deu o nome dela. Órfã de merge é ficha REPETIDA: o nome tem que
+                # ter parentesco com o da principal.
+                if not (tokens(e["nome"]) & tokens(principal)) and (e["nome"] or "").strip():
+                    continue
+                baldes["orfa"].append({
+                    "id": f["id"], "intel": f["nome"], "msgs": f["msgs"],
+                    "orfa_nome": e["nome"], "orfa_rid": e["rid"], "conta": e["conta"],
+                    "vinculado_a": f["google_contact_id"]})
 
         nomes = {norm(p["nome"]) for p in entradas}
         por_conta = defaultdict(set)
@@ -276,7 +293,7 @@ async def main():
     print(f"  🔵 duplicata no Google (limpeza lá) .......... {len(b['duplicata']):5}"
           f"  ({sum(1 for d in b['duplicata'] if d['intel_bate'])} com o INTEL já certo)")
     print(f"  🟣 telefone compartilhado (não é defeito) .... {len(b['compartilhado']):5}")
-    print(f"  🔴 órfã: ficha não apontada, MESMA conta ..... {len(b['orfa']):5}")
+    print(f"  🔴 órfã: ficha REPETIDA não apontada .......... {len(b['orfa']):5}")
     print(f"  🟤 ficha REPETIDA no INTEL (mesma pessoa) ... {len(b['dupe_intel']):5}")
     print(f"  ⚫ telefone de empresa, pessoas diferentes ... {len(b['tel_compartilhado_intel']):5}  (não é defeito)")
     print(f"  ⚪ ausente no Google ......................... {len(b['ausente']):5}")

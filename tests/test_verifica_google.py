@@ -164,3 +164,42 @@ def test_ordem_do_par_nao_muda_a_decisao():
                 _c(1360, "Douglas Bassi", "+551135761505")]
     b, _x = vg.classificar([], contatos, nao_fundir={(1360, 4376)})
     assert b["dupe_intel"] == [] and b["tel_compartilhado_intel"] == []
+
+
+def test_colega_de_trabalho_no_telefone_da_empresa_nao_e_orfa():
+    """O FALSO POSITIVO QUE QUASE APAGOU A AGENDA (22/08/26).
+
+    Pedido: "limpa as 231 órfãs no Google". Ao baixar as duas pontas antes de
+    apagar, a maioria não era duplicata: a ficha #697 ("Vanessa Ikeno") arrastava
+    Magda Glasser, Lucca Najar, Camila Lisbôa e mais quatro — todos com e-mail
+    @carambola.com.vc, colegas no telefone da empresa. A #2856 arrastava meia
+    Amcham. Apagar teria destruído dezenas de contatos reais.
+
+    É a mesma premissa falsa que já custou dois baldes neste mesmo dia: "mesmo
+    telefone = mesma pessoa". Órfã de merge é ficha REPETIDA.
+    """
+    google = [_g("Vanessa Ikeno", "cPRINC", CONTA_A, "+551133334444"),
+              _g("Magda Glasser", "cCOLEGA", CONTA_A, "+551133334444")]
+    contatos = [_c(697, "Vanessa Ikeno", "+551133334444", gid="cPRINC")]
+    b, _ = vg.classificar(google, contatos)
+    assert b["orfa"] == [], "colega de trabalho contado como órfã de merge"
+
+
+def test_ficha_repetida_da_mesma_pessoa_continua_sendo_orfa():
+    """Controle positivo do corte acima — sem ele, a detecção morre inteira."""
+    google = [_g("Glaucia Parizotto", "cPRINC", CONTA_A, "+5511977776666"),
+              _g("Glaucia Parizotto", "cDUP", CONTA_A, "+5511977776666")]
+    contatos = [_c(26688, "Glaucia Parizotto", "+5511977776666", gid="cPRINC")]
+    b, _ = vg.classificar(google, contatos)
+    assert len(b["orfa"]) == 1
+    assert b["orfa"][0]["orfa_rid"] == "cDUP"
+
+
+def test_ficha_sem_nome_no_google_continua_sendo_orfa():
+    """Ficha vazia não tem nome pra ter parentesco, e é justamente o resto de
+    merge mais provável — não pode escapar pelo critério de nome."""
+    google = [_g("Shirley", "cPRINC", CONTA_A, "+5511955554444"),
+              _g("", "cVAZIA", CONTA_A, "+5511955554444")]
+    contatos = [_c(23280, "Shirley", "+5511955554444", gid="cPRINC")]
+    b, _ = vg.classificar(google, contatos)
+    assert len(b["orfa"]) == 1
