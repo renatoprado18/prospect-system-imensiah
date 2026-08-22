@@ -913,7 +913,9 @@ async def alertar_hits_nao_entregues(limite: int = 30) -> dict:
     Vai por SIGNAL (urgência 8) porque o porta-voz único é a Tônia — ela decide
     se e como interrompe. Mandar WA daqui seria reabrir o que o A3 fechou.
     """
-    from database import get_db
+    # `get_db` já vem do topo do módulo — reimportar aqui criaria binding local e
+    # é o padrão que gera UnboundLocalError ([[feedback_import_sombreado_unboundlocal]]).
+    # O `emit_signal` fica local de propósito: evita ciclo de import no boot.
     from services.detectors._base import emit_signal, make_signal_hash
 
     resultado = {"hits": 0, "projetos": 0, "signal": None, "skipped_reason": None}

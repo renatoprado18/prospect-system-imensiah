@@ -89,9 +89,9 @@ def cenario(monkeypatch):
     monkeypatch.setattr("services.detectors._base.make_signal_hash",
                         lambda tipo, *p: f"{tipo}:{'-'.join(str(x) for x in p)}")
     estado["mod"] = m
-    # `alertar_hits_nao_entregues` importa `get_db` DENTRO da função, então o
-    # patch tem que ser na origem — patchear o atributo do módulo não alcança.
-    estado["patch_db"] = lambda conn: monkeypatch.setattr("database.get_db", lambda: conn)
+    # `get_db` vem do topo do módulo (reimportar dentro da função seria import
+    # sombreado), então o patch é no atributo do módulo.
+    estado["patch_db"] = lambda conn: monkeypatch.setattr(m, "get_db", lambda: conn)
     return estado
 
 
