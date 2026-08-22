@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL", "")
 
-# Teto de tamanho do caminho REGEX (fix 23/08). Comando de status e' curto
+# Teto de tamanho do caminho REGEX (fix 22/08). Comando de status e' curto
 # ("3 concluido", "5 em andamento: detalhe"); relatorio de RACI tem milhares de
 # caracteres. A msg da Kelly que virou comando em 21/08 tinha 1.867. Generoso de
 # proposito: o pattern 2 captura `notes` livres, e apertar demais empurraria uso
@@ -907,7 +907,7 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
     import psycopg2
     import psycopg2.extras
 
-    # ── TRAVA 1: comando e' mensagem CURTA (fix 23/08) ───────────────────────
+    # ── TRAVA 1: comando e' mensagem CURTA (fix 22/08) ───────────────────────
     # Todo relatorio de RACI termina com um resumo numerico, entao todo
     # relatorio e' um comando em potencial. Em 21/08 o rodape "✅ 6 concluídos."
     # da Kelly casou e marcou o 6o item da lista posicional ("Zerar o passivo da

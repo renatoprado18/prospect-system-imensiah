@@ -69,7 +69,7 @@ def banco(monkeypatch):
     algum UPDATE chegou a sair.
 
     `n_itens` existe por causa de um furo que o controle negativo pegou em
-    23/08: com a lista de 1 item, os testes do rodape ("✅ 6 concluídos.")
+    22/08: com a lista de 1 item, os testes do rodape ("✅ 6 concluídos.")
     passavam mesmo SEM o fix — o 6 caia no guard de indice fora da lista, nao na
     trava que estava sendo testada. Teste que passa pela razao errada certifica
     conformidade que nunca checou. Pra exercitar a trava, o item 6 tem que
@@ -166,7 +166,7 @@ def test_indice_fora_da_lista_nao_estoura(banco, monkeypatch):
     assert conn.committed is False
 
 
-# ==================== relatorio nao e comando (fix 23/08) ====================
+# ==================== relatorio nao e comando (fix 22/08) ====================
 #
 # Defeito de 21/08: a Kelly mandou o RACI completo da Alba no grupo e o rodape
 # "✅ 6 concluídos." casou o regex. O bot marcou o 6o item da lista posicional —
