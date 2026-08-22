@@ -173,9 +173,14 @@ _SCHEDULER_JOBS = [
     # o briefing da Tônia com janela de 2 dias, e ele roda em ~metade dos dias:
     # um artigo do Gui capturado em 10/08 se perdeu porque o briefing não rodou
     # em 11 nem em 12/08. Aqui o corte é `pushed_at IS NULL` — a fila não expira,
-    # então falhar significa atrasar, não sumir. 11:50 UTC = 8:50 BRT, depois do
-    # briefing pra não duplicar o que ele já leu.
-    ("news-alertas", "/api/cron/news-alertas", CronTrigger(hour=11, minute=50)),
+    # então falhar significa atrasar, não sumir.
+    #
+    # 9:40 UTC, VINTE MINUTOS ANTES do briefing (`_TONIA_BRIEFING_TRIGGER`, 10:00
+    # UTC = 7h BRT), porque é o briefing que consome os signals abertos. Deixei
+    # 11:50 na primeira versão achando que era melhor "depois do briefing pra não
+    # duplicar" — errado: o signal ficaria 22h esperando o briefing do dia
+    # seguinte. Ordem de cron não é detalhe quando um alimenta o outro.
+    ("news-alertas", "/api/cron/news-alertas", CronTrigger(hour=9, minute=40)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e

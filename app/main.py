@@ -4291,7 +4291,7 @@ def _load_railway_crons() -> List[Dict]:
         {"path": "/api/cron/run-whatsapp-sync", "schedule": "5 * * * *", "source": "railway"},
         {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
         {"path": "/api/cron/run-group-messages", "schedule": "40 1,7,13,19 * * *", "source": "railway"},
-        {"path": "/api/cron/news-alertas", "schedule": "50 11 * * *", "source": "railway"},
+        {"path": "/api/cron/news-alertas", "schedule": "40 9 * * *", "source": "railway"},
         {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
     ]
 
