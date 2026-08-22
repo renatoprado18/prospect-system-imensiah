@@ -67,9 +67,25 @@ def _atual(exp):
     return exp[0] if exp else None
 
 
+def _mantidas(cur) -> set:
+    """Divergências que o Renato já mandou manter (migration 079).
+
+    Par (contact_id, empresa_ignorada) — não só o contato: se a pessoa trocar de
+    emprego DE NOVO, é caso novo e deve ser perguntado. Silenciar o contato pra
+    sempre esconderia a mudança seguinte, que é o que este mecanismo existe pra
+    pegar."""
+    try:
+        cur.execute("SELECT contact_id, empresa_ignorada FROM contato_empresa_mantida")
+        return {(r["contact_id"], (r["empresa_ignorada"] or "").strip().lower())
+                for r in cur.fetchall()}
+    except Exception:
+        return set()
+
+
 def levantar():
     from database import get_connection
     cur = get_connection().cursor()
+    ja_decididas = _mantidas(cur)
     cur.execute("""SELECT id, nome, empresa, cargo, linkedin_experience,
                           (SELECT count(*) FROM messages m WHERE m.contact_id = contacts.id) AS msgs
                      FROM contacts
@@ -94,6 +110,8 @@ def levantar():
                 saida = ed
                 break
         if not saida:
+            continue
+        if (r["id"], li.strip().lower()) in ja_decididas:
             continue
         ini = (atual or {}).get("start_date") or {}
         casos.append({
@@ -221,6 +239,15 @@ def aplicar(texto, dry=True):
         cid, acao, nova = int(m.group(1)), m.group(2), m.group(3).strip()
         if acao == "MANTER":
             mantidos += 1
+            if not dry:
+                cur.execute("SELECT empresa FROM contacts WHERE id = %s", (cid,))
+                atual = (cur.fetchone() or {}).get("empresa") or ""
+                cur.execute(
+                    """INSERT INTO contato_empresa_mantida
+                         (contact_id, empresa_intel, empresa_ignorada, motivo)
+                       VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    (cid, atual, nova,
+                     "vinculo paralelo: decidido na tela de empresas"))
             continue
         cur.execute("SELECT nome, empresa FROM contacts WHERE id = %s", (cid,))
         r = cur.fetchone()
