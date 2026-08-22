@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
 sys.stdout.reconfigure(line_buffering=True)
 
 from database import get_db
-from services.duplicados import encontrar_duplicados, merge_par
+from services.duplicados import encontrar_duplicados, escolher_sobrevivente, merge_par
 
 print("=" * 60, flush=True)
 print("MERGE AUTOMATICO DE DUPLICADOS (score > 0.9)", flush=True)
@@ -41,16 +41,9 @@ if not duplicates:
 stats = {"merged": 0, "skipped": 0, "errors": 0, "google_ok": 0, "google_falhou": 0}
 
 
-def count_fields(c):
-    """Qual das duas fichas tem mais dados — essa sobrevive."""
-    count = 0
-    if c.get("empresa"): count += 1
-    if c.get("cargo"): count += 1
-    if c.get("linkedin"): count += 1
-    if c.get("foto_url"): count += 1
-    if c.get("aniversario"): count += 1
-    count += (c.get("total_interacoes") or 0)
-    return count
+# `count_fields` subiu pra `services.duplicados.escolher_sobrevivente` em 22/08:
+# o ensaio (`scripts/ensaio_merge_google.py`) precisa do MESMO critério, e duas
+# cópias divergiriam em silêncio.
 
 
 async def executar():
@@ -69,11 +62,7 @@ async def executar():
         if score < 0.9:
             continue
 
-        c1_score = count_fields(c1)
-        c2_score = count_fields(c2)
-
-        keep_id = c1["id"] if c1_score >= c2_score else c2["id"]
-        merge_id = c2["id"] if c1_score >= c2_score else c1["id"]
+        keep_id, merge_id = escolher_sobrevivente(c1, c2)
 
         print(f"\nMerging: {c1['nome']} <-> {c2['nome']} (score: {score:.2f})", flush=True)
         print(f"  Keep ID: {keep_id}, Merge ID: {merge_id}", flush=True)

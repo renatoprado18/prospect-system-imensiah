@@ -369,6 +369,25 @@ def encontrar_duplicados(
     }
 
 
+def escolher_sobrevivente(c1: Dict, c2: Dict) -> Tuple[int, int]:
+    """Qual das duas fichas sobrevive ao merge. Devolve (keep_id, merge_id).
+
+    Estava inline em `scripts/merge_duplicates.py` (como `count_fields`). Subiu
+    pra cá em 22/08 porque o ENSAIO precisa decidir keep/merge EXATAMENTE como o
+    mutirão real decide — duas cópias do critério divergem em silêncio, e aí o
+    ensaio mede um conjunto de pares e o mutirão funde outro.
+    [[feedback_medir_o_consumidor_certo]]
+
+    Empate vai pra c1, que é a ordem estável de `encontrar_duplicados`.
+    """
+    def _peso(c: Dict) -> int:
+        n = sum(1 for campo in ("empresa", "cargo", "linkedin", "foto_url", "aniversario")
+                if c.get(campo))
+        return n + (c.get("total_interacoes") or 0)
+
+    return (c1["id"], c2["id"]) if _peso(c1) >= _peso(c2) else (c2["id"], c1["id"])
+
+
 async def merge_par(
     keep_id: int,
     merge_id: int,
