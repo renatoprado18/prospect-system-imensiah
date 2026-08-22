@@ -95,7 +95,8 @@ async def levantar(cache_h):
                      FROM contacts
                     WHERE telefones IS NOT NULL AND telefones::text <> '[]'""")
     contatos = [dict(r) for r in cur.fetchall()]
-    b, _ = vg.classificar(fichas, contatos, vg._pares_decididos(cur))
+    b, _ = vg.classificar(fichas, contatos, vg._pares_decididos(cur),
+                          vg._fichas_mantidas(cur))
     orfas = b["orfa"]
     print(f"  órfãs: {len(orfas)} — baixando os dois lados de cada par…")
 

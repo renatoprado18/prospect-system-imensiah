@@ -115,7 +115,7 @@ async def varrer_google(max_idade_h=0):
     return fichas
 
 
-def classificar(fichas_google, contatos, nao_fundir=frozenset()):
+def classificar(fichas_google, contatos, nao_fundir=frozenset(), mantidas=frozenset()):
     por_tel = defaultdict(list)
     for p in fichas_google:
         for tel in p["tels"]:
@@ -213,6 +213,9 @@ def classificar(fichas_google, contatos, nao_fundir=frozenset()):
                 # ter parentesco com o da principal.
                 if not (tokens(e["nome"]) & tokens(principal)) and (e["nome"] or "").strip():
                     continue
+                # decisão registrada não volta a ser perguntada (078)
+                if (f["id"], e["rid"]) in mantidas:
+                    continue
                 baldes["orfa"].append({
                     "id": f["id"], "intel": f["nome"], "msgs": f["msgs"],
                     "orfa_nome": e["nome"], "orfa_rid": e["rid"], "conta": e["conta"],
@@ -241,6 +244,22 @@ def classificar(fichas_google, contatos, nao_fundir=frozenset()):
         l.sort(key=lambda x: -x["msgs"])
     return baldes, casados
 
+
+
+
+def _fichas_mantidas(cur) -> set:
+    """Fichas do Google que o Renato mandou MANTER (migration 078).
+
+    Par (contact_id, google_rid). Sem isto, as três que ele decidiu em 22/08
+    voltavam a aparecer como órfã em toda rodada — a decisão existia e o script
+    não sabia lê-la. Tabela ausente devolve vazio: alvo sem a 078 mostra tudo, que
+    é o comportamento antigo, e não silencia nada por engano.
+    """
+    try:
+        cur.execute("SELECT contact_id, google_rid FROM google_nao_fundir")
+        return {(r["contact_id"], r["google_rid"]) for r in cur.fetchall()}
+    except Exception:
+        return set()
 
 
 def _pares_decididos(cur) -> set:
@@ -279,7 +298,7 @@ async def main():
     contatos = [dict(r) for r in cur.fetchall()]
 
     nao_fundir = _pares_decididos(cur)
-    b, casados = classificar(fichas, contatos, nao_fundir)
+    b, casados = classificar(fichas, contatos, nao_fundir, _fichas_mantidas(cur))
     decisao = len(b["divergencia"])
     com_hist = sum(1 for d in b["divergencia"] if d["msgs"] > 0)
 

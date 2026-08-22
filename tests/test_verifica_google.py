@@ -203,3 +203,27 @@ def test_ficha_sem_nome_no_google_continua_sendo_orfa():
     contatos = [_c(23280, "Shirley", "+5511955554444", gid="cPRINC")]
     b, _ = vg.classificar(google, contatos)
     assert len(b["orfa"]) == 1
+
+
+def test_ficha_do_google_mandada_manter_nao_reaparece():
+    """A outra metade do problema, achada no MESMO dia (22/08).
+
+    A 077 registrava pares de contatos do INTEL. Mas ao limpar as fichas
+    repetidas do Google o Renato mandou MANTER três — e elas voltaram a aparecer
+    como órfã na rodada seguinte, porque a decisão era sobre uma ficha do GOOGLE
+    e o registro só sabia falar de contato do INTEL. Decisão sem onde ser escrita
+    volta a ser perguntada."""
+    google = [_g("Navarro Neto", "cPRINC", CONTA_A, "+5511911112222"),
+              _g("Henrique Navarro", "cMANTIDA", CONTA_A, "+5511911112222")]
+    contatos = [_c(4281, "Navarro Neto", "+5511911112222", gid="cPRINC")]
+    b, _ = vg.classificar(google, contatos, mantidas={(4281, "cMANTIDA")})
+    assert b["orfa"] == [], "ficha mandada manter voltou a ser proposta"
+
+
+def test_sem_o_registro_a_ficha_continua_aparecendo():
+    """Controle positivo: sem ele, o teste acima passa com o balde desligado."""
+    google = [_g("Navarro Neto", "cPRINC", CONTA_A, "+5511911112222"),
+              _g("Henrique Navarro", "cMANTIDA", CONTA_A, "+5511911112222")]
+    contatos = [_c(4281, "Navarro Neto", "+5511911112222", gid="cPRINC")]
+    b, _ = vg.classificar(google, contatos)
+    assert len(b["orfa"]) == 1
