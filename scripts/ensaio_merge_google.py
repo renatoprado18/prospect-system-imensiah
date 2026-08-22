@@ -61,6 +61,11 @@ sys.stdout.reconfigure(line_buffering=True)
 import httpx  # noqa: E402
 
 import integrations.google_contacts as google_real  # noqa: E402
+from database import get_db  # noqa: E402
+from services.contact_dedup import (  # noqa: E402
+    find_duplicates, merge_duplicate_contacts_with_propagation,
+    normalize_name_for_dedup,
+)
 from services.duplicados import (  # noqa: E402
     encontrar_duplicados, escolher_sobrevivente, merge_par,
 )
@@ -133,6 +138,111 @@ class EspiaoGoogle:
         self.registro.append(("DELETE", "", resource_name))
         self.placar["delete"] += 1
         return True
+
+
+def _grupos_fundiveis(contacts):
+    """Grupos de `find_duplicates` MENOS o balde do telefone/e-mail de empresa.
+
+    `find_duplicates` agrupa por telefone, e-mail e nome sem perguntar se as
+    fichas são da mesma PESSOA. O telefone de uma central e o `marketing@` de uma
+    empresa juntam gente diferente: "Carla" com "Vania Leister" (mesmo
+    `marketing@cec.com.br`), "Leandro Nunes de Castro" com "Mackenzie", "Renato
+    Ferraz" com "José Damico". Fundir esses APAGA pessoa, e o merge não tem volta.
+
+    O corte usado aqui é o mesmo que a sessão de 22/08 fez à mão: grupo cujos
+    nomes normalizados não são todos iguais fica FORA e é reportado à parte, não
+    silenciosamente descartado. [[feedback_mesmo_telefone_nao_e_mesma_pessoa]]
+    """
+    grupos = find_duplicates(contacts)
+    fundiveis, balde = {}, {}
+    for chave, g in grupos.items():
+        nomes = {normalize_name_for_dedup(c.get("nome") or "") for c in g}
+        (fundiveis if len(nomes) == 1 else balde)[chave] = g
+    return fundiveis, balde
+
+
+# A query EXATA da rota `/auto-merge-batch` (main.py). Reproduzida aqui letra por
+# letra de propósito: é ela que está sob julgamento, não uma aproximação dela.
+COLUNAS_DA_ROTA = """SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
+                            linkedin, contexto, google_contact_id FROM contacts"""
+
+# A mesma coisa MAIS `empresa_dados` (onde mora `_google_contact_ids`, o mapa
+# {conta: [resourceName]}) e `origem`. Sem essas duas, `google_ids_map` volta
+# vazio, a propagação não sabe qual ficha é desta pessoa em cada conta, e o
+# caminho cai no create. Rodar o ensaio nos dois modos isola a causa: se o placar
+# muda só por trocar a query, o defeito é a query.
+COLUNAS_COMPLETAS = "SELECT * FROM contacts"
+
+
+async def executar_grupos(limite: int, colunas: str = "rota") -> int:
+    """Ensaia o caminho REAL do mutirão em massa: `find_duplicates` +
+    `merge_duplicate_contacts_with_propagation` (a rota `/auto-merge-batch`)."""
+    espiao = EspiaoGoogle(google_real)
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(COLUNAS_DA_ROTA if colunas == "rota" else COLUNAS_COMPLETAS)
+    contacts = [dict(r) for r in cur.fetchall()]
+    print(f"[colunas={colunas}]")
+
+    fundiveis, balde = _grupos_fundiveis(contacts)
+
+    print("=" * 68)
+    print("ENSAIO DO MUTIRÃO EM MASSA (grupos) — nada é escrito no Google")
+    print("=" * 68)
+    print(f"contatos: {len(contacts)}")
+    print(f"grupos de duplicata: {len(fundiveis) + len(balde)}")
+    print(f"  fundíveis (nome consistente): {len(fundiveis)}")
+    print(f"  🔴 balde (nomes diferentes no mesmo telefone/e-mail): {len(balde)}"
+          f"  — FORA do ensaio e fora do mutirão")
+    print(f"ensaiando os primeiros {min(limite, len(fundiveis))}\n")
+
+    stats = Counter()
+    por_grupo = []
+
+    for i, (chave, grupo) in enumerate(list(fundiveis.items())[:limite], 1):
+        antes = Counter(espiao.placar)
+        rotulo = f"{chave[:24]} ({len(grupo)} fichas) {grupo[0].get('nome')}"
+        try:
+            r = await merge_duplicate_contacts_with_propagation(grupo, conn, espiao)
+            if r.get("status") != "merged":
+                stats["pulado"] += 1
+                continue
+        except Exception as e:                                   # noqa: BLE001
+            stats["erro"] += 1
+            print(f"[{i:4d}] {rotulo[:52]:52s} ERRO: {type(e).__name__}: {e}")
+            continue
+
+        stats["fundido"] += 1
+        delta = Counter(espiao.placar)
+        delta.subtract(antes)
+        delta = {k: v for k, v in delta.items() if v}
+        por_grupo.append((rotulo, delta))
+        if delta.get("create"):
+            print(f"[{i:4d}] 🔴 {rotulo[:52]:52s} {delta}")
+
+    print("\n" + "=" * 68)
+    print("PLACAR")
+    print("=" * 68)
+    print(f"  grupos fundidos (local):    {stats['fundido']}")
+    print(f"  pulados:                    {stats['pulado']}")
+    print(f"  erros:                      {stats['erro']}")
+    print()
+    print(f"  🔴 CREATE (ficha nova):      {espiao.placar['create']}")
+    print(f"     UPDATE (ficha achada):    {espiao.placar['update']}")
+    print(f"     UPDATE que falharia:      {espiao.placar['update_falharia']}")
+    print(f"     DELETE (absorvida):       {espiao.placar['delete']}")
+
+    criadores = [(r, d) for r, d in por_grupo if d.get("create")]
+    if criadores:
+        print(f"\n🔴 {len(criadores)} grupo(s) ainda CRIARIAM ficha no Google.")
+        print("   VEREDITO: o gerador de duplicata continua ligado. NÃO soltar o mutirão.")
+        return 1
+
+    print("\n✅ VEREDITO: zero CREATE — todo merge encontrou a ficha que já existia.")
+    print("   O caminho está provado fora de produção.")
+    print("\n⚠️  O banco LOCAL foi alterado pelo ensaio. Rode: ./dev.sh sync")
+    return 0
 
 
 async def executar(limite: int) -> int:
@@ -213,7 +323,15 @@ async def executar(limite: int) -> int:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=200,
-                    help="teto de pares a ensaiar (default 200)")
+                    help="teto de grupos/pares a ensaiar (default 200)")
+    ap.add_argument("--caminho", choices=("grupos", "pares"), default="grupos",
+                    help="grupos = a rota /auto-merge-batch, o mutirão em massa "
+                         "(default) · pares = scripts/merge_duplicates.py")
+    ap.add_argument("--colunas", choices=("rota", "completas"), default="rota",
+                    help="rota = a query da /auto-merge-batch como está hoje · "
+                         "completas = SELECT *, com empresa_dados e origem")
     args = ap.parse_args()
     _exigir_banco_local()
+    if args.caminho == "grupos":
+        raise SystemExit(asyncio.run(executar_grupos(args.limit, args.colunas)))
     raise SystemExit(asyncio.run(executar(args.limit)))

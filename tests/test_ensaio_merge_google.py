@@ -125,6 +125,61 @@ async def test_update_em_ficha_inexistente_conta_como_falharia(espiao, monkeypat
     assert esp.placar["update"] == 0
 
 
+# ==================== o balde fica de fora ====================
+#
+# `find_duplicates` agrupa por telefone/e-mail/nome sem perguntar se as fichas
+# são da mesma PESSOA. Telefone de central e `marketing@` de empresa juntam gente
+# diferente — e merge não tem volta.
+# [[feedback_mesmo_telefone_nao_e_mesma_pessoa]]
+
+def _c(cid, nome, tel=None, email=None):
+    return {
+        "id": cid, "nome": nome,
+        "telefones": [{"type": "work", "number": tel}] if tel else [],
+        "emails": [{"type": "work", "email": email}] if email else [],
+    }
+
+
+def test_grupo_com_nomes_diferentes_vai_pro_balde():
+    """O caso real: Carla e Vania Leister no mesmo marketing@cec.com.br."""
+    contatos = [_c(707, "Carla", "1151122700", "marketing@cec.com.br"),
+                _c(26483, "Vania Leister", "1151122700", "marketing@cec.com.br")]
+    fundiveis, balde = ensaio._grupos_fundiveis(contatos)
+    assert fundiveis == {}, "duas pessoas diferentes não podem entrar no mutirão"
+    assert balde, "e o descarte tem que ficar visível, não sumir calado"
+
+
+def test_grupo_com_o_mesmo_nome_e_fundivel():
+    """Controle positivo: sem isto, um corte que rejeitasse TUDO passaria."""
+    contatos = [_c(491, "Bettina Berman", "11911112222"),
+                _c(21428, "Bettina Berman", "11911112222")]
+    fundiveis, balde = ensaio._grupos_fundiveis(contatos)
+    assert fundiveis, "duplicata legítima tem que continuar fundível"
+    assert balde == {}
+
+
+def test_o_corte_e_por_CHAVE_e_nao_pelo_conjunto_de_fichas():
+    """Copersucar/Copersúcar/Sidnei Rosa no telefone da empresa.
+
+    `find_duplicates` emite DUAS chaves para este conjunto, e o corte é por
+    chave: `phone:...` junta o Sidnei e vai pro balde; `name:copersucar` tem só
+    as duas Copersucar e continua fundível. É o resultado certo — o corte não
+    precisa ser mais grosso do que o problema. Perder a duplicata real de nome
+    porque uma TERCEIRA ficha divide o telefone seria over-correction.
+    """
+    contatos = [_c(1088, "Copersucar", "1133334444"),
+                _c(21589, "Copersúcar", "1133334444"),
+                _c(23751, "Sidnei Rosa", "1133334444")]
+    fundiveis, balde = ensaio._grupos_fundiveis(contatos)
+
+    assert [k for k in balde if k.startswith("phone:")], \
+        "o grupo do telefone da empresa junta o Sidnei — tem que ir pro balde"
+    assert [k for k in fundiveis if k.startswith("name:")], \
+        "as duas Copersucar são duplicata real e continuam fundíveis"
+    ids_fundiveis = {c["id"] for g in fundiveis.values() for c in g}
+    assert 23751 not in ids_fundiveis, "o Sidnei não pode entrar em nenhum merge"
+
+
 # ==================== a guarda de alvo ====================
 
 def test_guarda_recusa_prod(monkeypatch):
