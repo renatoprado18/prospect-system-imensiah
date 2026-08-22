@@ -483,6 +483,45 @@ def find_duplicates(contacts: List[Dict], include_name_duplicates: bool = True) 
     return duplicates
 
 
+
+async def _achar_ou_criar(gc_mod, access_token: str, contact_data: Dict,
+                          ignorar_rids: Optional[set] = None) -> Dict:
+    """Antes de criar ficha no Google, PROCURA se ela já existe na conta.
+
+    POR QUE (22/08/2026). O caminho acima criava direto sempre que o contato
+    mantido não tinha `google_contact_id` PARA AQUELA CONTA — e a coluna é
+    escalar enquanto as contas são duas, então numa delas ela é sempre None.
+    Efeito: **todo merge fabricava duplicata no Google**. Medido ao fundir
+    "Bettina Berman": 2 fichas apagadas e 4 criadas, uma piora líquida.
+
+    É o gerador do passivo que o `verifica_google.py` mede — não o rescaldo dele.
+    Quem apaga duplicata por um lado e cria pelo outro fica em disputa consigo
+    mesmo, e o mutirão seguinte encontra o mesmo trabalho de novo.
+
+    Busca inconclusiva (None) cai no create, como antes: criar duplicata é menos
+    grave que escrever por cima da ficha de outra pessoa.
+    """
+    telefones = [t.get("number") for t in (contact_data.get("telefones") or [])
+                 if isinstance(t, dict) and t.get("number")]
+    achado = None
+    if hasattr(gc_mod, "buscar_ficha_existente"):
+        achado = await gc_mod.buscar_ficha_existente(
+            access_token, contact_data.get("nome") or "", telefones)
+    # ⚠️ NÃO ESCREVER NA FICHA QUE ESTE MESMO MERGE VAI APAGAR. A busca acha
+    # pelo telefone, e o telefone é o mesmo nas fichas do contato absorvido —
+    # sem este filtro o merge ATUALIZAVA a ficha condenada e a apagava logo
+    # depois, no passo seguinte da mesma função. Medido fundindo "Bel Coelho":
+    # `updates` e `deletions` traziam o MESMO resourceName.
+    if achado and achado in (ignorar_rids or set()):
+        achado = None
+    if achado:
+        ok = await gc_mod.update_google_contact(access_token, achado, contact_data)
+        return {"status": "updated" if ok else "update_falhou", "google_id": achado,
+                "achado_por_busca": True}
+    novo_id = await gc_mod.create_google_contact(access_token, contact_data)
+    return {"status": "created", "google_id": novo_id}
+
+
 def merge_contacts(contacts: List[Dict]) -> Dict:
     """
     Merge multiple contacts into one.
@@ -784,7 +823,8 @@ async def get_google_accounts(db_connection) -> List[Dict]:
 async def propagate_contact_to_google(
     contact_data: Dict,
     db_connection,
-    google_contacts_module
+    google_contacts_module,
+    ignorar_rids: Optional[set] = None,
 ) -> Dict[str, Any]:
     """
     Propagate a contact update to all connected Google accounts.
@@ -883,18 +923,13 @@ async def propagate_contact_to_google(
                     }
                 else:
                     # Contact might not exist in this account, create it
-                    new_id = await google_contacts_module.create_google_contact(
-                        access_token,
-                        contact_data
-                    )
-                    results[account_email] = {'status': 'created', 'google_id': new_id}
+                    results[account_email] = await _achar_ou_criar(
+                        google_contacts_module, access_token, contact_data,
+                        ignorar_rids)
             else:
-                # Create new contact
-                new_id = await google_contacts_module.create_google_contact(
-                    access_token,
-                    contact_data
-                )
-                results[account_email] = {'status': 'created', 'google_id': new_id}
+                results[account_email] = await _achar_ou_criar(
+                    google_contacts_module, access_token, contact_data,
+                    ignorar_rids)
 
         except Exception as e:
             results[account_email] = {'status': 'error', 'error': str(e)}
@@ -952,11 +987,23 @@ async def propagate_merge_to_google(
     """
     results = {'updates': {}, 'deletions': {}}
 
+    # Os ids que serão apagados logo abaixo, calculados ANTES do update: a busca
+    # do `_achar_ou_criar` casa por telefone, e o telefone das fichas absorvidas
+    # é o mesmo — sem esta lista, o update escreveria na ficha condenada.
+    from services.contact_identity import google_ids_map as _gids
+    condenados = set()
+    for _d in deleted_contacts:
+        for _gs in _gids(_d).values():
+            condenados.update(_gs)
+        if _d.get('google_contact_id'):
+            condenados.add(_d['google_contact_id'])
+
     # Update the merged contact in Google
     update_results = await propagate_contact_to_google(
         merged_contact,
         db_connection,
-        google_contacts_module
+        google_contacts_module,
+        ignorar_rids=condenados,
     )
     results['updates'] = update_results
 

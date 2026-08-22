@@ -165,8 +165,15 @@ def classificar(fichas_google, contatos, nao_fundir=frozenset(), mantidas=frozen
         # lista pedir julgamento onde bastava limpeza, que é como os "460 nomes"
         # viraram fila do Renato.
         ts = [tokens(c["nome"]) for c in cs]
-        mesma_pessoa = any(ts[i] & ts[j]
-                           for i in range(len(ts)) for j in range(i + 1, len(ts)))
+        # TOKEN COMUM A TODOS, não a um par qualquer. Com `any(...)` bastava UMA
+        # dupla parecida pra o grupo inteiro virar "mesma pessoa" — e em grupos de
+        # cinco isso juntava a empresa com quem atende: `Copersucar / Copersucar /
+        # Sidnei Rosa`, `Bistrot Jaú ×3 / Roberto Eid Philip`, `Banestes ×2 /
+        # Ronaldo Hoffmann`. Oferecer merge disso fundiria pessoas diferentes.
+        # É a quarta vez no mesmo dia que "parecido = mesmo" cobra caro; aqui a
+        # diferença é que o erro mora no QUANTIFICADOR, não na comparação.
+        comuns = set.intersection(*ts) if ts and all(ts) else set()
+        mesma_pessoa = bool(comuns)
         baldes["dupe_intel" if mesma_pessoa else "tel_compartilhado_intel"].append({
             "ids": list(ids), "nomes": [c["nome"] for c in cs],
             "msgs": max(c["msgs"] for c in cs)})

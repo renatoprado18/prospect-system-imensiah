@@ -227,3 +227,30 @@ def test_sem_o_registro_a_ficha_continua_aparecendo():
     contatos = [_c(4281, "Navarro Neto", "+5511911112222", gid="cPRINC")]
     b, _ = vg.classificar(google, contatos)
     assert len(b["orfa"]) == 1
+
+
+def test_grupo_com_empresa_e_quem_atende_nao_e_ficha_repetida():
+    """A QUARTA VEZ do mesmo erro no dia, agora no QUANTIFICADOR (22/08).
+
+    Com `any(par tem token em comum)`, bastava UMA dupla parecida pra o grupo
+    inteiro virar "mesma pessoa". Em grupos de cinco isso juntava a empresa com
+    quem atende — `Copersucar / Copersucar / Sidnei Rosa`, `Bistrot Jaú ×3 /
+    Roberto Eid Philip`, `Banestes ×2 / Ronaldo Hoffmann`. Oferecer merge disso
+    fundiria pessoas diferentes, e merge de contato é irreversível.
+    """
+    contatos = [_c(1088, "Copersucar", "+551133334444"),
+                _c(21589, "Copersúcar", "+551133334444"),
+                _c(23751, "Sidnei Rosa", "+551133334444")]
+    b, _ = vg.classificar([], contatos)
+    assert b["dupe_intel"] == [], "grupo com pessoa e empresa oferecido como merge"
+    assert len(b["tel_compartilhado_intel"]) == 1
+
+
+def test_grupo_todo_da_mesma_pessoa_continua_fundivel():
+    """Controle positivo: `Bettina Berman` três vezes é limpeza de verdade."""
+    contatos = [_c(491, "Bettina Berman", "+5511911112222"),
+                _c(21428, "Bettina Berman", "+5511911112222"),
+                _c(25536, "Bettina Berman", "+5511911112222")]
+    b, _ = vg.classificar([], contatos)
+    assert len(b["dupe_intel"]) == 1
+    assert b["dupe_intel"][0]["ids"] == [491, 21428, 25536]

@@ -5,6 +5,7 @@ Supports multiple Google accounts (personal + professional)
 import os
 import json
 import logging
+import re
 import httpx
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -715,6 +716,67 @@ async def create_google_contact(access_token: str, contact_data: Dict) -> Option
 
         result = response.json()
         return result.get("resourceName", "").replace("people/", "")
+
+
+
+async def buscar_ficha_existente(access_token: str, nome: str,
+                                 telefones: List[str]) -> Optional[str]:
+    """Procura, na conta, uma ficha que já seja desta pessoa. Devolve o rid.
+
+    POR QUE EXISTE (22/08/2026). `contact_dedup` cria ficha nova no Google sempre
+    que o contato mantido não tem `google_contact_id` PARA AQUELA CONTA — e a
+    coluna é escalar enquanto as contas são duas, então em pelo menos uma delas
+    ela é sempre None. Resultado: **todo merge fabricava duplicata no Google**.
+    Medido ao fundir "Bettina Berman": 2 fichas apagadas, 4 criadas.
+
+    Isso não é rescaldo de bug antigo, é o gerador ainda ligado — parte do passivo
+    que o `verifica_google.py` mede nasce aqui. Procurar antes de criar é o que
+    separa "propagar o merge" de "produzir o que o merge veio limpar".
+
+    BUSCA PELO NOME, confere pelo TELEFONE. `people:searchContacts` é textual:
+    casa "Bettina Berman" e "99192-1788" (o formato gravado), e NÃO casa
+    "991921788" nem "+5511991921788" — medido. Procurar por dígitos normalizados,
+    que era a primeira versão desta função, voltava vazio sempre e levaria direto
+    ao create que ela veio impedir.
+    """
+    def _chave(v):
+        d = re.sub(r"\D", "", v or "")
+        return d[-8:] if len(d) >= 8 else ""
+
+    alvos = {_chave(t) for t in (telefones or []) if _chave(t)}
+    consultas = [q for q in ([nome.strip()] if nome and nome.strip() else []) +
+                 list(telefones or []) if q]
+    if not consultas:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            cab = {"Authorization": f"Bearer {access_token}"}
+            # warmup exigido pela API: sem a chamada de query vazia, a busca real
+            # volta vazia na primeira vez.
+            await client.get(f"{GOOGLE_PEOPLE_API}/people:searchContacts",
+                             headers=cab, params={"query": "", "readMask": "names"})
+            for q in consultas[:3]:
+                r = await client.get(f"{GOOGLE_PEOPLE_API}/people:searchContacts",
+                                     headers=cab,
+                                     params={"query": q, "readMask": "names,phoneNumbers"})
+                if r.status_code != 200:
+                    logger.warning("buscar_ficha_existente: HTTP %s — %s",
+                                   r.status_code, r.text[:150])
+                    continue
+                for item in (r.json().get("results") or []):
+                    pessoa = item.get("person") or {}
+                    tels = {_chave(t.get("value")) for t in (pessoa.get("phoneNumbers") or [])}
+                    # sem telefone em comum não dá pra afirmar que é a mesma
+                    # pessoa — homônimo existe, e criar duplicata é menos grave
+                    # que escrever por cima da ficha de outro.
+                    if alvos and (tels & alvos):
+                        return (pessoa.get("resourceName") or "").replace("people/", "") or None
+        return None
+    except Exception as e:
+        # Falha de busca NÃO é "não existe": quem chama trata None como "não sei".
+        logger.error("buscar_ficha_existente falhou: %s", e)
+        return None
 
 
 async def update_google_contact(
