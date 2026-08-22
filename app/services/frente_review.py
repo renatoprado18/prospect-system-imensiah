@@ -891,6 +891,137 @@ def latest_review() -> Optional[Dict[str, Any]]:
     return payload if isinstance(payload, dict) else json.loads(payload)
 
 
+def _assinatura_portao(texto: str) -> str:
+    """Chave estável de um portão, para o mesmo pedido não virar signal novo.
+
+    O `o_que` é escrito pelo modelo e muda de redação entre rodadas — 14 por dia.
+    Hash do texto cru geraria um signal por rodada e inundaria o briefing. Por
+    outro lado, hash só do `project_id` seria estável demais: portão resolvido
+    não reabre (`emit_signal` não ressuscita `resolved`), e um pedido DIFERENTE
+    na mesma frente nunca mais chegaria.
+
+    O meio-termo: normaliza (minúsculas, só alfanumérico) e corta em 120 chars.
+    Reescrita trivial mantém a chave; pedido de outra natureza muda.
+    """
+    normal = re.sub(r"[^a-z0-9]+", "", (texto or "").lower())
+    return normal[:120]
+
+
+def portoes_abertos(payload: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Os `precisa_de_voce` do último debriefing, achatados e com chave."""
+    payload = payload if payload is not None else latest_review()
+    if not payload:
+        return []
+    out: List[Dict[str, Any]] = []
+    for f in (payload.get("frentes") or []):
+        pdv = f.get("precisa_de_voce") or {}
+        if not pdv.get("sim"):
+            continue
+        o_que = (pdv.get("o_que") or "").strip()
+        if not o_que:
+            continue
+        out.append({
+            "project_id": f.get("project_id"),
+            "frente": f.get("frente"),
+            "o_que": o_que,
+            "assinatura": _assinatura_portao(o_que),
+        })
+    return out
+
+
+async def alertar_portoes(limite: int = 20) -> Dict[str, Any]:
+    """Emite SIGNAL com os portões que o agente abriu — um por frente.
+
+    POR QUE EXISTE (22/08/2026). O Renato disse "não estou recebendo nada do
+    cos-agent", e estava certo: o agente **não tinha canal de saída**. Nenhuma
+    linha de notificação no código dele. O runner grava o julgamento em
+    `cos_daily_review`; o `cockpit.py --quieto` transforma isso num HTML local a
+    cada 5 minutos — `--quieto` é literalmente "gera sem abrir" — e o briefing da
+    Tônia, que é o canal que ele lê, nunca consultou essa tabela.
+
+    Resultado medido: 14 rodadas/dia, ~44,5M tokens/dia (10% do consumo do Max),
+    produzindo 14 portões por rodada que terminavam num arquivo em disco. Na
+    rodada das 17h21 de 22/08 estavam lá dentro a ligação com o Israel antes da
+    mesa de segunda, a proposta da Phisalia ao Eduardo, a procuração do IDPJ com
+    a Wanelise e a multa da DCTF com 50% de desconto até 26/08. Nada chegou.
+
+    É a MESMA falha do artigo do Gui, do mesmo dia: captura que funciona,
+    entrega que não existe. [[feedback_consumidor_morto_wiring]]
+
+    UM SIGNAL POR PORTÃO, não um com a lista. Cada portão é uma coisa que só ele
+    pode fazer, com relógio próprio; agrupar faria o conjunto inteiro nascer de
+    novo toda vez que UM item mudasse, e um portão resolvido voltaria junto com
+    os vivos.
+
+    VAI POR SIGNAL, NÃO POR WHATSAPP DAQUI. O porta-voz único é a Tônia — ela
+    decide se e como interrompe. Mandar WA deste módulo reabriria o que o A3
+    fechou em 12/07. [[feedback_wa_silencio_produtor]]
+    """
+    from services.detectors._base import (
+        emit_signal, expire_stale_signals, make_signal_hash,
+    )
+
+    DETECTOR = "frente_review.alertar_portoes"
+    resultado: Dict[str, Any] = {"portoes": 0, "emitidos": 0, "atualizados": 0,
+                                 "ja_resolvidos": 0, "expirados": 0,
+                                 "skipped_reason": None}
+
+    portoes = portoes_abertos()
+    if not portoes:
+        # SEM PORTÃO NÃO É NO-OP: se o debriefing parou de pedir, o que estava
+        # aberto tem que fechar. Sair aqui deixaria o briefing cobrando para
+        # sempre o que ele já fez — a reclamação de "dou feedback e continua lá".
+        resultado["skipped_reason"] = "sem_portao_aberto"
+        with get_db() as conn:
+            resultado["expirados"] = expire_stale_signals(
+                conn, detector=DETECTOR, current_hashes=[],
+                reason="portao_fechou")
+            conn.commit()
+        return resultado
+
+    resultado["portoes"] = len(portoes)
+    hashes: List[str] = []
+    with get_db() as conn:
+        for p in portoes[:limite]:
+            # `project_id` entra no hash junto com a assinatura: duas frentes
+            # podem pedir a mesma coisa (dois portões citaram o Orestes na
+            # rodada de 22/08) e são pedidos distintos, de donos distintos.
+            assinatura = make_signal_hash("cos_portao", str(p["project_id"]),
+                                          p["assinatura"])
+            hashes.append(assinatura)
+            estado = emit_signal(
+                conn,
+                tipo="cos_portao",
+                signal_hash=assinatura,
+                urgencia=8,
+                contexto={"project_id": p["project_id"], "frente": p["frente"],
+                          "o_que": p["o_que"]},
+                detector=DETECTOR,
+            )
+            if estado == "emitted":
+                resultado["emitidos"] += 1
+            elif estado == "updated":
+                resultado["atualizados"] += 1
+            else:
+                # 'skipped' = ele já resolveu/dispensou este portão. Contado à
+                # parte porque somar com 'atualizados' esconderia o caso em que
+                # o agente insiste num pedido já fechado.
+                resultado["ja_resolvidos"] += 1
+
+        # Portão que saiu do debriefing desde a última rodada.
+        resultado["expirados"] = expire_stale_signals(
+            conn, detector=DETECTOR, current_hashes=hashes,
+            reason="portao_fechou")
+        conn.commit()
+
+    logger.info("alertar_portoes: %s portão(ões) → %s novo(s), %s atualizado(s), "
+                "%s já resolvido(s), %s expirado(s)",
+                resultado["portoes"], resultado["emitidos"],
+                resultado["atualizados"], resultado["ja_resolvidos"],
+                resultado["expirados"])
+    return resultado
+
+
 def agente_local_ja_rodou_hoje() -> bool:
     """O agente local (Max, custo zero) já escreveu o debriefing de hoje?
 

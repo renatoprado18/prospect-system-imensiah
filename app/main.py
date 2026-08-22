@@ -4292,6 +4292,7 @@ def _load_railway_crons() -> List[Dict]:
         {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
         {"path": "/api/cron/run-group-messages", "schedule": "40 1,7,13,19 * * *", "source": "railway"},
         {"path": "/api/cron/news-alertas", "schedule": "40 9 * * *", "source": "railway"},
+        {"path": "/api/cron/cos-portao-alertas", "schedule": "45 9 * * *", "source": "railway"},
         {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
     ]
 
@@ -30618,6 +30619,45 @@ async def cron_news_alertas(request: Request):
     except Exception as e:
         logger.exception("cron_news_alertas: exception")
         return {"status": "error", "job": "news-alertas", "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/cron/cos-portao-alertas")
+@track_cron_run
+async def cron_cos_portao_alertas(request: Request):
+    """Emite signal com os portões que o cos-agent abriu — a entrega que faltava.
+
+    POR QUE (22/08/26). O Renato disse "não estou recebendo nada do cos-agent", e
+    estava certo: o agente não tinha canal de saída. O runner grava o julgamento
+    em `cos_daily_review`, o `cockpit.py --quieto` vira HTML local ("gera sem
+    abrir"), e o briefing da Tônia — o canal que ele lê — nunca consultou essa
+    tabela. Eram 14 rodadas/dia e ~44,5M tokens/dia produzindo 14 portões que
+    terminavam num arquivo em disco: a ligação com o Israel antes da mesa, a
+    proposta da Phisalia, a procuração do IDPJ, a multa da DCTF com desconto até
+    26/08. Nada chegou.
+
+    Mesma falha do artigo do Gui, do mesmo dia: captura que funciona, entrega que
+    não existe.
+
+    Roda às 9:45 UTC, junto do `news-alertas` (9:40) e antes do briefing das 7h
+    BRT que consome os signals. O portão sai da rodada das 20:12 BRT da véspera —
+    a última antes do briefing.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.frente_review import alertar_portoes
+
+    try:
+        r = await _aio.wait_for(alertar_portoes(), timeout=120.0)
+        return {"status": "ok", "job": "cos-portao-alertas", **r}
+    except _aio.TimeoutError:
+        logger.error("cron_cos_portao_alertas: > 120s")
+        return {"status": "error", "job": "cos-portao-alertas", "error": "timeout > 120s"}
+    except Exception as e:
+        logger.exception("cron_cos_portao_alertas: exception")
+        return {"status": "error", "job": "cos-portao-alertas",
+                "error": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/api/cron/run-daily-news-digest")

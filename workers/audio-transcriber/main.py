@@ -181,6 +181,12 @@ _SCHEDULER_JOBS = [
     # duplicar" — errado: o signal ficaria 22h esperando o briefing do dia
     # seguinte. Ordem de cron não é detalhe quando um alimenta o outro.
     ("news-alertas", "/api/cron/news-alertas", CronTrigger(hour=9, minute=40)),
+    # 22/08/26 — o portão do cos-agent passa a CHEGAR. O agente julgava 14×/dia
+    # e não tinha canal: gravava em `cos_daily_review`, o cockpit virava HTML
+    # local com `--quieto` ("gera sem abrir"), e o briefing nunca leu a tabela.
+    # 9:45 UTC, entre o news-alertas e o briefing das 7h BRT que consome.
+    ("cos-portao-alertas", "/api/cron/cos-portao-alertas",
+     CronTrigger(hour=9, minute=45)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e
