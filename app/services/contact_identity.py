@@ -1041,6 +1041,143 @@ def phone_match_order_sql(alias: str = "c") -> str:
     return _PHONE_MATCH_ORDER.format(alias=alias)
 
 
+# ==================== Identidade por E-MAIL (03/08/2026) ====================
+#
+# POR QUE ISTO EXISTE — o caso #999695 (Piccino).
+# A task "[Reorg 7] FUP Piccino" espera resposta de `joao@piccino.com.br` e o
+# e-mail JA esta em `messages` (1.769 linhas com `conversations.canal='email'`).
+# Ainda assim, nenhuma reconciliacao a enxergava, por DOIS motivos medidos:
+#
+#   (a) 81% dos e-mails tem `messages.contact_id` NULL — quem cruza por
+#       `m.contact_id = t.contact_id` nao ve 4 em cada 5 e-mails da base;
+#   (b) FICHA IRMA: a task aponta pra ficha #2869 e a thread inteira esta
+#       gravada na #2858 — as DUAS tem o mesmo `joao@piccino.com.br`. Medido:
+#       56 enderecos aparecem em mais de uma ficha, envolvendo 133 fichas.
+#
+# A chave estavel nos dois casos e o ENDERECO, nao o `contact_id`. Estes
+# primitivos existem pra que exista UM lugar que sabe casar mensagem<->pessoa
+# por e-mail — a mesma razao pela qual `phone_match_sql` existe pro telefone
+# ([[reference_telefone_br_normalizacao]]): cada consumidor inventando o seu
+# `emails::text ILIKE '%x%'` e como a base chegou aqui.
+
+# Regex de endereco. IDENTICO no Python e no SQL de proposito: duas definicoes
+# de "isto e um e-mail" divergem no primeiro caso esquisito e o defeito aparece
+# como linha que some, sem erro ([[feedback_filtro_vocabulario_errado_falha_calado]]).
+#
+# `%` esta FORA da classe de caracteres de proposito. Endereco com `%` no local
+# e artefato de source-routing dos anos 90 (zero na base), mas um `%` solto no
+# texto de uma query com parametros faz o psycopg2 estourar
+# ("unsupported format character") — o remedio seria dobrar pra `%%`, e ai o
+# MESMO fragmento pararia de funcionar colado no psql (que nao dobra nada).
+# Sem `%`, o fragmento roda igual nos dois lugares.
+_EMAIL_RE_SQL = r"[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+EMAIL_RE = re.compile(_EMAIL_RE_SQL)
+
+
+def extract_emails(text: Any) -> List[str]:
+    """Enderecos citados num texto livre, normalizados e deduplicados.
+
+    Usado pra recuperar o terceiro de uma task SEM `contact_id` — metade do
+    furo do #999695. A descricao da task costuma trazer o endereco literal
+    ("E-mail ENVIADO ao Piccino ... (joao@piccino.com.br)") porque quem
+    escreveu queria justamente registrar pra QUEM foi. Medido em 06/08: das 73
+    tasks abertas sem ficha, 2 tem endereco no texto — pouco em proporcao, mas
+    uma delas e a #999735 ("Aguardar retorno do Nick", nick@luminosita.it),
+    exatamente a classe de task que este cano existe pra fechar.
+    """
+    out: List[str] = []
+    for raw in EMAIL_RE.findall(str(text or "")):
+        email = raw.strip().lower().rstrip(".")
+        if email and email not in out:
+            out.append(email)
+    return out
+
+
+def message_emails_sql(alias: str = "m", direction_aware: bool = True) -> str:
+    """Fragmento booleano que casa uma linha de `messages` (canal e-mail) com um
+    conjunto de enderecos. Consome DOIS parametros: o MESMO `text[]` duas vezes.
+
+    Por que extrair com regex em vez de comparar `metadata->>'from'` direto:
+    o campo vem em tres formatos na base — endereco puro (1.544), `Nome
+    <endereco>` (13) — e `to` ora e array JSON (212), ora string (14). A regex
+    normaliza os tres num array de enderecos e a comparacao vira igualdade
+    exata (`&&`), sem `ILIKE '%...%'` — que casaria `anick@luminosita.it` com
+    `nick@luminosita.it`.
+
+    `direction_aware=True` (default) casa INCOMING so pelo `from` e OUTGOING so
+    pelo `to`. Isso importa: sem essa separacao, um e-mail que TERCEIRO manda
+    pro Renato com o contato em copia contaria como "o contato respondeu" — e
+    resposta do contato e exatamente o gatilho que fecha task de espera.
+    """
+    frm = (f"ARRAY(SELECT DISTINCT lower(a[1]) FROM regexp_matches("
+           f"COALESCE({alias}.metadata->>'from',''), '{_EMAIL_RE_SQL}', 'g') a)")
+    to = (f"ARRAY(SELECT DISTINCT lower(a[1]) FROM regexp_matches("
+          f"COALESCE({alias}.metadata->>'to',''), '{_EMAIL_RE_SQL}', 'g') a)")
+    if not direction_aware:
+        both = (f"ARRAY(SELECT DISTINCT lower(a[1]) FROM regexp_matches("
+                f"COALESCE({alias}.metadata->>'from','') || ' ' || "
+                f"COALESCE({alias}.metadata->>'to',''), '{_EMAIL_RE_SQL}', 'g') a)")
+        return f"({both} && %s::text[] AND %s::text[] IS NOT NULL)"
+    return (f"(CASE WHEN {alias}.direcao = 'incoming' "
+            f"THEN {frm} && %s::text[] ELSE {to} && %s::text[] END)")
+
+
+def contact_ids_by_emails(cursor, emails: List[str]) -> List[int]:
+    """Todas as fichas que carregam qualquer um destes enderecos — INCLUSIVE as
+    irmas duplicadas (#2858 e #2869 no caso Piccino).
+
+    Abstem quando o endereco esta em fichas demais (`SHARED_LINE_MAX_CONTACTS`):
+    ai nao e identidade de pessoa, e caixa compartilhada — mesma guarda do
+    telefone, pelo mesmo motivo (o fixo `551135761505` tem duas pessoas).
+    """
+    keys = [e.strip().lower() for e in (emails or []) if e and "@" in e]
+    if not keys:
+        return []
+    cursor.execute("""
+        SELECT lower(btrim(e->>'email')) AS em, c.id
+          FROM contacts c
+          CROSS JOIN LATERAL jsonb_array_elements(
+              CASE WHEN jsonb_typeof(c.emails) = 'array' THEN c.emails ELSE '[]'::jsonb END
+          ) e
+         WHERE lower(btrim(e->>'email')) = ANY(%s)
+    """, (keys,))
+    por_endereco: Dict[str, List[int]] = defaultdict(list)
+    for row in cursor.fetchall():
+        em = row["em"] if isinstance(row, dict) else row[0]
+        cid = row["id"] if isinstance(row, dict) else row[1]
+        if cid not in por_endereco[em]:
+            por_endereco[em].append(cid)
+    ids: List[int] = []
+    for em, cids in por_endereco.items():
+        if len(cids) > SHARED_LINE_MAX_CONTACTS:
+            logger.info("contact_ids_by_emails: %s em %d fichas — caixa de setor, abstendo",
+                        em, len(cids))
+            continue
+        for cid in cids:
+            if cid not in ids:
+                ids.append(cid)
+    return ids
+
+
+def owner_emails(cursor) -> List[str]:
+    """Enderecos do dono. Existe pra que "e-mail citado no texto da task" nunca
+    resolva pro proprio Renato: a task #999704 cita `renato@almeida-prado.com`
+    na descricao, e sem esta guarda ela passaria a ser "fechavel" por qualquer
+    e-mail que ele mesmo mandasse — o sistema ouvindo o proprio eco
+    ([[feedback_maquina_ouve_o_proprio_eco]])."""
+    ids = owner_contact_ids(cursor)
+    if not ids:
+        return []
+    cursor.execute("SELECT emails FROM contacts WHERE id = ANY(%s)", (ids,))
+    out: List[str] = []
+    for row in cursor.fetchall():
+        blob = row["emails"] if isinstance(row, dict) else row[0]
+        for em in contact_emails({"emails": blob}):
+            if em not in out:
+                out.append(em)
+    return out
+
+
 OWNER_PHONE_ENV = "RENATO_PHONE"
 OWNER_PHONE_FALLBACK = "5511984153337"  # mesmo canonico de notification_router/intel_bot
 

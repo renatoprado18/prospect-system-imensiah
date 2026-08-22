@@ -32,6 +32,26 @@ voltava nunca, e a CoS tinha de reverter à mão pra ela não sumir do portão.
 Agora `sweep_on_hold` reabre por (a) resposta substantiva do contato depois do
 parqueio e (b) janela de espera esgotada. `parqueio_indefinido` fica de fora do
 aging de propósito — ver a migration.
+
+FASE 3 — A RESPOSTA QUE VOLTA POR E-MAIL (03-06/08, pedido do Renato):
+Caso #999695 "[Reorg 7] FUP Piccino", espera de `joao@piccino.com.br`. Task de
+espera cujo canal é e-mail ficava CEGA pra sempre. Dois furos somados:
+
+  (a) O cruzamento era `m.contact_id = t.contact_id`, e **81% dos e-mails têm
+      `messages.contact_id` NULL** (1.436 de 1.769) — o cano só via WhatsApp na
+      prática, apesar de `messages` já guardar e-mail desde jul/2025;
+  (b) **ficha irmã**: a task aponta pra ficha #2869 e a thread inteira está
+      gravada na #2858 — as duas com `joao@piccino.com.br`. Medido: 56
+      endereços em mais de uma ficha, 133 fichas envolvidas.
+
+E um terceiro, que é metade do problema: **task sem `contact_id`** (73 das 119
+abertas, 61%) some de qualquer gate que case por ficha.
+
+O casamento agora é por IDENTIDADE (`services/contact_identity`): ficha da task
++ fichas irmãs pelo mesmo endereço + endereço citado no texto da task quando não
+há ficha. NÃO houve backfill de `contact_id` nos e-mails órfãos — medido, só 27
+dos 1.436 órfãos têm remetente que já é contato (1,9%): re-linkar dado
+resolveria quase nada, casar por endereço na hora da leitura resolve o caso.
 """
 import json
 import logging
@@ -40,12 +60,29 @@ import re
 from datetime import timedelta
 from database import get_db
 from services import llm, llm_usage
+from services.contact_identity import (
+    contact_emails,
+    contact_ids_by_emails,
+    extract_emails,
+    message_emails_sql,
+    owner_emails,
+)
 
 logger = logging.getLogger(__name__)
 
 CONFIDENCE_THRESHOLD = 0.85
 MAX_MSGS_PER_TASK = 8
 MAX_MSG_CHARS = 500
+
+# COTA POR CANAL (06/08) — sem ela, cruzar e-mail não teria adiantado nada.
+# Medido no teste contra prod: a #999735 ("Aguardar retorno do Nick") tinha 6
+# mensagens de WhatsApp trocadas com a Fran no dia 06/08 e o e-mail ao Nick era
+# de 05/08 — ordenando só por data, as 8 vagas eram todas de WhatsApp e o e-mail
+# ficava de fora. A cegueira voltaria pela porta dos fundos: justamente na task
+# de espera POR E-MAIL, que é o caso que esta frente existe pra resolver.
+# Cada canal garante suas N mais recentes; o resto das vagas é por data.
+CANAL_MIN_SLOTS = 3
+MAX_MSGS_TOTAL = MAX_MSGS_PER_TASK + 4
 
 # Janela de espera da convenção de 29/07: 7 dias de atraso sem resposta antes de
 # a task voltar ao radar. Contada de GREATEST(data_vencimento, on_hold_since) —
@@ -96,42 +133,162 @@ def is_on_hold_sweep_enabled() -> bool:
 
 
 def _fetch_candidate_tasks():
-    """Tasks pending COM contact_id. Retorna (candidates, n_sem_contato)."""
+    """Tasks pending. Retorna (candidates, n_sem_identidade).
+
+    Até 06/08 o filtro era `contact_id IS NOT NULL` e as sem ficha ficavam fora
+    por completo. Agora elas entram QUANDO o texto traz um endereço de e-mail —
+    é o que resgata a #999735 ("Aguardar retorno do Nick", `nick@luminosita.it`
+    na descrição, `contact_id` NULL). Quem não tem ficha NEM endereço continua
+    fora e segue contada, sem cap silencioso.
+    """
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
             SELECT id, titulo, descricao, contact_id, project_id, data_criacao, data_vencimento
             FROM tasks
-            WHERE status = 'pending' AND contact_id IS NOT NULL
+            WHERE status = 'pending'
             ORDER BY data_criacao ASC
         """)
-        cands = [dict(r) for r in cur.fetchall()]
-        cur.execute("SELECT COUNT(*) AS n FROM tasks WHERE status='pending' AND contact_id IS NULL")
-        n_sem = cur.fetchone()['n']
-    return cands, n_sem
+        todas = [dict(r) for r in cur.fetchall()]
+
+    cands, sem_identidade = [], 0
+    for task in todas:
+        scope = _task_scope(task)
+        if scope["contact_ids"] or scope["emails"]:
+            task["_scope"] = scope
+            cands.append(task)
+        else:
+            sem_identidade += 1
+    return cands, sem_identidade
 
 
-def _fetch_messages_since(contact_id, since):
-    """Mensagens (ambas direções) trocadas com o contato DEPOIS de `since`."""
+def _task_scope(task) -> dict:
+    """Identidade do TERCEIRO da task: fichas equivalentes + endereços de e-mail.
+
+    Ordem, e o porquê de cada degrau:
+      1. `contact_id` da task — o que sempre existiu;
+      2. fichas IRMÃS (mesmo endereço em outra ficha) — sem isto o #999695 fica
+         cego mesmo com o `contact_id` preenchido: a task está na #2869 e a
+         thread na #2858, ambas `joao@piccino.com.br`;
+      3. sem ficha nenhuma, os endereços CITADOS NO TEXTO da task, menos os do
+         próprio Renato (a #999704 cita `renato@almeida-prado.com`; sem essa
+         subtração ela passaria a se fechar com o eco do próprio sistema).
+
+    Devolve `{'contact_ids': [...], 'emails': [...], 'origem': ...}`. `origem`
+    entra no log pra a CoS conseguir ver quais tasks só foram alcançadas pelo
+    texto — essas têm dado a corrigir (linkar a ficha), não é para virar norma.
+    """
+    contact_ids, emails, origem = [], [], "nenhum"
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT direcao, conteudo, COALESCE(enviado_em, recebido_em, criado_em) AS ts
-            FROM messages
-            WHERE contact_id = %s
-              AND conteudo IS NOT NULL AND conteudo <> ''
-              AND COALESCE(enviado_em, recebido_em, criado_em) > %s
+        # O e-mail do DONO nunca é critério de "o terceiro respondeu" — nos dois
+        # degraus, não só no do texto (22/08). A guarda nascera só no `else`, e o
+        # ramo da ficha entregava o eco de bandeja: 21 das 148 tasks pending
+        # apontam pra ficha #23419, que é a do PRÓPRIO Renato (as 4 fichas dele
+        # viraram uma em 06/08). Para essas, `emails` vinha
+        # ['renato@almeida-prado.com', 'renato.almeida.prado@gmail.com'] e a perna
+        # de endereço casava QUALQUER e-mail que ele mandou ou recebeu — 266
+        # mensagens entrando como evidência de resposta de terceiro. O reconciler
+        # ainda passa por LLM a 0.85, então não fecharia sozinho; mas alimentar o
+        # julgamento com evidência falsa é pior que não alimentar
+        # ([[feedback_maquina_ouve_o_proprio_eco]]).
+        do_dono = set(owner_emails(cur))
+        if task.get("contact_id"):
+            origem = "ficha"
+            contact_ids = [task["contact_id"]]
+            cur.execute("SELECT emails FROM contacts WHERE id = %s", (task["contact_id"],))
+            row = cur.fetchone()
+            if row:
+                emails = [e for e in contact_emails({"emails": row["emails"]})
+                          if e not in do_dono]
+            # Sem endereço de terceiro sobrando, a perna de e-mail não casa nada e
+            # a task segue só pelo `contact_id` — que é exatamente o cano de antes.
+            for cid in contact_ids_by_emails(cur, emails):
+                if cid not in contact_ids:
+                    contact_ids.append(cid)
+        else:
+            texto = f"{task.get('titulo') or ''} {task.get('descricao') or ''}"
+            emails = [e for e in extract_emails(texto) if e not in do_dono]
+            if emails:
+                origem = "texto"
+                contact_ids = contact_ids_by_emails(cur, emails)
+    return {"contact_ids": contact_ids, "emails": emails, "origem": origem}
+
+
+def _scope_where(scope, alias="m"):
+    """(fragmento SQL, params) que casa uma mensagem com a identidade da task.
+
+    Duas pernas em OR, porque as duas metades da base são diferentes:
+      - `contact_id = ANY(...)` pega WhatsApp (sempre linkado) e o e-mail que já
+        veio linkado;
+      - `canal='email' AND <endereços>` pega o resto — os 81% de e-mails com
+        `contact_id` NULL e os que estão na ficha irmã.
+    O casamento por endereço é direcional (incoming pelo `from`, outgoing pelo
+    `to`), senão um e-mail de OUTRA pessoa com o contato em cópia contaria como
+    "o contato respondeu".
+    """
+    pernas, params = [], []
+    if scope.get("contact_ids"):
+        pernas.append(f"{alias}.contact_id = ANY(%s)")
+        params.append(scope["contact_ids"])
+    if scope.get("emails"):
+        pernas.append(f"(cv.canal = 'email' AND {message_emails_sql(alias)})")
+        params.extend([scope["emails"], scope["emails"]])  # o fragmento consome 2×
+    if not pernas:
+        return "FALSE", []
+    return "(" + " OR ".join(pernas) + ")", params
+
+
+def _fetch_messages_since(scope, since):
+    """Mensagens (ambas direções) trocadas com o TERCEIRO depois de `since` —
+    WhatsApp e e-mail na mesma peneira, casadas por identidade."""
+    cond, params = _scope_where(scope)
+    if not params:
+        return []
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            WITH base AS (
+                SELECT m.direcao, m.conteudo,
+                       COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS ts,
+                       COALESCE(cv.canal, 'whatsapp') AS canal,
+                       -- QUEM falou. Uma task sem ficha pode citar mais de um
+                       -- endereço (a #999735 cita o Nick E a Fran, em cópia), e
+                       -- sem o nome o julgamento leria "contato→você" da Fran
+                       -- como o retorno do Nick — fecharia a espera errada.
+                       COALESCE(ct.nome, m.metadata->>'from_name',
+                                m.metadata->>'from') AS parte
+                FROM messages m
+                LEFT JOIN conversations cv ON cv.id = m.conversation_id
+                LEFT JOIN contacts ct ON ct.id = m.contact_id
+                WHERE {cond}
+                  AND m.conteudo IS NOT NULL AND m.conteudo <> ''
+                  AND COALESCE(m.enviado_em, m.recebido_em, m.criado_em) > %s
+            ),
+            ranqueada AS (
+                SELECT *, row_number() OVER (ORDER BY ts DESC) AS rn_geral,
+                          row_number() OVER (PARTITION BY canal ORDER BY ts DESC) AS rn_canal
+                FROM base
+            )
+            SELECT direcao, conteudo, ts, canal, parte
+            FROM ranqueada
+            WHERE rn_geral <= %s OR rn_canal <= %s   -- cota por canal: ver CANAL_MIN_SLOTS
             ORDER BY ts DESC
             LIMIT %s
-        """, (contact_id, since, MAX_MSGS_PER_TASK))
+        """, tuple(params) + (since, MAX_MSGS_PER_TASK, CANAL_MIN_SLOTS, MAX_MSGS_TOTAL))
         return [dict(r) for r in cur.fetchall()]
 
 
 def _judge(task, msgs) -> dict:
     """LLM (Haiku) decide se a task foi concluída à luz das mensagens. JSON estrito.
     Retorna {done, confidence, reason}. Best-effort: erro → done=false."""
+    # O CANAL vai no prompt (06/08): com e-mail na peneira, o julgamento muda —
+    # "respondeu por e-mail" é a evidência que fecha a #999695, e sem o rótulo o
+    # modelo lê uma thread de e-mail como se fosse recado de WhatsApp.
     convo = "\n".join(
-        f"[{'você→contato' if m['direcao'] == 'outgoing' else 'contato→você'} "
+        f"[{'você→' if m['direcao'] == 'outgoing' else ''}"
+        f"{(m.get('parte') or 'contato')}{'' if m['direcao'] == 'outgoing' else '→você'} "
+        f"por {m.get('canal') or 'whatsapp'} "
         f"{m['ts']:%d/%m %H:%M}] {(m['conteudo'] or '')[:MAX_MSG_CHARS]}"
         for m in reversed(msgs)  # mais antigas primeiro, pra leitura cronológica
     )
@@ -146,8 +303,9 @@ MENSAGENS DESDE A CRIAÇÃO (cronológico):
 {convo}
 
 REGRAS:
-- Tarefa de AÇÃO (enviar/mandar/cobrar/falar/contatar/responder): só está concluída se HÁ mensagem SUA (você→contato) que CUMPRE a ação.
-- Tarefa de ESPERA (aguardar/esperar retorno de alguém): só está concluída se o CONTATO respondeu (contato→você) o que era esperado.
+- Cada linha traz QUEM falou e POR QUAL CANAL (whatsapp/email). A tarefa nomeia de quem se espera o retorno — resposta de OUTRA pessoa da mesma conversa NÃO conclui a espera.
+- Tarefa de AÇÃO (enviar/mandar/cobrar/falar/contatar/responder): só está concluída se HÁ mensagem SUA (você→…) que CUMPRE a ação.
+- Tarefa de ESPERA (aguardar/esperar retorno de alguém): só está concluída se a PESSOA ESPERADA respondeu (…→você) o que era esperado — por WhatsApp ou por e-mail, tanto faz o canal.
 - Na dúvida, done=false. Conversa tangencial NÃO conclui a tarefa.
 - Só done=true se as mensagens claramente satisfazem o que a tarefa pedia.
 
@@ -235,12 +393,14 @@ def _fetch_on_hold_tasks():
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, titulo, contact_id, project_id, data_vencimento,
+            SELECT id, titulo, descricao, contact_id, project_id, data_vencimento,
                    atualizado_em, on_hold_since, on_hold_reason
             FROM tasks
             WHERE status = 'on_hold'
             ORDER BY id ASC
         """)
+        # `descricao` entrou em 06/08: é de lá que sai o endereço de e-mail da
+        # task sem ficha (16 das 30 parqueadas não têm `contact_id`).
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -268,27 +428,51 @@ def _classify_on_hold(task) -> None:
         conn.commit()
 
 
-def _last_substantive_incoming(contact_id, since):
-    """Mensagem do contato (INCOMING) posterior ao parqueio que NÃO é cortesia.
+def _last_substantive_incoming(scope, since):
+    """Mensagem do terceiro (INCOMING) posterior ao parqueio que NÃO é cortesia.
 
     O filtro de cortesia é o mesmo de raci_smart_updates, já calibrado em prod:
     sem ele, um "obrigado, bom domingo" reabre a task e a convenção vira ruído —
     é exatamente o falso-positivo que o check G da /cos levou um dia pra corrigir
-    (uma cortesia às 16:11 ressuscitou item respondido às 16:10)."""
+    (uma cortesia às 16:11 ressuscitou item respondido às 16:10).
+
+    Desde 06/08 recebe a IDENTIDADE (fichas + endereços), não um `contact_id`:
+    era aqui que a task de espera por e-mail morria. O e-mail de resposta do
+    Piccino cairia em `messages` com `contact_id` NULL e este SELECT nunca o
+    veria — a #999695 esperaria os 7 dias e voltaria como "o terceiro sumiu",
+    dizendo o contrário do que os dados mostram."""
     from services.raci_smart_updates import _is_courtesy_only
+
+    cond, params = _scope_where(scope)
+    if not params:
+        return None
 
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT conteudo, COALESCE(enviado_em, recebido_em, criado_em) AS ts
-            FROM messages
-            WHERE contact_id = %s
-              AND direcao = 'incoming'
-              AND conteudo IS NOT NULL AND conteudo <> ''
-              AND COALESCE(enviado_em, recebido_em, criado_em) > %s
+        cur.execute(f"""
+            WITH base AS (
+                SELECT m.conteudo, COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS ts,
+                       COALESCE(cv.canal, 'whatsapp') AS canal
+                FROM messages m
+                LEFT JOIN conversations cv ON cv.id = m.conversation_id
+                WHERE {cond}
+                  AND m.direcao = 'incoming'
+                  AND m.conteudo IS NOT NULL AND m.conteudo <> ''
+                  AND COALESCE(m.enviado_em, m.recebido_em, m.criado_em) > %s
+            ),
+            ranqueada AS (
+                SELECT *, row_number() OVER (ORDER BY ts DESC) AS rn_geral,
+                          row_number() OVER (PARTITION BY canal ORDER BY ts DESC) AS rn_canal
+                FROM base
+            )
+            SELECT conteudo, ts, canal FROM ranqueada
+            -- mesma cota por canal do `_fetch_messages_since`: um contato
+            -- tagarela no WhatsApp não pode esconder a resposta que veio por
+            -- e-mail — é ELA que encerra a espera.
+            WHERE rn_geral <= %s OR rn_canal <= %s
             ORDER BY ts DESC
             LIMIT %s
-        """, (contact_id, since, MAX_MSGS_PER_TASK))
+        """, tuple(params) + (since, MAX_MSGS_PER_TASK, CANAL_MIN_SLOTS, MAX_MSGS_TOTAL))
         msgs = [dict(r) for r in cur.fetchall()]
 
     for m in msgs:
@@ -399,12 +583,17 @@ def sweep_on_hold(dry_run: bool = False) -> dict:
 
         trigger, reason = None, None
 
-        if task.get("contact_id"):
-            msg = _last_substantive_incoming(task["contact_id"], task["on_hold_since"])
+        # A guarda era `if task.get("contact_id")` — e as 16 parqueadas sem
+        # ficha (de 30) nunca podiam reabrir por resposta, só por tempo. Agora o
+        # gatilho é a IDENTIDADE, que também cobre e-mail e ficha irmã.
+        scope = _task_scope(task)
+        if scope["contact_ids"] or scope["emails"]:
+            msg = _last_substantive_incoming(scope, task["on_hold_since"])
             if msg:
                 trigger = "reply"
+                canal = msg.get("canal") or "whatsapp"
                 reason = (
-                    f"O contato respondeu em {msg['ts']:%d/%m %H:%M} "
+                    f"O contato respondeu por {canal} em {msg['ts']:%d/%m %H:%M} "
                     f"(parqueada em {task['on_hold_since']:%d/%m}): "
                     f"\"{(msg['conteudo'] or '')[:120]}\""
                 )
@@ -485,9 +674,10 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
     judged = 0
     closed = []
     would_close = []
+    por_texto = sum(1 for t in candidates if (t.get("_scope") or {}).get("origem") == "texto")
 
     for task in candidates:
-        msgs = _fetch_messages_since(task["contact_id"], task["data_criacao"])
+        msgs = _fetch_messages_since(task.get("_scope") or _task_scope(task), task["data_criacao"])
         if not msgs:
             continue
         verdict = _judge(task, msgs)
@@ -519,6 +709,10 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
         "dry_run": dry_run,
         "scanned_with_contact": len(candidates),
         "skipped_no_contact": n_sem_contato,  # v0 boundary — logado, sem cap silencioso
+        # Alcançadas SÓ pelo endereço no texto: cada uma é uma task com dado a
+        # corrigir (falta o `contact_id`). O número existe pra a CoS linkar as
+        # fichas, não pra o texto virar o caminho normal.
+        "scoped_by_text": por_texto,
         "judged": judged,
         "closed": len(closed),
         "would_close": len(would_close),
