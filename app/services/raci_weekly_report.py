@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL", "")
 
+# Teto de tamanho do caminho REGEX (fix 23/08). Comando de status e' curto
+# ("3 concluido", "5 em andamento: detalhe"); relatorio de RACI tem milhares de
+# caracteres. A msg da Kelly que virou comando em 21/08 tinha 1.867. Generoso de
+# proposito: o pattern 2 captura `notes` livres, e apertar demais empurraria uso
+# legitimo pro fallback da IA sem necessidade.
+RACI_REGEX_MAX_CHARS = 400
+
 
 def generate_raci_report(empresa_id: str) -> Optional[Dict]:
     """Generate RACI status report for an empresa."""
@@ -893,19 +900,44 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
     - "item 5 em andamento"
     - "5 em andamento: detalhes aqui"
     - "#3 feito"
+
+    NAO reconhece resumo de relatorio ("✅ 6 concluídos.", "12 itens, 6
+    concluidos"). Ver as tres travas abaixo — o defeito de 21/08.
     """
     import psycopg2
     import psycopg2.extras
 
+    # ── TRAVA 1: comando e' mensagem CURTA (fix 23/08) ───────────────────────
+    # Todo relatorio de RACI termina com um resumo numerico, entao todo
+    # relatorio e' um comando em potencial. Em 21/08 o rodape "✅ 6 concluídos."
+    # da Kelly casou e marcou o 6o item da lista posicional ("Zerar o passivo da
+    # Alba") como concluido — sendo que a propria mensagem o dava como em
+    # andamento, previsao 30/10. O bot confirmou no grupo 7s depois.
+    # Rejeitar aqui nao perde a mensagem: ela cai no fallback da IA, que PROPOE
+    # em vez de aplicar. Este caminho escreve sem revisao, entao a duvida tem que
+    # cair pro lado de nao escrever.
+    if len(message.strip()) > RACI_REGEX_MAX_CHARS:
+        logger.info("RACI regex: %d chars > %d — nao e comando, deixa pro fallback IA",
+                    len(message.strip()), RACI_REGEX_MAX_CHARS)
+        return None
+
     # Match patterns like "3 concluído", "item 5 em andamento: details"
+    #
+    # ── TRAVA 2: ancorado no INICIO DA LINHA (^ com MULTILINE) ───────────────
+    # O rodape tem "✅ " antes do numero, entao nao e' inicio de linha. Custo:
+    # "ok, 3 concluido" deixa de casar e vira proposta da IA — degradacao segura.
+    #
+    # ── TRAVA 3: o PLURAL nao e' comando ─────────────────────────────────────
+    # "concluídos"/"feitos"/"prontos" contam itens, nao mandam fechar um. O
+    # lookahead (?![a-zà-ÿ]) exige fim de palavra de verdade — \b casaria o "s".
     patterns = [
-        r'(?:item\s*)?#?(\d+)\s+(conclu[ií]do|feito|pronto|done|completo)',
-        r'(?:item\s*)?#?(\d+)\s+(em andamento|iniciado|trabalhando|in progress)(?:\s*[:\-]\s*(.+))?',
-        r'(?:item\s*)?#?(\d+)\s+(cancelado|removido|n[aã]o aplic[aá]vel)',
+        r'^\s*(?:item\s*)?#?(\d+)\s+(conclu[ií]do|feito|pronto|done|completo)(?![a-zà-ÿ])',
+        r'^\s*(?:item\s*)?#?(\d+)\s+(em andamento|iniciado|trabalhando|in progress)(?![a-zà-ÿ])(?:\s*[:\-]\s*(.+))?',
+        r'^\s*(?:item\s*)?#?(\d+)\s+(cancelado|removido|n[aã]o aplic[aá]vel)(?![a-zà-ÿ])',
     ]
 
     for pattern in patterns:
-        m = re.search(pattern, message.lower().strip())
+        m = re.search(pattern, message.lower().strip(), re.MULTILINE)
         if m:
             item_num = int(m.group(1))
             status_text = m.group(2)
