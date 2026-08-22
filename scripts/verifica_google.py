@@ -115,7 +115,7 @@ async def varrer_google(max_idade_h=0):
     return fichas
 
 
-def classificar(fichas_google, contatos):
+def classificar(fichas_google, contatos, nao_fundir=frozenset()):
     por_tel = defaultdict(list)
     for p in fichas_google:
         for tel in p["tels"]:
@@ -140,7 +140,8 @@ def classificar(fichas_google, contatos):
                 intel_por_tel[chave(t.get("number"))][c["id"]] = c
 
     baldes = {"divergencia": [], "duplicata": [], "compartilhado": [],
-              "orfa": [], "ausente": [], "dupe_intel": []}
+              "orfa": [], "ausente": [], "dupe_intel": [],
+              "tel_compartilhado_intel": []}
     vistos_dupe = set()
     for k, por_id in intel_por_tel.items():
         if len(por_id) < 2:
@@ -150,7 +151,22 @@ def classificar(fichas_google, contatos):
         if ids in vistos_dupe:
             continue
         vistos_dupe.add(ids)
-        baldes["dupe_intel"].append({
+        # Par já decidido não volta a ser perguntado. Douglas Bassi e Orestes
+        # (#1360/#4376) colidem pelo fixo da Virtus, e o Renato já tinha dito
+        # isso ANTES — só não havia onde escrever, então a pergunta voltava a
+        # cada rodada. Ver migration 077.
+        if len(ids) == 2 and tuple(sorted(ids)) in nao_fundir:
+            continue
+        # Duas naturezas no mesmo balde, de novo: fichas REPETIDAS da mesma
+        # pessoa (Bettina Berman 3×) e telefone de empresa que várias pessoas
+        # atendem (Carla / Vania Leister). Só o primeiro grupo é fundível; o
+        # segundo pede o olho de quem conhece a relação — e misturá-los faria a
+        # lista pedir julgamento onde bastava limpeza, que é como os "460 nomes"
+        # viraram fila do Renato.
+        ts = [tokens(c["nome"]) for c in cs]
+        mesma_pessoa = any(ts[i] & ts[j]
+                           for i in range(len(ts)) for j in range(i + 1, len(ts)))
+        baldes["dupe_intel" if mesma_pessoa else "tel_compartilhado_intel"].append({
             "ids": list(ids), "nomes": [c["nome"] for c in cs],
             "msgs": max(c["msgs"] for c in cs)})
     casados = 0
@@ -209,6 +225,23 @@ def classificar(fichas_google, contatos):
     return baldes, casados
 
 
+
+def _pares_decididos(cur) -> set:
+    """Pares que o Renato já decidiu que NÃO são a mesma pessoa (migration 077).
+
+    Sem isto o verificador reapresenta a mesma dupla a cada rodada, e cada
+    reapresentação gasta a atenção dele de novo — foi o que aconteceu com Douglas
+    Bassi × Orestes, decidido uma vez e perguntado outra. Tabela ausente devolve
+    conjunto vazio: alvo sem a 077 mostra tudo, o que é o comportamento antigo, e
+    não silencia nada por engano.
+    """
+    try:
+        cur.execute("SELECT contact_a, contact_b FROM contact_nao_fundir")
+        return {(r["contact_a"], r["contact_b"]) for r in cur.fetchall()}
+    except Exception:
+        return set()
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true", help="só fala se houver decisão pendente")
@@ -228,7 +261,8 @@ async def main():
                     WHERE c.telefones IS NOT NULL AND c.telefones::text <> '[]'""")
     contatos = [dict(r) for r in cur.fetchall()]
 
-    b, casados = classificar(fichas, contatos)
+    nao_fundir = _pares_decididos(cur)
+    b, casados = classificar(fichas, contatos, nao_fundir)
     decisao = len(b["divergencia"])
     com_hist = sum(1 for d in b["divergencia"] if d["msgs"] > 0)
 
@@ -243,7 +277,8 @@ async def main():
           f"  ({sum(1 for d in b['duplicata'] if d['intel_bate'])} com o INTEL já certo)")
     print(f"  🟣 telefone compartilhado (não é defeito) .... {len(b['compartilhado']):5}")
     print(f"  🔴 órfã: ficha não apontada, MESMA conta ..... {len(b['orfa']):5}")
-    print(f"  🟤 duplicata DENTRO do INTEL (mesmo telefone)  {len(b['dupe_intel']):5}")
+    print(f"  🟤 ficha REPETIDA no INTEL (mesma pessoa) ... {len(b['dupe_intel']):5}")
+    print(f"  ⚫ telefone de empresa, pessoas diferentes ... {len(b['tel_compartilhado_intel']):5}  (não é defeito)")
     print(f"  ⚪ ausente no Google ......................... {len(b['ausente']):5}")
     print(f"  {'─'*64}")
     print(f"  ⚠️  🔴 e 🔵 se SOBREPÕEM — não somar. São a mesma doença (ficha")
@@ -258,7 +293,7 @@ async def main():
               "`merge_contatos.py --apply` é quem ainda deixa rastro.")
 
     if b["dupe_intel"]:
-        print("\n  🟤 DUPLICATA NO INTEL — mesmo telefone, duas fichas daqui:")
+        print("\n  🟤 FICHA REPETIDA no INTEL — mesma pessoa, mais de um cadastro:")
         for d in sorted(b["dupe_intel"], key=lambda x: -x["msgs"])[:10]:
             print(f"     {'+'.join('#'+str(i) for i in d['ids'])}  {d['msgs']:4} msgs  "
                   f"\"{' / '.join(n or '(sem nome)' for n in d['nomes'])[:52]}\"")

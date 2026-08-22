@@ -112,3 +112,55 @@ def test_sem_contraparte_no_google_cai_em_ausente():
     contatos = [_c(1, "Fulano", "+5511911112222")]
     b, _ = vg.classificar([], contatos)
     assert len(b["ausente"]) == 1
+
+
+def test_par_ja_decidido_nao_volta_a_ser_perguntado():
+    """O caso Douglas Bassi × Orestes (22/08/26).
+
+    Os dois trabalham na Virtus BR Partners e compartilham o fixo
+    +55 11 3576-1505 — `home` num, `workfax` no outro. O Renato já tinha decidido
+    que NÃO são a mesma pessoa, e a decisão voltou a ser perguntada porque não
+    havia onde escrevê-la: prosa em memo nenhum script lê. Ferramenta que
+    repropõe o decidido vira tarefa dele.
+    """
+    contatos = [_c(1360, "Douglas Bassi", "+551135761505"),
+                _c(4376, "Orestes Alves de Almeida Prado", "+551135761505")]
+    b, _x = vg.classificar([], contatos, nao_fundir={(1360, 4376)})
+    assert b["dupe_intel"] == [] and b["tel_compartilhado_intel"] == [], (
+        "par decidido voltou a ser proposto")
+
+
+def test_par_nao_decidido_continua_aparecendo():
+    """Controle positivo: sem ele, o teste acima passa com o balde desligado.
+
+    Douglas e Orestes têm nomes sem nada em comum, então caem no balde de
+    telefone de empresa — não no de ficha repetida. O que importa aqui é que
+    aparecem em ALGUM lugar enquanto ninguém decidiu."""
+    contatos = [_c(1360, "Douglas Bassi", "+551135761505"),
+                _c(4376, "Orestes Alves de Almeida Prado", "+551135761505")]
+    b, _x = vg.classificar([], contatos, nao_fundir=set())
+    assert len(b["dupe_intel"]) + len(b["tel_compartilhado_intel"]) == 1
+
+
+def test_ficha_repetida_e_telefone_de_empresa_sao_baldes_diferentes():
+    """`Bettina Berman` 3× é limpeza; `Carla / Vania Leister` no fixo da empresa
+    pede o olho de quem conhece a relação. Misturar os dois faz a lista pedir
+    julgamento onde bastava limpeza."""
+    repetida = [_c(491, "Bettina Berman", "+5511911112222"),
+                _c(21428, "Bettina Berman", "+5511911112222")]
+    b1, _ = vg.classificar([], repetida)
+    assert len(b1["dupe_intel"]) == 1 and b1["tel_compartilhado_intel"] == []
+
+    empresa = [_c(707, "Carla", "+551133334444"),
+               _c(26483, "Vania Leister", "+551133334444")]
+    b2, _ = vg.classificar([], empresa)
+    assert b2["dupe_intel"] == [] and len(b2["tel_compartilhado_intel"]) == 1
+
+
+def test_ordem_do_par_nao_muda_a_decisao():
+    """A tabela guarda em ordem canônica (a < b); o filtro tem que casar
+    independentemente da ordem em que os contatos aparecem na varredura."""
+    contatos = [_c(4376, "Orestes", "+551135761505"),
+                _c(1360, "Douglas Bassi", "+551135761505")]
+    b, _x = vg.classificar([], contatos, nao_fundir={(1360, 4376)})
+    assert b["dupe_intel"] == [] and b["tel_compartilhado_intel"] == []
