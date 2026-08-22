@@ -7653,9 +7653,18 @@ async def auto_merge_all_duplicates(request: Request):
     conn = get_db()
     cursor = conn.cursor()
 
+    # ⚠️ `empresa_dados` e `origem` NÃO SÃO OPCIONAIS AQUI (fix 22/08/26).
+    # `_google_contact_ids` (o mapa {conta: [resourceName]}) mora dentro de
+    # `empresa_dados`, e a conta de um contato pré-cascata vem em `origem`. Sem
+    # as duas, `propagate_merge_to_google` recebe fichas sem mapa: NENHUMA
+    # deleção acha alvo no Google. Medido pelo ensaio em 10 grupos — 0 fichas
+    # apagadas lá contra 12 com estas colunas presentes, sem mais nada mudar.
+    # O merge limpava o INTEL e deixava tudo vivo no Google; o próximo sync
+    # completo trazia as duplicatas de volta.
+    # `scripts/ensaio_merge_google.py --colunas rota|completas` reproduz.
     cursor.execute('''
         SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
-               linkedin, contexto, google_contact_id
+               linkedin, contexto, google_contact_id, empresa_dados, origem
         FROM contacts
     ''')
     contacts = [row_to_dict(row) for row in cursor.fetchall()]

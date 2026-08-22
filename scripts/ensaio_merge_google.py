@@ -163,7 +163,16 @@ def _grupos_fundiveis(contacts):
 
 # A query EXATA da rota `/auto-merge-batch` (main.py). Reproduzida aqui letra por
 # letra de propósito: é ela que está sob julgamento, não uma aproximação dela.
+# Se a rota mudar, esta constante muda junto — senão o ensaio passa a medir uma
+# query que ninguém executa. [[feedback_medir_o_consumidor_certo]]
 COLUNAS_DA_ROTA = """SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
+                            linkedin, contexto, google_contact_id,
+                            empresa_dados, origem FROM contacts"""
+
+# A query como ERA até 22/08 — sem `empresa_dados` nem `origem`. Fica aqui como
+# controle negativo executável: rodar com `--colunas antigas` reproduz o defeito
+# (0 deleções no Google) e prova que o conserto é o que mudou o placar.
+COLUNAS_ANTIGAS = """SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
                             linkedin, contexto, google_contact_id FROM contacts"""
 
 # A mesma coisa MAIS `empresa_dados` (onde mora `_google_contact_ids`, o mapa
@@ -181,7 +190,9 @@ async def executar_grupos(limite: int, colunas: str = "rota") -> int:
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute(COLUNAS_DA_ROTA if colunas == "rota" else COLUNAS_COMPLETAS)
+    cur.execute({"rota": COLUNAS_DA_ROTA,
+                 "antigas": COLUNAS_ANTIGAS,
+                 "completas": COLUNAS_COMPLETAS}[colunas])
     contacts = [dict(r) for r in cur.fetchall()]
     print(f"[colunas={colunas}]")
 
@@ -327,9 +338,11 @@ if __name__ == "__main__":
     ap.add_argument("--caminho", choices=("grupos", "pares"), default="grupos",
                     help="grupos = a rota /auto-merge-batch, o mutirão em massa "
                          "(default) · pares = scripts/merge_duplicates.py")
-    ap.add_argument("--colunas", choices=("rota", "completas"), default="rota",
+    ap.add_argument("--colunas", choices=("rota", "antigas", "completas"),
+                    default="rota",
                     help="rota = a query da /auto-merge-batch como está hoje · "
-                         "completas = SELECT *, com empresa_dados e origem")
+                         "antigas = como era até 22/08, reproduz o defeito · "
+                         "completas = SELECT *")
     args = ap.parse_args()
     _exigir_banco_local()
     if args.caminho == "grupos":

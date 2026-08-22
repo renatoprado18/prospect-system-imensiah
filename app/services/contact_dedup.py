@@ -621,6 +621,35 @@ def merge_contacts(contacts: List[Dict]) -> Dict:
     # Use first contact as base for IDs
     base = contacts[0]
 
+    # ⚠️ O SOBREVIVENTE HERDA OS resourceName DE TODAS AS FICHAS (fix 22/08/26).
+    #
+    # As duplicatas típicas desta base são TRÊS fichas da mesma pessoa: uma da
+    # conta pessoal, uma da profissional, e uma legada sem vínculo. Até aqui o
+    # merge levava só o `google_contact_id` escalar do `base` — ou seja, o
+    # sobrevivente saía conhecendo UMA conta. Na outra, `propagate_contact_to_google`
+    # não achava alvo e caía em `_achar_ou_criar`; e como a ficha real daquela
+    # conta pertence a um contato absorvido, ela estava na lista de `condenados`
+    # e a busca era PROIBIDA de encontrá-la. Resultado: apagava a ficha boa e
+    # criava outra na mesma conta, com resourceName novo. É o "2 apagadas, 4
+    # criadas" da Bettina Berman.
+    #
+    # Unir os mapas conserta a causa: o sobrevivente passa a conhecer uma ficha
+    # por conta e a ATUALIZA em vez de recriar. Quem garante que a ficha adotada
+    # não é apagada em seguida é `propagate_merge_to_google` (ver `adotados` lá).
+    from services.contact_identity import (
+        GOOGLE_IDS_COLUMN, GOOGLE_IDS_KEY, _as_dict, google_ids_map,
+    )
+    gids_unidos: Dict[str, List[str]] = {}
+    for c in contacts:
+        for conta, gids in google_ids_map(c).items():
+            atual = gids_unidos.setdefault(conta, [])
+            for g in gids:
+                if g not in atual:          # ordem estável: o do `base` vem antes
+                    atual.append(g)
+    empresa_dados = dict(_as_dict(base.get(GOOGLE_IDS_COLUMN)))
+    if gids_unidos:
+        empresa_dados[GOOGLE_IDS_KEY] = gids_unidos
+
     return {
         'id': base.get('id'),
         'nome': best_name,
@@ -632,6 +661,10 @@ def merge_contacts(contacts: List[Dict]) -> Dict:
         'linkedin': linkedin,
         'contexto': ','.join(sorted(contexts)) if len(contexts) > 1 else (list(contexts)[0] if contexts else ''),
         'google_contact_id': base.get('google_contact_id'),
+        # `origem` viaja junto porque é o fallback de conta do contato
+        # pré-cascata, tanto no update quanto na deleção.
+        'origem': base.get('origem'),
+        GOOGLE_IDS_COLUMN: empresa_dados or None,
         'merged_from': [c.get('id') for c in contacts],
         'original_contacts': contacts
     }
@@ -771,6 +804,7 @@ def merge_duplicate_contacts(duplicate_group: List[Dict], db_connection) -> Dict
             foto_url = COALESCE(%s, foto_url),
             linkedin = COALESCE(%s, linkedin),
             contexto = %s,
+            empresa_dados = COALESCE(%s::jsonb, empresa_dados),
             atualizado_em = CURRENT_TIMESTAMP
         WHERE id = %s
     ''', (
@@ -782,6 +816,13 @@ def merge_duplicate_contacts(duplicate_group: List[Dict], db_connection) -> Dict
         merged['foto_url'],
         merged['linkedin'],
         merged['contexto'],
+        # O mapa unido de resourceName tem que ser GRAVADO (fix 22/08/26), não
+        # só usado em memória: sem isto o sobrevivente volta pro banco
+        # conhecendo UMA conta do Google, e o merge ou o sync seguinte repete o
+        # create que o conserto veio fechar. COALESCE porque `merge_contacts`
+        # devolve None quando nenhuma ficha do grupo tinha mapa — e aí não se
+        # apaga o que já estava na coluna.
+        json.dumps(merged.get('empresa_dados')) if merged.get('empresa_dados') else None,
         primary_id
     ))
 
@@ -825,9 +866,14 @@ async def propagate_contact_to_google(
     db_connection,
     google_contacts_module,
     ignorar_rids: Optional[set] = None,
+    contas_permitidas: Optional[set] = None,
 ) -> Dict[str, Any]:
     """
     Propagate a contact update to all connected Google accounts.
+
+    `contas_permitidas`: quando dado, restringe a propagação a essas contas.
+    None (default) = comportamento de sempre, todas as conectadas. Só o merge
+    passa — ver o comentário no loop.
 
     If contact has google_contact_id from one account:
     - Update that account
@@ -862,6 +908,16 @@ async def propagate_contact_to_google(
 
     for account in accounts:
         account_email = account['email']
+        # MERGE NÃO INVENTA PRESENÇA (fix 22/08/26). `contas_permitidas` vem
+        # preenchido só pelo caminho do merge, com as contas onde o grupo JÁ
+        # tinha ficha. Sem isso o fallback acima ("não sei o contexto → manda pra
+        # todas") fazia o merge CRIAR a pessoa numa agenda onde ela nunca esteve:
+        # 3 dos 120 grupos do ensaio eram só isso — gente que existe apenas na
+        # conta pessoal ganhando ficha nova na profissional. Espalhar contato
+        # entre agendas é trabalho do sync, não de quem veio desduplicar.
+        # Os outros chamadores passam None e mantêm o comportamento de sempre.
+        if contas_permitidas is not None and account_email not in contas_permitidas:
+            continue
         access_token = account['access_token']
         refresh_token = account['refresh_token']
         account_tipo = account['tipo']  # 'personal' or 'professional'
@@ -998,12 +1054,43 @@ async def propagate_merge_to_google(
         if _d.get('google_contact_id'):
             condenados.add(_d['google_contact_id'])
 
+    # ⚠️ A FICHA ADOTADA NÃO PODE SER APAGADA (fix 22/08/26).
+    #
+    # Desde que `merge_contacts` faz o sobrevivente herdar os resourceName de
+    # todas as fichas do grupo, o alvo do update em cada conta costuma ser um id
+    # que veio de uma ficha ABSORVIDA — e portanto está em `condenados`. Sem esta
+    # subtração o merge atualizaria a ficha e a apagaria no passo seguinte da
+    # mesma função: a pessoa sumiria daquela conta do Google. Pior que o defeito
+    # que o conserto veio fechar.
+    #
+    # `propagate_contact_to_google` usa o PRIMEIRO gid de cada conta — a mesma
+    # ordem estável de `merge_contacts`. Sobrevive uma ficha por conta; as demais
+    # continuam condenadas, que é o trabalho do mutirão.
+    adotados = {gids[0] for gids in _gids(merged_contact).values() if gids}
+    if merged_contact.get('google_contact_id'):
+        adotados.add(merged_contact['google_contact_id'])
+    condenados -= adotados
+
+    # As contas onde este grupo JÁ tinha ficha. O merge propaga só pra elas: ver
+    # `contas_permitidas` em `propagate_contact_to_google`. `origem` cobre o
+    # contato pré-cascata, que não tem mapa.
+    contas_presentes = set(_gids(merged_contact))
+    for _c in [merged_contact] + list(deleted_contacts):
+        contas_presentes.update(_gids(_c))
+        _o = (_c.get('origem') or '')
+        if _o.startswith('google_'):
+            contas_presentes.add(_o[len('google_'):])
+
     # Update the merged contact in Google
     update_results = await propagate_contact_to_google(
         merged_contact,
         db_connection,
         google_contacts_module,
         ignorar_rids=condenados,
+        # Grupo sem NENHUM vínculo conhecido: não restringe (None), senão o
+        # merge de dois contatos que só existem no INTEL não propagaria nada e
+        # a mudança sairia calada.
+        contas_permitidas=contas_presentes or None,
     )
     results['updates'] = update_results
 
@@ -1051,6 +1138,18 @@ async def propagate_merge_to_google(
         for account_email, google_ids in por_conta.items():
             access_token = tokens_por_conta.get(account_email)
             for google_id in google_ids:
+                # A ficha que o sobrevivente adotou nesta conta NÃO se apaga —
+                # ela acabou de receber o update. Sem esta guarda o merge
+                # atualizaria e apagaria o mesmo resourceName, e a pessoa sumiria
+                # daquela agenda. `condenados` sozinho não bastava: ele governa
+                # só a BUSCA do `_achar_ou_criar`, não este loop.
+                if google_id in adotados:
+                    results['deletions'][google_id] = {
+                        'account': account_email,
+                        'skipped': 'adotada_pelo_sobrevivente',
+                        'contact_id': deleted.get('id'),
+                    }
+                    continue
                 if not access_token:
                     results['deletions'][google_id] = {
                         'account': account_email,
@@ -1152,6 +1251,7 @@ async def merge_duplicate_contacts_with_propagation(
             foto_url = COALESCE(%s, foto_url),
             linkedin = COALESCE(%s, linkedin),
             contexto = %s,
+            empresa_dados = COALESCE(%s::jsonb, empresa_dados),
             atualizado_em = CURRENT_TIMESTAMP
         WHERE id = %s
     ''', (
@@ -1163,6 +1263,13 @@ async def merge_duplicate_contacts_with_propagation(
         merged['foto_url'],
         merged['linkedin'],
         merged['contexto'],
+        # O mapa unido de resourceName tem que ser GRAVADO (fix 22/08/26), não
+        # só usado em memória: sem isto o sobrevivente volta pro banco
+        # conhecendo UMA conta do Google, e o merge ou o sync seguinte repete o
+        # create que o conserto veio fechar. COALESCE porque `merge_contacts`
+        # devolve None quando nenhuma ficha do grupo tinha mapa — e aí não se
+        # apaga o que já estava na coluna.
+        json.dumps(merged.get('empresa_dados')) if merged.get('empresa_dados') else None,
         primary_id
     ))
 
