@@ -4291,6 +4291,7 @@ def _load_railway_crons() -> List[Dict]:
         {"path": "/api/cron/run-whatsapp-sync", "schedule": "5 * * * *", "source": "railway"},
         {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
         {"path": "/api/cron/run-group-messages", "schedule": "40 1,7,13,19 * * *", "source": "railway"},
+        {"path": "/api/cron/news-alertas", "schedule": "50 11 * * *", "source": "railway"},
         {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
     ]
 
@@ -30575,6 +30576,39 @@ async def cron_run_project_news_watchers(request: Request):
             "job": "run-project-news-watchers",
             "error": f"{type(e).__name__}: {e}",
         }
+
+
+
+@app.get("/api/cron/news-alertas")
+@track_cron_run
+async def cron_news_alertas(request: Request):
+    """Emite signal com as notícias que ainda não chegaram ao Renato.
+
+    POR QUE (22/08/26). Ele perguntou por que não foi avisado de um artigo do Gui
+    capturado em 10/08. Medido: os watchers estão todos em `silent`, o digest do
+    Modo D foi desligado em duas etapas (A3 em 12/07, tick desregistrado em
+    17/07), e o único caminho vivo era o briefing da Tônia — janela de 2 dias,
+    rodando em 22 de 45 dias. O hit era o ÚNICO na janela e ainda assim se
+    perdeu, porque o briefing não rodou nos dois dias em que ele era alcançável.
+
+    Aqui o corte é de ESTADO (`pushed_at IS NULL`), não de tempo: a fila não
+    expira, então cron que falha ATRASA a notícia em vez de evaporá-la.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.project_news_watcher import alertar_hits_nao_entregues
+
+    try:
+        r = await _aio.wait_for(alertar_hits_nao_entregues(), timeout=120.0)
+        return {"status": "ok", "job": "news-alertas", **r}
+    except _aio.TimeoutError:
+        logger.error("cron_news_alertas: > 120s")
+        return {"status": "error", "job": "news-alertas", "error": "timeout > 120s"}
+    except Exception as e:
+        logger.exception("cron_news_alertas: exception")
+        return {"status": "error", "job": "news-alertas", "error": f"{type(e).__name__}: {e}"}
 
 
 @app.get("/api/cron/run-daily-news-digest")

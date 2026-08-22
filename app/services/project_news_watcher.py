@@ -879,6 +879,123 @@ async def check_all_active_watchers() -> dict:
     return result
 
 
+
+# =============================================================================
+# ENTREGA POR FILA — o hit espera até ser entregue (22/08/2026)
+# =============================================================================
+
+async def alertar_hits_nao_entregues(limite: int = 30) -> dict:
+    """Emite SIGNAL com os hits que ainda não chegaram ao Renato.
+
+    POR QUE EXISTE. Em 22/08 o Renato perguntou por que não foi avisado de um
+    artigo do Gui capturado em 10/08. A cadeia media assim:
+
+      1. os 6 watchers estão em `delivery_mode='silent'` (o default) — sem push
+         e sem score: **0 de 162 hits** tinham `ai_relevance_score` calculado;
+      2. o digest do Modo D morreu em duas etapas — o A3 (porta-voz único,
+         12/07) desligou o envio self-chat com um early-return, e em 17/07 o
+         tick foi desregistrado por ter virado no-op;
+      3. sobrou UM caminho: o briefing da Tônia, que lê `copilot.news_hits`
+         numa **janela de 2 dias** — e roda em 22 de 45 dias (49%).
+
+    O hit do Gui era o ÚNICO na janela; não competia com nada. Só que o briefing
+    não rodou em 11/08 nem em 12/08, voltou em 13/08, e a essa altura o hit já
+    tinha saído da janela. **Notícia capturada na hora errada some para sempre, e
+    nada registra que sumiu.**
+
+    A RAIZ É A JANELA DE TEMPO, NÃO O CANAL. Quem entrega por "últimas 48h"
+    aposta que o consumidor rode dentro delas; quando ele falha, o item não
+    atrasa — evapora. Aqui o corte passa a ser de ESTADO: `pushed_at IS NULL`
+    marca a fila de não-entregues, e ela não expira. É o mesmo conserto do cursor
+    do sync de grupos, onde trocar "o que couber na janela" por "de onde parei"
+    tirou a perda silenciosa.
+
+    Vai por SIGNAL (urgência 8) porque o porta-voz único é a Tônia — ela decide
+    se e como interrompe. Mandar WA daqui seria reabrir o que o A3 fechou.
+    """
+    from database import get_db
+    from services.detectors._base import emit_signal, make_signal_hash
+
+    resultado = {"hits": 0, "projetos": 0, "signal": None, "skipped_reason": None}
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        # Sem filtro de data DE PROPÓSITO: a fila é de não-entregues, e um hit de
+        # duas semanas atrás que nunca chegou continua sendo notícia que ele não
+        # viu. `archived_at` é a saída legítima — o que ele já descartou não volta.
+        cur.execute(
+            """
+            SELECT h.id, h.title, h.url, h.source, h.hit_at,
+                   w.id AS watcher_id, w.query, p.nome AS projeto
+              FROM project_news_hits h
+              JOIN project_news_watchers w ON w.id = h.watcher_id
+              LEFT JOIN projects p ON p.id = w.project_id
+             WHERE h.pushed_at IS NULL
+               AND h.digest_id IS NULL
+               AND h.archived_at IS NULL
+               AND w.active = TRUE
+             ORDER BY h.hit_at DESC
+             LIMIT %s
+            """,
+            (limite,),
+        )
+        hits = [dict(r) for r in cur.fetchall()]
+
+        if not hits:
+            resultado["skipped_reason"] = "sem_hits_pendentes"
+            return resultado
+
+        por_projeto: Dict[str, list] = {}
+        for h in hits:
+            por_projeto.setdefault(h["projeto"] or h["query"] or "sem projeto", []).append(h)
+
+        resultado["hits"] = len(hits)
+        resultado["projetos"] = len(por_projeto)
+
+        contexto = {
+            "total": len(hits),
+            "projetos": [
+                {
+                    "projeto": nome,
+                    "itens": [
+                        {"titulo": x["title"], "url": x["url"],
+                         "fonte": x["source"], "quando": str(x["hit_at"])[:16]}
+                        for x in lista[:5]
+                    ],
+                }
+                for nome, lista in por_projeto.items()
+            ],
+        }
+
+        # Hash pelos IDS entregues: rodada com o mesmo conjunto não vira signal
+        # novo, conjunto diferente vira. Hash por data agruparia entregas
+        # distintas do mesmo dia num signal só.
+        assinatura = make_signal_hash("news_pendente", *sorted(h["id"] for h in hits))
+        emit_signal(
+            conn,
+            tipo="news_pendente",
+            signal_hash=assinatura,
+            urgencia=8,
+            contexto=contexto,
+            detector="project_news_watcher",
+        )
+
+        # Marca DEPOIS do emit: se o emit falhar, os hits seguem na fila e voltam
+        # na próxima rodada. Marcar antes perderia a notícia exatamente como a
+        # janela de 2 dias perdia — trocando um buraco silencioso por outro.
+        cur.execute(
+            "UPDATE project_news_hits SET pushed_at = NOW() WHERE id = ANY(%s)",
+            ([h["id"] for h in hits],),
+        )
+        conn.commit()
+
+    resultado["signal"] = assinatura
+    logger.info(
+        "alertar_hits_nao_entregues: %s hits de %s projeto(s) → signal %s",
+        resultado["hits"], resultado["projetos"], assinatura[:12],
+    )
+    return resultado
+
 # =============================================================================
 # MODO D — Digest diario interativo (28/06/2026)
 # =============================================================================

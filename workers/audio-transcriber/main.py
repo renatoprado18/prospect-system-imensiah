@@ -169,6 +169,13 @@ _SCHEDULER_JOBS = [
     # whatsapp-sync (:05) nem o social-groups (:20).
     ("run-group-messages", "/api/cron/run-group-messages",
      CronTrigger(hour="1,7,13,19", minute=40)),
+    # 22/08/26 — as notícias dos watchers chegam ao Renato. O caminho antigo era
+    # o briefing da Tônia com janela de 2 dias, e ele roda em ~metade dos dias:
+    # um artigo do Gui capturado em 10/08 se perdeu porque o briefing não rodou
+    # em 11 nem em 12/08. Aqui o corte é `pushed_at IS NULL` — a fila não expira,
+    # então falhar significa atrasar, não sumir. 11:50 UTC = 8:50 BRT, depois do
+    # briefing pra não duplicar o que ele já leu.
+    ("news-alertas", "/api/cron/news-alertas", CronTrigger(hour=11, minute=50)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e
