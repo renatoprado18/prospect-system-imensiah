@@ -30,6 +30,17 @@ no próprio CRM (`marson` está em 2 fichas, `rodrigo` em 115). Raridade é medi
 não adivinhada. A cobertura de cada caminho aparece no rodapé da página: régua
 que não se mede vira régua em que se acredita.
 
+O TERCEIRO CAMINHO — TASK (23/08/26, pedido do Renato). O alarme media mais
+estreito que a regra que ele vigia: a regra do ritual (nota #50) tem três
+destinos — *marcar*, *tocar* e *baixar consciente* — e só o primeiro vira
+`calendar_event`. Medido no dia: **11 frentes acusadas "sem próximo passo", 10
+com ato marcado em task pra semana seguinte**. O alarme acusava quem estava em
+dia — a forma mais cara de errar numa tela de cobrança, porque ensina a ignorá-la.
+Agora conta também `tasks` com vencimento à frente, e `on_hold` vira estado
+próprio ("⏸ em espera") em vez de virar acusação. Ficou **1**: a Premix, cuja
+única task mora em outro projeto — e está certo que apareça. Ver `proxima_task`
+pro corte estrito e por que ele PERDE casos de propósito.
+
 DUAS SAÍDAS. `board_hunt.html` é a tela de trabalho — tudo, com a telemetria da
 régua à vista. `board_hunt_resumo.html` é uma folha A4 pra mandar a terceiros (o
 pedido de 12/08 foi o pai): as mesmas frentes e datas, **sem as notas internas** —
@@ -210,6 +221,56 @@ def coletar(cur, hoje):
         """, (sorted(alvos),))
         d["raridade"] = {r["tok"]: r["n"] for r in cur.fetchall()}
 
+    # --- TAREFA COM DATA, o segundo destino da regra ------------------------
+    # A regra do ritual (nota #50, 07/08) dá TRÊS destinos válidos a uma frente:
+    # *marcar* (vira evento), *tocar* (WhatsApp/e-mail com data combinada) e
+    # *baixar consciente* (on_hold). Só o primeiro virava `calendar_event` — os
+    # outros dois viram TASK, e a página não as olhava. Efeito medido em 23/08:
+    # o painel acusava 11 frentes "sem próximo passo" e 10 delas tinham ato
+    # marcado em task pra semana seguinte. O alarme acusava quem estava em dia,
+    # que é a forma mais cara de errar numa tela de cobrança.
+    #
+    # O CASAMENTO É ESTRITO — `contact_id` E `project_id` iguais aos da frente.
+    # Só `contact_id` seria frouxo: a task #999870 ("Voltar ao Monforte") aponta
+    # pro contato da Premix mas mora no projeto 65, e entraria como próximo passo
+    # de uma frente que não é a dela. Preferi PERDER a Premix (ela aparece como
+    # sem próximo passo, e está certo: não há ato agendado no projeto dela) a
+    # calar o alarme com evidência de outro projeto. Alarme que emudece pelo
+    # motivo errado é pior que o barulhento ([[feedback_guarda_abstencao_vira_fabrica]]).
+    #
+    # ⚠️ Não desambigua frentes que compartilham contato E projeto: MilClean (#6)
+    # e Eduardo Marson (#7) são cid=18707/pid=60 as duas, e recebem a mesma task.
+    # A agenda já tem exatamente esse comportamento pelo mesmo motivo — não
+    # inventei desempate sem dado que o sustente.
+    d["tasks"], d["esperas"] = {}, {}
+    chaves = {(f["contato_id"], f["project_id"]) for f in frentes
+              if f["contato_id"] and f["project_id"]}
+    if chaves:
+        cids = sorted({c for c, _ in chaves})
+        pids = sorted({p for _, p in chaves})
+        cur.execute("""
+            SELECT id, titulo, contact_id, project_id, data_vencimento,
+                   status, on_hold_since, on_hold_reason
+              FROM tasks
+             WHERE contact_id = ANY(%s) AND project_id = ANY(%s)
+               AND status IN ('pending', 'in_progress', 'on_hold')
+             ORDER BY data_vencimento NULLS LAST, id
+        """, (cids, pids))
+        limite = hoje + timedelta(days=JANELA_AGENDA)
+        for r in cur.fetchall():
+            t = dict(r)
+            k = (t["contact_id"], t["project_id"])
+            if k not in chaves:
+                continue
+            if t["status"] == "on_hold":
+                # Espera consciente não é próximo passo — é o oposto, e a tela
+                # tem que saber a diferença. Sem data no futuro, de propósito:
+                # a #999851 está em hold com vencimento 18/08, no PASSADO, e
+                # chamá-la de "próximo passo" seria mentir com cara de medida.
+                d["esperas"].setdefault(k, t)
+            elif t["data_vencimento"] and hoje <= t["data_vencimento"].date() < limite:
+                d["tasks"].setdefault(k, t)   # a mais próxima: query já ordenada
+
     cur.execute("SELECT max(last_synced_at) AS agenda FROM calendar_events")
     d["frescor_agenda"] = cur.fetchone()["agenda"]
 
@@ -251,6 +312,40 @@ def proximo_passo(frente, d):
     return None, None
 
 
+def proxima_task(frente, d):
+    """Tarefa com data marcada da frente, ou None.
+
+    Terceiro caminho, e o mais fraco dos três de propósito: só vale quando a
+    agenda não respondeu. Reunião marcada é compromisso com terceiro; task é
+    compromisso só com ele — quando as duas existem, a agenda manda.
+
+    Fica FORA da folha A4 (`render_resumo`). O título de uma task é caderno
+    interno ("Mandar o 'oi' ao Marcelo — preparar o texto antes"), e o resumo é
+    peça que sai pra terceiros; foi por vazar um título assim que o PDF de 12/08
+    precisou de conserto. Na peça externa, frente sem reunião continua lendo
+    "sem data marcada" — o que é verdade: task não é reunião."""
+    return _por_chave(frente, d["tasks"])
+
+
+def espera_consciente(frente, d):
+    """Task em `on_hold` da frente — o terceiro destino da regra do ritual."""
+    return _por_chave(frente, d["esperas"])
+
+
+def _por_chave(frente, balde):
+    """Lookup por (contato, projeto), com a guarda contra a chave meia-vazia.
+
+    Frente sem `project_id` não pode casar: a chave `(cid, None)` acharia
+    qualquer task daquele contato sem projeto, que é exatamente o casamento
+    frouxo que o corte estrito existe pra impedir. Hoje `coletar()` já não gera
+    essas chaves — a guarda está aqui porque isso é invariante de OUTRA função,
+    e a próxima frente cadastrada sem projeto não pode depender disso."""
+    cid, pid = frente["contato_id"], frente["project_id"]
+    if not cid or not pid:
+        return None
+    return balde.get((cid, pid))
+
+
 def temperatura(dias, bola, tem_proximo):
     """Quente ≤14d · morno 15–45d · frio >45d, com a bola rebaixando na faixa do
     meio.
@@ -280,7 +375,7 @@ def temperatura(dias, bola, tem_proximo):
 
 def avaliar(d):
     hoje = d["hoje"]
-    cobertura = {"id": 0, "nome": 0, "sem": 0}
+    cobertura = {"id": 0, "nome": 0, "task": 0, "sem": 0}
     for f in d["frentes"]:
         t = d["toques"].get(f["contato_id"])
         f["toque"] = t
@@ -293,14 +388,23 @@ def avaliar(d):
 
         ev, como = proximo_passo(f, d)
         f["evento"], f["evento_como"] = ev, como
-        cobertura[como or "sem"] += 1
+        # Task só é consultada quando a agenda não respondeu — a precedência está
+        # em `proxima_task`. `f["task"]` é campo PRÓPRIO, nunca `f["evento"]`:
+        # tudo que consome `evento` (barra de próximos passos, folha A4, PDF)
+        # continua vendo só agenda, e a task não escapa pra peça externa.
+        f["task"] = None if ev else proxima_task(f, d)
+        f["espera"] = espera_consciente(f, d) if not (ev or f["task"]) else None
+        cobertura[como or ("task" if f["task"] else "sem")] += 1
 
         if f["status"] == "hold":
             f["temp"] = "hold"
         elif f["status"] == "prova":
             f["temp"] = "prova"
         else:
-            f["temp"] = temperatura(f["dias"], f["bola"], bool(ev))
+            # Ato marcado em task conta como "tem para onde ir" tanto quanto
+            # reunião: era o que fazia troca fresca com a bola no outro lado cair
+            # pra morno mesmo tendo toque agendado pra amanhã.
+            f["temp"] = temperatura(f["dias"], f["bola"], bool(ev or f["task"]))
 
     d["cobertura"] = cobertura
     ativas = [f for f in d["frentes"] if f["status"] == "ativo"]
@@ -308,7 +412,12 @@ def avaliar(d):
         "assentos": sum(1 for f in d["frentes"] if f["status"] == "fechado"),
         "funil": len(ativas),
         "quentes": sum(1 for f in ativas if f["temp"] == "quente"),
-        "sem_prox": sum(1 for f in ativas if not f["evento"]),
+        # "Sem próximo passo" passa a significar o que a regra sempre disse: nem
+        # reunião marcada, nem ato com data, nem espera assumida. Frente em hold
+        # declarado sai da conta por já ser um destino válido.
+        "sem_prox": sum(1 for f in ativas
+                        if not (f["evento"] or f["task"] or f["espera"])),
+        "em_espera": sum(1 for f in ativas if f["espera"]),
     }
     return d
 
@@ -417,6 +526,7 @@ CSS = """
   .prox .ok{color:#4a6035;font-weight:600}
   .prox .warn{color:var(--quente);font-weight:700}
   .prox .sem{color:var(--muted);font-weight:600}
+  .prox .hold{color:var(--hold);font-weight:600}
   .orig{margin-top:26px;background:var(--card);border:1px solid var(--line);border-radius:11px;
     padding:16px 20px;max-width:640px}
   .orig h3{font-size:12px;text-transform:uppercase;letter-spacing:.7px;color:var(--charcoal);
@@ -470,6 +580,20 @@ def card(f):
         marca = "" if f["evento_como"] == "id" else " ~"
         prox = (f'<div class="prox"><span class="ok" title="{esc(e["summary"] or "")}">'
                 f'▸ próximo: {quando}{hora} · {esc(titulo)}{marca}</span></div>')
+    elif f["task"]:
+        # Marca diferente do `▸` de propósito: reunião é compromisso com outra
+        # pessoa, task é compromisso só com ele. A tela que trata as duas como a
+        # mesma coisa deixa de mostrar quem confirmou presença e quem só anotou.
+        t = f["task"]
+        quando = data_br(t["data_vencimento"].date())
+        prox = (f'<div class="prox"><span class="ok" title="{esc(t["titulo"] or "")}">'
+                f'◦ ato: {quando} · {esc((t["titulo"] or "")[:34].strip())} ⋯</span></div>')
+    elif f["espera"]:
+        t = f["espera"]
+        desde = f' desde {data_br(t["on_hold_since"].date())}' if t["on_hold_since"] else ""
+        motivo = _curto(t["on_hold_reason"] or t["titulo"] or "", 40)
+        prox = (f'<div class="prox"><span class="hold" title="{esc(t["on_hold_reason"] or "")}">'
+                f'⏸ em espera{desde} · {esc(motivo)}</span></div>')
     else:
         prox = '<div class="prox"><span class="warn">⚠ sem próximo passo</span></div>'
 
@@ -604,10 +728,17 @@ def render(d, canais):
   originador e nota vêm de <code>board_hunt_frentes</code>; dias, temperatura, bola e
   próximo passo são recalculados a cada rodada e não ficam gravados.<br>
   <b>Cobertura do "próximo passo"</b>: {cob['id']} frente(s) casada(s) pelo <code>contact_id</code>
-  do evento, {cob['nome']} pelo nome no título (marcadas com <b>~</b>), {cob['sem']} sem reunião
-  nos próximos {JANELA_AGENDA} dias. O casamento por nome só aceita dois tokens do nome ou um
-  sobrenome raro no CRM — <b>só {d['agenda_ligada_pct']}% dos eventos da agenda têm contato
-  ligado</b>, então sem esse segundo caminho a coluna inteira ficaria vazia.<br>
+  do evento, {cob['nome']} pelo nome no título (marcadas com <b>~</b>), <b>{cob['task']} por tarefa
+  com data</b> (<b>◦</b>), {cob['sem']} sem nenhum dos três nos próximos {JANELA_AGENDA} dias.
+  O casamento por nome só aceita dois tokens do nome ou um sobrenome raro no CRM — <b>só
+  {d['agenda_ligada_pct']}% dos eventos da agenda têm contato ligado</b>, então sem esse segundo
+  caminho a coluna inteira ficaria vazia.<br>
+  <b>Tarefa como próximo passo</b> (23/08): a regra do ritual dá três destinos — <i>marcar</i>,
+  <i>tocar</i> e <i>baixar consciente</i>; só o primeiro vira evento. O casamento com task exige
+  <code>contact_id</code> <b>e</b> <code>project_id</code> iguais aos da frente: mais estrito que
+  o da agenda de propósito, porque calar o alarme com evidência de outro projeto é pior que
+  mantê-lo aceso. Tarefa <b>não</b> entra na folha de 1 página — lá "sem data marcada" continua
+  significando <i>sem reunião</i>.<br>
   Canais dormentes moram em <code>~/cockpit/board_hunt_canais.json</code> (julgamento — a
   regeneração não os apaga).
 </footer>
