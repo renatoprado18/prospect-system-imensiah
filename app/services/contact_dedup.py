@@ -82,6 +82,20 @@ _FK_TABLES_TO_CONTACTS = [
     # contato fantasma depois de todo merge.
     'tonia_conversations',
     'tonia_media_index',
+    # --- auditadas 23/08/26, tres semanas depois da varredura de 25/07 ---
+    # A lista envelheceu em 3 semanas: o contrato foi a 168 tabelas e estas 4
+    # entraram sem que nada avisasse. As duas primeiras sao o caso grave, e nao
+    # por volume — sao o REGISTRO DE UMA DECISAO DO RENATO ("nao funda esta
+    # ficha com o Google", "esta empresa nao vale pra esta pessoa"), gravado
+    # justamente pra parar de ser reperguntado (migrations 077/078/079). Ambas
+    # em ON DELETE CASCADE: o merge apagaria o veto e voltaria a perguntar, e o
+    # dano seria invisivel porque o merge termina 200.
+    'google_nao_fundir',          # CASCADE · UNIQUE (contact_id, google_rid)
+    'contato_empresa_mantida',    # CASCADE · UNIQUE (contact_id, empresa_ignorada)
+    'email_drafts',               # SET NULL · perde o vinculo em silencio
+    'check_g_ledger',             # SEM FK · 1.393 linhas viravam orfas apontando
+                                  # pra id inexistente — pior que erro, porque o
+                                  # placar do check-G segue somando sobre lixo
 ]
 
 # Tabelas com unique constraint composta envolvendo contact_id.
@@ -98,6 +112,14 @@ _COMPOSITE_UNIQUE_PARTNERS = {
     'locais_contatos': ['local_id', 'papel'],
     'project_members': ['project_id'],
     'timeline_summaries': ['cache_hash'],
+    # 077/078 (23/08): sem estas duas linhas, acrescentar as tabelas do veto a
+    # _FK_TABLES_TO_CONTACTS trocaria um defeito por outro — o UPDATE explodiria
+    # em violacao de unique no MEIO do merge, com parte das FKs ja repontadas.
+    # A politica "primario vence" e' a certa aqui: se o primario ja tem o mesmo
+    # veto (mesmo google_rid), a linha do secundario e' redundante e some sem
+    # perda; se o veto e' outro, o UPDATE o reponta e ele sobrevive ao merge.
+    'google_nao_fundir': ['google_rid'],
+    'contato_empresa_mantida': ['empresa_ignorada'],
 }
 
 
