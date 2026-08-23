@@ -269,6 +269,13 @@ def test_task_na_ficha_do_dono_nao_traz_o_email_dele_pro_escopo(
     O reconciler ainda submete a evidencia a um LLM com corte em 0.85, entao nao
     fecharia task sozinho — mas evidencia falsa alimentando o julgamento e pior
     que evidencia nenhuma, porque some no meio do que e verdadeiro.
+
+    ATUALIZADO 23/08: a versao original deste teste terminava assertando
+    `scope["contact_ids"] == [23419]` com o comentario "a task nao some do gate:
+    segue alcancavel pelo contact_id, como antes" — ou seja, RATIFICAVA a metade
+    que faltava consertar. No dia seguinte a #426 foi fechada errado por essa
+    perna exata. A assercao virou o seu contrario, e a prova completa esta em
+    tests/test_task_reconciler_eco_e_evidencia.py.
     """
     cursor_caso_piccino.execute("""
         INSERT INTO contacts (id, nome, emails) VALUES
@@ -292,6 +299,7 @@ def test_task_na_ficha_do_dono_nao_traz_o_email_dele_pro_escopo(
         tr, "owner_emails",
         lambda cur: ["renato@almeida-prado.com", "renato.almeida.prado@gmail.com"],
     )
+    monkeypatch.setattr(tr, "owner_contact_ids", lambda cur: [23419])
 
     scope = tr._task_scope(
         {"id": 426, "titulo": "Definir microlote separavel para Portugal",
@@ -300,8 +308,12 @@ def test_task_na_ficha_do_dono_nao_traz_o_email_dele_pro_escopo(
     assert scope["emails"] == [], (
         f"e-mail do proprio dono virou criterio de resposta de terceiro: {scope['emails']}"
     )
-    # A task nao some do gate: segue alcancavel pelo `contact_id`, como antes.
-    assert scope["contact_ids"] == [23419]
+    # A ficha do dono TAMBEM sai (23/08). Era a metade que sobrava, e foi por ela
+    # que o self-chat chegou ao julgamento como se fosse conversa com terceiro.
+    assert scope["contact_ids"] == [], (
+        f"a ficha do dono continua valendo como identidade de terceiro: {scope['contact_ids']}"
+    )
+    assert scope["origem"] == "dono"
 
     # Contraprova — ficha de TERCEIRO continua trazendo o endereco dele.
     scope_ok = tr._task_scope(

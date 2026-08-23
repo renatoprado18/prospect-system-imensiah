@@ -65,6 +65,7 @@ from services.contact_identity import (
     contact_ids_by_emails,
     extract_emails,
     message_emails_sql,
+    owner_contact_ids,
     owner_emails,
 )
 
@@ -151,7 +152,7 @@ def _fetch_candidate_tasks():
         """)
         todas = [dict(r) for r in cur.fetchall()]
 
-    cands, sem_identidade = [], 0
+    cands, sem_identidade, so_o_dono = [], 0, 0
     for task in todas:
         scope = _task_scope(task)
         if scope["contact_ids"] or scope["emails"]:
@@ -159,7 +160,12 @@ def _fetch_candidate_tasks():
             cands.append(task)
         else:
             sem_identidade += 1
-    return cands, sem_identidade
+            # Contada à parte: é a classe que fechou a #426 errado. O número tem
+            # de aparecer no resumo, senão a correção vira um silêncio a mais e
+            # ninguém sabe quantas tasks pararam de ser avaliadas nem por quê.
+            if scope["origem"] == "dono":
+                so_o_dono += 1
+    return cands, sem_identidade, so_o_dono
 
 
 def _task_scope(task) -> dict:
@@ -177,6 +183,8 @@ def _task_scope(task) -> dict:
     Devolve `{'contact_ids': [...], 'emails': [...], 'origem': ...}`. `origem`
     entra no log pra a CoS conseguir ver quais tasks só foram alcançadas pelo
     texto — essas têm dado a corrigir (linkar a ficha), não é para virar norma.
+    `origem='dono'` é a task cuja única identidade era a ficha do próprio Renato:
+    ela sai do escopo (ver abaixo) e é contada à parte, sem cap silencioso.
     """
     contact_ids, emails, origem = [], [], "nenhum"
     with get_db() as conn:
@@ -193,10 +201,33 @@ def _task_scope(task) -> dict:
         # julgamento com evidência falsa é pior que não alimentar
         # ([[feedback_maquina_ouve_o_proprio_eco]]).
         do_dono = set(owner_emails(cur))
-        if task.get("contact_id"):
+        # A FICHA do dono também não é terceiro — não só os endereços dele (23/08).
+        # A guarda de 22/08 (acima) fechou a perna de e-mail e deixou a de
+        # `contact_id` aberta; pior, um teste passou a ratificar a lacuna
+        # ("a task não some do gate: segue alcançável pelo contact_id"). O que
+        # sobrava não era um resíduo: a ficha #23419 é onde mora o SELF-CHAT, o
+        # canal por onde o sistema fala com o Renato. Medido em 23/08 na #426
+        # ("Definir microlote separável para Portugal", 26 das 149 pending
+        # apontam pra lá): as 11 mensagens que foram a julgamento eram briefings
+        # automáticos, e-mails dele e A PRÓPRIA NOTIFICAÇÃO DO RECONCILER
+        # ("🤖 Reconciliação — fechei 2 tarefa(s)"). Nenhuma falava do assunto da
+        # task, e ela foi fechada assim mesmo, com 0,95 de confiança.
+        # Reconciliar é casar a task com o que UM TERCEIRO disse; quando o único
+        # interlocutor é o próprio dono, não há terceiro — e conversa nenhuma é
+        # melhor que a conversa da máquina consigo mesma
+        # ([[feedback_maquina_ouve_o_proprio_eco]]).
+        fichas_do_dono = set(owner_contact_ids(cur))
+        ficha = task.get("contact_id")
+        if ficha and ficha in fichas_do_dono:
+            # Cai no degrau do TEXTO de propósito, em vez de descartar: se a
+            # descrição citar o endereço de um terceiro, a task continua
+            # alcançável — é só a ficha do dono que não vale como identidade.
+            ficha = None
+            origem = "dono"
+        if ficha:
             origem = "ficha"
-            contact_ids = [task["contact_id"]]
-            cur.execute("SELECT emails FROM contacts WHERE id = %s", (task["contact_id"],))
+            contact_ids = [ficha]
+            cur.execute("SELECT emails FROM contacts WHERE id = %s", (ficha,))
             row = cur.fetchone()
             if row:
                 emails = [e for e in contact_emails({"emails": row["emails"]})
@@ -204,14 +235,19 @@ def _task_scope(task) -> dict:
             # Sem endereço de terceiro sobrando, a perna de e-mail não casa nada e
             # a task segue só pelo `contact_id` — que é exatamente o cano de antes.
             for cid in contact_ids_by_emails(cur, emails):
-                if cid not in contact_ids:
+                if cid not in contact_ids and cid not in fichas_do_dono:
                     contact_ids.append(cid)
         else:
             texto = f"{task.get('titulo') or ''} {task.get('descricao') or ''}"
             emails = [e for e in extract_emails(texto) if e not in do_dono]
             if emails:
-                origem = "texto"
-                contact_ids = contact_ids_by_emails(cur, emails)
+                # Ficha irmã do dono achada pelo endereço entra pela porta dos
+                # fundos se não for filtrada aqui também.
+                achadas = [c for c in contact_ids_by_emails(cur, emails)
+                           if c not in fichas_do_dono]
+                if achadas or emails:
+                    origem = "texto"
+                contact_ids = achadas
     return {"contact_ids": contact_ids, "emails": emails, "origem": origem}
 
 
@@ -279,19 +315,83 @@ def _fetch_messages_since(scope, since):
         return [dict(r) for r in cur.fetchall()]
 
 
+# ==================== A citação tem que existir (23/08) ====================
+#
+# A #426 foi fechada com 0,95 de confiança e esta justificativa:
+#   "Mensagem de 14/07 documenta decisão técnica completa: microlote = 10%
+#    peneira mais alta (~50 sacas), separação na classificação Guaxupé..."
+# Não havia mensagem de 14/07 no lote (24/06, 06/08, 18–23/08) e NENHUMA das 11
+# citava microlote. A frase é, palavra por palavra, a última linha da DESCRIÇÃO
+# da própria tarefa — que vai no prompt. O modelo devolveu o enunciado como se
+# fosse a prova.
+#
+# Barra de confiança não pega isto: 0,85 mede o quanto o modelo acredita, não se
+# o que ele leu existe. A guarda é obrigar uma CITAÇÃO LITERAL e conferi-la
+# contra o texto que foi mostrado — verificação determinística, feita em Python.
+# Não confere, não fecha: `done` vira false e o motivo fica no log.
+EVIDENCE_MIN_CHARS = 25
+
+# Aspas curvas e reticências: o modelo reescreve `"` como `“` ao copiar, e a
+# citação verdadeira falharia por um caractere. Normalizar não afrouxa a guarda
+# — o que ela testa é se o TEXTO existe, não a pontuação com que foi copiado.
+_QUOTE_FIX = str.maketrans({"“": '"', "”": '"', "‘": "'",
+                            "’": "'", "…": "...", " ": " "})
+
+
+def _norm_evidencia(s) -> str:
+    return re.sub(r"\s+", " ", str(s or "").translate(_QUOTE_FIX)).strip().lower()
+
+
+def _display_text(m) -> str:
+    """O texto da mensagem COMO ele aparece no prompt — já truncado.
+
+    A conferência compara contra isto, não contra o `conteudo` inteiro: o modelo
+    só pode citar o que viu, e aceitar citação de trecho cortado deixaria passar
+    exatamente a invenção que a guarda existe pra pegar."""
+    return (m.get("conteudo") or "")[:MAX_MSG_CHARS]
+
+
+def _evidencia_confere(trecho, exibidas) -> tuple:
+    """A citação existe em alguma das mensagens mostradas? → (ok, motivo).
+
+    Trecho curto só vale se for a mensagem INTEIRA — a evidência real da #999921
+    era "Já fiz a vídeo" (14 caracteres), e um piso cego mataria o fechamento
+    certo junto com o inventado. O que o piso barra é o trecho genérico ("ok",
+    "confirmado") que casaria por acaso em meia base."""
+    alvo = _norm_evidencia(trecho)
+    if not alvo:
+        return False, "veredito sem citação"
+    corpos = {i: _norm_evidencia(t) for i, t in exibidas.items()}
+    achou = [i for i, c in corpos.items() if alvo and alvo in c]
+    if not achou:
+        return False, "citação não aparece em nenhuma das mensagens"
+    if len(alvo) < EVIDENCE_MIN_CHARS and not any(corpos[i] == alvo for i in achou):
+        return False, f"citação curta demais ({len(alvo)} caracteres) e parcial"
+    return True, ""
+
+
 def _judge(task, msgs) -> dict:
     """LLM (Haiku) decide se a task foi concluída à luz das mensagens. JSON estrito.
-    Retorna {done, confidence, reason}. Best-effort: erro → done=false."""
+    Retorna {done, confidence, reason, evidencia}. Best-effort: erro → done=false.
+
+    `done=true` só sobrevive se a citação que o modelo devolveu for encontrada
+    no texto que ele viu (`_evidencia_confere`)."""
     # O CANAL vai no prompt (06/08): com e-mail na peneira, o julgamento muda —
     # "respondeu por e-mail" é a evidência que fecha a #999695, e sem o rótulo o
     # modelo lê uma thread de e-mail como se fosse recado de WhatsApp.
-    convo = "\n".join(
-        f"[{'você→' if m['direcao'] == 'outgoing' else ''}"
-        f"{(m.get('parte') or 'contato')}{'' if m['direcao'] == 'outgoing' else '→você'} "
-        f"por {m.get('canal') or 'whatsapp'} "
-        f"{m['ts']:%d/%m %H:%M}] {(m['conteudo'] or '')[:MAX_MSG_CHARS]}"
-        for m in reversed(msgs)  # mais antigas primeiro, pra leitura cronológica
-    )
+    ordenadas = list(reversed(msgs))  # mais antigas primeiro, leitura cronológica
+    exibidas, linhas = {}, []
+    for i, m in enumerate(ordenadas, start=1):
+        texto = _display_text(m)
+        exibidas[i] = texto
+        quem = (
+            f"você→{m.get('parte') or 'contato'}" if m["direcao"] == "outgoing"
+            else f"{m.get('parte') or 'contato'}→você"
+        )
+        linhas.append(f"[M{i} | {quem} por {m.get('canal') or 'whatsapp'} "
+                      f"| {m['ts']:%d/%m %H:%M}] {texto}")
+    convo = "\n".join(linhas)
+
     prompt = f"""Você decide se uma TAREFA pendente já foi CONCLUÍDA, à luz das mensagens trocadas com o contato DEPOIS que a tarefa foi criada.
 
 TAREFA:
@@ -299,17 +399,24 @@ Título: {task['titulo']}
 Descrição: {task.get('descricao') or '(sem descrição)'}
 Criada em: {task['data_criacao']:%d/%m/%Y}
 
-MENSAGENS DESDE A CRIAÇÃO (cronológico):
+MENSAGENS DESDE A CRIAÇÃO (cronológico, rotuladas M1, M2, ...):
 {convo}
 
 REGRAS:
 - Cada linha traz QUEM falou e POR QUAL CANAL (whatsapp/email). A tarefa nomeia de quem se espera o retorno — resposta de OUTRA pessoa da mesma conversa NÃO conclui a espera.
 - Tarefa de AÇÃO (enviar/mandar/cobrar/falar/contatar/responder): só está concluída se HÁ mensagem SUA (você→…) que CUMPRE a ação.
 - Tarefa de ESPERA (aguardar/esperar retorno de alguém): só está concluída se a PESSOA ESPERADA respondeu (…→você) o que era esperado — por WhatsApp ou por e-mail, tanto faz o canal.
+- PLANO REGISTRADO NÃO É AÇÃO CUMPRIDA. Texto que anuncia intenção, descreve como algo será feito, ou registra uma decisão ("vamos separar X", "o critério é Y", "ficou definido que...") não conclui nada — a tarefa fecha quando o que ela pedia FOI FEITO, não quando alguém escreveu o que pretende fazer.
+- TAREFA QUE PEDE VÁRIAS COISAS só fecha com TODAS satisfeitas. Se ela pede 5 definições e as mensagens resolvem 2, done=false.
+- A DESCRIÇÃO DA TAREFA NÃO É EVIDÊNCIA. Ela é o enunciado do que falta fazer. Só as linhas M1..Mn acima contam como prova.
 - Na dúvida, done=false. Conversa tangencial NÃO conclui a tarefa.
-- Só done=true se as mensagens claramente satisfazem o que a tarefa pedia.
 
-Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "reason": "1 frase curta"}}"""
+Se (e só se) done=true, você DEVE apontar a prova:
+- "evidencia_id": o rótulo da mensagem que conclui a tarefa (ex.: "M3");
+- "evidencia_trecho": um trecho COPIADO LITERALMENTE dessa mensagem, palavra por palavra, sem parafrasear e sem juntar pedaços de mensagens diferentes.
+O trecho é conferido contra o texto acima. Se você não encontrar nas mensagens um trecho que sustente o fechamento, a resposta correta é done=false.
+
+Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "evidencia_id": "M1", "evidencia_trecho": "...", "reason": "1 frase curta"}}"""
 
     api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -319,7 +426,7 @@ Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "reason": 
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
             model=llm.FAST,
-            max_tokens=200,
+            max_tokens=400,  # o veredito agora carrega a citação junto
             messages=[{"role": "user", "content": prompt}],
         )
         try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
@@ -331,11 +438,29 @@ Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "reason": 
         if not m:
             return {"done": False, "confidence": 0.0, "reason": "parse falhou"}
         data = json.loads(m.group(0))
-        return {
+        verdict = {
             "done": bool(data.get("done")),
             "confidence": float(data.get("confidence") or 0.0),
             "reason": str(data.get("reason") or "")[:200],
+            "evidencia_id": str(data.get("evidencia_id") or "")[:8],
+            "evidencia": str(data.get("evidencia_trecho") or "")[:400],
         }
+        if verdict["done"]:
+            ok, motivo = _evidencia_confere(verdict["evidencia"], exibidas)
+            if not ok:
+                logger.warning(
+                    "task_reconciler: veredito DESCARTADO na task %s — %s. "
+                    "Citação: %r | reason: %r",
+                    task["id"], motivo, verdict["evidencia"][:160], verdict["reason"],
+                )
+                return {
+                    "done": False,
+                    "confidence": 0.0,
+                    "reason": f"evidência não confere: {motivo}",
+                    "evidencia": verdict["evidencia"],
+                    "evidencia_falha": motivo,
+                }
+        return verdict
     except Exception as e:
         logger.warning(f"task_reconciler judge falhou (task {task['id']}): {e}")
         return {"done": False, "confidence": 0.0, "reason": f"erro: {e}"}
@@ -355,10 +480,20 @@ def _close_task(task, verdict):
         action_type='task_resolved',
         category='tasks',
         title=f"Tarefa concluída (reconciler): {task['titulo']}",
-        details=f"Fechada por comunicação direta. Confiança {verdict['confidence']:.2f}. {verdict['reason']}",
+        details=(
+            f"Fechada por comunicação direta. Confiança {verdict['confidence']:.2f}. "
+            f"{verdict['reason']}"
+            # A citação CONFERIDA vai pra trilha, não só a prosa do modelo: é o
+            # que permite auditar um fechamento sem reabrir o prompt. Na #426 a
+            # justificativa soava impecável e a mensagem não existia.
+            + (f" | Evidência ({verdict.get('evidencia_id') or '?'}): "
+               f"\"{verdict['evidencia'][:200]}\"" if verdict.get('evidencia') else "")
+        ),
         scope_ref={'task_id': task['id'], 'contact_id': task.get('contact_id'), 'project_id': task.get('project_id')},
         source='task_reconciler',
-        payload={'confidence': verdict['confidence'], 'reason': verdict['reason']},
+        payload={'confidence': verdict['confidence'], 'reason': verdict['reason'],
+                 'evidencia': verdict.get('evidencia'),
+                 'evidencia_id': verdict.get('evidencia_id')},
         undo_hint=f"UPDATE tasks SET status='pending', data_conclusao=NULL WHERE id={task['id']}",
     )
 
@@ -660,7 +795,12 @@ async def _notify_reopened(reopened):
 async def run_task_reconciler(dry_run: bool = False) -> dict:
     """Sweep. Fecha tasks pending resolvidas por comunicação direta.
     dry_run=True: julga e loga o que fecharia, mas NÃO fecha nem notifica."""
-    if not is_reconciler_enabled():
+    # O kill-switch barra a ESCRITA, não a medição (23/08). Enquanto ele também
+    # abortava o dry_run, a única forma de saber se o conserto funcionou era
+    # religar em produção e olhar — gate que se valida ligando não é gate. Com a
+    # chave `off`, `dry_run=True` julga e relata sem fechar nada.
+    desligado = not is_reconciler_enabled()
+    if desligado and not dry_run:
         logger.info("task_reconciler: desligado (kill-switch)")
         return {"disabled": True}
 
@@ -670,10 +810,11 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
     # antes de o julgamento a fechar — o pior dos dois mundos pro Renato.
     on_hold = sweep_on_hold(dry_run=dry_run)
 
-    candidates, n_sem_contato = _fetch_candidate_tasks()
+    candidates, n_sem_contato, n_so_dono = _fetch_candidate_tasks()
     judged = 0
     closed = []
     would_close = []
+    sem_evidencia = []
     por_texto = sum(1 for t in candidates if (t.get("_scope") or {}).get("origem") == "texto")
 
     for task in candidates:
@@ -682,10 +823,15 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
             continue
         verdict = _judge(task, msgs)
         judged += 1
+        if verdict.get("evidencia_falha"):
+            sem_evidencia.append({"id": task["id"], "titulo": task["titulo"],
+                                  "motivo": verdict["evidencia_falha"],
+                                  "citacao": (verdict.get("evidencia") or "")[:160]})
         if verdict["done"] and verdict["confidence"] >= CONFIDENCE_THRESHOLD:
             rec = {
                 "id": task["id"], "titulo": task["titulo"],
                 "confidence": verdict["confidence"], "reason": verdict["reason"],
+                "evidencia": verdict.get("evidencia"),
             }
             if dry_run:
                 would_close.append(rec)
@@ -705,10 +851,20 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
         await _notify_reopened(reopened_net)
 
     summary = {
-        "disabled": False,
+        "disabled": desligado,   # dry_run com a chave off: mediu, não escreveu
         "dry_run": dry_run,
         "scanned_with_contact": len(candidates),
         "skipped_no_contact": n_sem_contato,  # v0 boundary — logado, sem cap silencioso
+        # Tasks cuja única identidade era a ficha do PRÓPRIO Renato (23/08). Eram
+        # 26 de 149 quando a #426 foi fechada errado; se este número crescer, é a
+        # CoS linkando task ao dono em vez do terceiro — dado a corrigir, não
+        # régua a afrouxar.
+        "skipped_owner_only": n_so_dono,
+        # Vereditos `done=true` DERRUBADOS por citação que não existe. Zero aqui
+        # não prova que a guarda funciona — prova que ninguém tentou. Ver o log
+        # (WARNING) pra a citação inventada em si.
+        "blocked_no_evidence": len(sem_evidencia),
+        "blocked_items": sem_evidencia,
         # Alcançadas SÓ pelo endereço no texto: cada uma é uma task com dado a
         # corrigir (falta o `contact_id`). O número existe pra a CoS linkar as
         # fichas, não pra o texto virar o caminho normal.
