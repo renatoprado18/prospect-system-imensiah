@@ -67,6 +67,16 @@ def ler_contrato() -> dict:
     # as 7 do memo, sem nunca ter olhado `locais`/`locais_contatos`. Guarda que se
     # abstem em silencio certifica o que nao checou ([[feedback_guarda_abstencao_vira_fabrica]]):
     # por isso o total de entidades agora e' conferido contra o memo, logo abaixo.
+    #
+    # ⚠️ 23/08/26 — ESSA CONFERENCIA NAO EXISTIA. O comentario acima a prometia
+    # desde 14/08 e o codigo logo abaixo so conferia o total de TABELAS (168). O
+    # efeito: o memo declara 11 entidades, a tabela de baseline lista 7, e o
+    # verificador imprimia `🟢 ... 7 entidades no baseline` todo dia — sem que
+    # nada dissesse que as outras 4 nunca foram olhadas. Entre elas **Frente**,
+    # que o proprio memo chama de hub ("quase toda travessia passa por ela").
+    # O conserto de 14/08 mexeu no regex e parou ali; a guarda estrutural que o
+    # comentario anunciava ficou por escrever. Comentario nao e' codigo — o
+    # verificador nao le o que ele promete ([[feedback_prompt_nao_le_comentario]]).
     entidades = {}
     for m in re.finditer(r"^\|\s*\**\s*([A-Za-zÀ-ÿ ]+?)\s*\**\s*\|\s*\*\*(\d+)\*\*\s*\|\s*(.+?)\s*\|$",
                          texto, re.MULTILINE):
@@ -83,8 +93,21 @@ def ler_contrato() -> dict:
     if not entidades or not total:
         sys.exit("[verifica-modelo] o memo mudou de formato e o baseline nao pôde ser lido. "
                  "Corrija o parse ou o memo — NAO ignore: sem baseline nao ha verificacao.")
+
+    # A guarda prometida acima, agora escrita. O memo declara o numero de
+    # entidades no cabecalho ("## As 11 entidades, em 3 grupos"); se o baseline
+    # nao tem uma linha para cada uma, o verificador NAO pode dizer "conforme" —
+    # ele so olhou parte do modelo. Divergir aqui e' o estado esperado enquanto o
+    # baseline estiver incompleto, e e' exatamente esse o aviso que faltava.
+    declarado = re.search(r"##\s*As\s+(\d+)\s+entidades", texto)
+    if not declarado:
+        sys.exit("[verifica-modelo] o memo nao declara mais quantas entidades existem "
+                 "('## As N entidades'). Sem esse numero nao da pra saber se o "
+                 "baseline cobre o modelo inteiro — corrija o memo ou o parse.")
+
     return {
         "entidades": entidades,
+        "entidades_declaradas": int(declarado.group(1)),
         "total": int(total.group(1)),
         "mortas": {k: int(v.replace(".", "")) for k, v in mortas.items()},
     }
@@ -93,6 +116,21 @@ def ler_contrato() -> dict:
 def verificar(contrato: dict, quiet: bool = False) -> int:
     achados = []
     with _conn() as c, c.cursor() as cur:
+        # --- o baseline cobre o modelo inteiro? ------------------------------
+        # Primeiro de tudo, porque condiciona todo o resto: um baseline parcial
+        # nao pode produzir a frase "banco conforme o contrato".
+        no_baseline, declaradas = len(contrato["entidades"]), contrato["entidades_declaradas"]
+        if no_baseline < declaradas:
+            faltam = declaradas - no_baseline
+            achados.append((AMARELO,
+                            f"BASELINE PARCIAL: {no_baseline} de {declaradas} entidades tem linha "
+                            f"no baseline — {faltam} nunca foram medidas. O verde abaixo, quando "
+                            f"vier, vale so para as {no_baseline} verificadas."))
+        elif no_baseline > declaradas:
+            achados.append((VERMELHO,
+                            f"o baseline tem {no_baseline} entidades e o memo declara {declaradas} "
+                            f"— um dos dois esta errado; sem isso batendo nao ha contrato"))
+
         # --- tabelas por entidade -------------------------------------------
         for nome, spec in contrato["entidades"].items():
             vivas = []
@@ -106,6 +144,24 @@ def verificar(contrato: dict, quiet: bool = False) -> int:
                 achados.append((VERMELHO, f"{nome}: {len(vivas)} tabelas, contrato diz {spec['esperado']}"))
             elif len(vivas) < spec["esperado"]:
                 achados.append((VERDE, f"{nome}: {len(vivas)} tabelas (era {spec['esperado']}) — consolidou"))
+
+        # --- cobertura: quantas tabelas nenhuma entidade reivindica ----------
+        # A regua honesta do alcance deste verificador. "7 de 11 entidades" ja
+        # diz pouco; o que importa e quantas TABELAS ficam fora de qualquer
+        # entidade, porque e nelas que estrutura nova entra sem ser notada. Sai
+        # como numero, nao como cor: cobertura parcial e' estado conhecido do
+        # modelo, nao defeito do dia ([[feedback_regua_cobertura_parcial]]).
+        reivindicadas = {t.split(".")[-1] for spec in contrato["entidades"].values()
+                         for t in spec["tabelas"]}
+        cur.execute("""SELECT table_name FROM information_schema.tables
+                       WHERE table_schema='public' AND table_type='BASE TABLE'""")
+        do_banco = {r[0] for r in cur.fetchall()}
+        fora = do_banco - reivindicadas
+        if fora:
+            achados.append((AMARELO,
+                            f"COBERTURA: {len(do_banco) - len(fora)} de {len(do_banco)} tabelas "
+                            f"pertencem a alguma entidade ({100*(len(do_banco)-len(fora))//len(do_banco)}%) "
+                            f"— {len(fora)} fora de qualquer entidade, onde estrutura nova entra sem alarme"))
 
         # --- total de tabelas ------------------------------------------------
         cur.execute("""SELECT COUNT(*) FROM information_schema.tables
