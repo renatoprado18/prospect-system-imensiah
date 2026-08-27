@@ -129,11 +129,13 @@ def main() -> int:
 
     cur = get_connection().cursor()
 
+    # Parênteses obrigatórios: `NOW() - NOW() - interval` (sem eles) dá o
+    # intervalo NEGATIVO, e o cabeçalho anunciava "escutando há -86400s".
     if a.dias:
-        corte_sql, params = "NOW() - (%s || ' days')::interval", (a.dias,)
+        corte_sql, params = "(NOW() - (%s || ' days')::interval)", (a.dias,)
         desde = f"últimos {a.dias} dias"
     else:
-        corte_sql, params = "%s::timestamptz", (INSCRITO_EM,)
+        corte_sql, params = "(%s::timestamptz)", (INSCRITO_EM,)
         desde = f"a inscrição do evento ({INSCRITO_EM[:16]} UTC)"
 
     cur.execute(
