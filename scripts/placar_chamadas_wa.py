@@ -16,23 +16,29 @@ Foi inscrito em 24/08 23:30 UTC — **só isso, sem código de escrita**: o hand
 INTEL joga evento desconhecido no `else`, que grava o payload cru em
 `webhook_audit` como `unhandled_event:call`. Nada entra em `messages`.
 
-O QUE ESTE SCRIPT NÃO SABE, E É O PONTO. Ligar o evento responde metade da
-pergunta. A outra metade é empírica e só o tempo responde:
+🔴 O LIMITE, MEDIDO EM 27/08 — CHAMADA EFETUADA NÃO APARECE. O Renato ligou para
+alguém pelo WhatsApp e **nenhum evento chegou**, com a escuta comprovadamente
+viva no mesmo instante: `CALL` inscrito, instância `open` e 198 `messages.upsert`
+nas 4 h anteriores, o último 5 min antes. O socket do Evolution é um device
+**companion**, e o WhatsApp só entrega a ele o nó `call` de chamada RECEBIDA.
 
-  1. **Chamada que o Renato FAZ aparece?** O socket do Evolution é um device
-     companion, e o nó `call` que o Baileys processa é o que o servidor entrega a
-     ele. Se o WhatsApp só notifica companions de chamada RECEBIDA, as ligações
-     que ele origina — que são a maioria, porque ele age direto — seguem invisíveis
-     e o conserto não resolve o caso que o motivou.
-  2. **Dá pra derivar duração?** Só se `accept` e `terminate` chegarem os dois.
-     Com apenas `offer`, o placar sabe que houve toque, não que houve conversa.
+Então a cobertura é assimétrica, e vale escrever o que isso custa: as ligações
+que **ele origina** seguem invisíveis — e eram exatamente o caso que motivou tudo
+(os 26 min com o Jonas e os 4 min com o Piccino, em 24/08). Metade do buraco
+continua aberta, e não há conserto pelo lado do Evolution: é limite da plataforma,
+não configuração faltando. Quem for tentar de novo, tente por outro caminho.
 
-⚠️ ZERO NÃO É RESPOSTA. Placar vazio significa "nenhuma chamada aconteceu" OU
-"acontece e a camada é cega" — e os dois são indistinguíveis sem denominador
-([[feedback_mecanismo_que_nao_mede_o_denominador]]). Quem separa é o CONTROLE
-POSITIVO: peça a alguém pra te ligar no WhatsApp, ligue você para alguém, e rode
-de novo. Uma chamada provocada de cada direção mata a ambiguidade em 2 minutos —
-que é o que 54 dias de log não fizeram ([[feedback_controle_positivo_pega_o_furo_real]]).
+⚠️ O QUE FOI PROVADO, E COMO. Não por ausência de dado — por **controle positivo**
+([[feedback_controle_positivo_pega_o_furo_real]]). Zero no placar, sozinho,
+significa "nenhuma chamada aconteceu" OU "acontece e a camada é cega", e os dois
+são indistinguíveis sem denominador ([[feedback_mecanismo_que_nao_mede_o_denominador]]).
+O que separou foi uma chamada provocada de propósito, com a escuta verificada
+viva no mesmo minuto. **Antes de reabrir esta questão, refaça esse par** — não
+conclua nada de um placar vazio.
+
+⏭️ O QUE SEGUE SEM TESTE: `accept`. As chamadas capturadas até aqui tocaram e
+ninguém atendeu, então a duração de CONVERSA nunca foi exercitada. Atender uma
+recebida decide — e é barato, porque recebida a gente sabe que chega.
 
 Uso:  ./placar_chamadas_wa.py              # desde a inscrição do evento
       ./placar_chamadas_wa.py --dias 7
@@ -220,10 +226,11 @@ def main() -> int:
 
     # As duas perguntas em aberto — e o cuidado de não fechar nenhuma sem prova.
     if efetuadas == 0:
-        print("\n  ❓ EFETUADAS SEGUEM EM ZERO — e isto ainda NÃO decide nada.")
-        print("     Só vira resposta se ele TIVER ligado pra alguém nesta janela.")
-        print("     Sem esse denominador, 'zero efetuadas' e 'ninguém ligou' são")
-        print("     a mesma leitura. Uma chamada efetuada de propósito resolve.")
+        print("\n  🔴 EFETUADAS EM ZERO — e isto JÁ FOI DECIDIDO em 27/08, não é lacuna.")
+        print("     O Renato ligou de propósito, com a escuta verificada viva no")
+        print("     mesmo minuto, e nada chegou: o companion só enxerga chamada")
+        print("     RECEBIDA. É limite da plataforma, não config faltando — as")
+        print("     ligações que ELE origina seguem sem cobertura, por outro caminho.")
     if n_atendidas == 0:
         print("\n  ❓ NENHUMA FOI ATENDIDA, então `accept` continua sem ser exercitado.")
         print("     Isto NÃO é 'accept não vem' — é que ninguém atendeu. A duração")
