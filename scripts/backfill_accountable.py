@@ -60,14 +60,18 @@ def _ficha_do_dono(cur):
 
 
 def _pessoas_do_projeto(cur, projeto):
-    """Quem ja esta LIGADO a este projeto (via tasks.contact_id).
+    """Quem ja esta LIGADO a este projeto, por `contact_id` OU `accountable_id`.
 
     Este e o universo de candidatos, e nao o `contacts` inteiro. Ver a nota em
     `_resolve` — foi aqui que o backfill quase pos tarefa na pessoa errada.
+
+    `accountable_id` entra junto de proposito: o vinculo que ESTE script cria
+    hoje passa a valer como evidencia na proxima rodada. Sem isso, cada run
+    recomecaria do mesmo ponto cego.
     """
     cur.execute(
-        """SELECT DISTINCT c.id, c.nome FROM tasks t
-           JOIN contacts c ON c.id = t.contact_id
+        """SELECT DISTINCT c.id, c.nome, c.apelido FROM tasks t
+           JOIN contacts c ON c.id IN (t.contact_id, t.accountable_id)
            WHERE t.project_id = %s""", (projeto,))
     return [dict(r) for r in cur.fetchall()]
 
@@ -91,8 +95,18 @@ def _resolve(nome, pessoas, cache):
         return cache[chave]
     primeiro = chave.split()[0] if chave.split() else chave
 
-    bate = [p for p in pessoas
-            if _norm(p["nome"]).split() and _norm(p["nome"]).split()[0] == primeiro]
+    def _primeiros(p):
+        """Primeiro nome do `nome` E do `apelido`. O recap diz `GUILHERME:` e a
+        ficha se chama `Gui Zorze` — sem o apelido, o vinculo que o Renato
+        confirmou em 31/08 se perderia na proxima rodada."""
+        out = set()
+        for campo in (p.get("nome"), p.get("apelido")):
+            partes = _norm(campo).split()
+            if partes:
+                out.add(partes[0])
+        return out
+
+    bate = [p for p in pessoas if primeiro in _primeiros(p)]
     if len(bate) == 1:
         p = bate[0]
         res = (p["id"], f"no projeto: #{p['id']} {p['nome']}")
