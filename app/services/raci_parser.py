@@ -22,10 +22,35 @@ RENATO_ALIASES = (
 
 # Padrao 1: prefix "Nome:" ou "Nome + Nome:" no titulo (inicio da string)
 # Aceita acentos PT-BR e suporta multi-nome via " + " ou ", "
+#
+# DUAS CEGUEIRAS CORRIGIDAS EM 31/08/26 — medidas no projeto #26 (Alba), onde
+# 51 de 59 tasks estavam sem `accountable_id`:
+#
+#   1. TAG DE PROJETO NO INICIO CEGAVA O PARSER. O proprio sistema escreve
+#      `[Alba #26] SANDRA: enviar a DRE`, e o `^` fazia o match falhar em TODAS
+#      as 6 tasks `delegated` do projeto. O produtor sabotava o consumidor:
+#      quem punha a tag era o mesmo sistema que depois nao conseguia ler o dono.
+#      [[feedback_consumidor_morto_wiring]]
+#
+#   2. NOME EM CAIXA ALTA COM ACENTO NAO CASAVA. A classe interna era
+#      `[a-zA-Zà-ÿ]`, que tem as MINUSCULAS acentuadas mas nao as MAIUSCULAS
+#      (`À-Ý`). Entao `SANDRA:` casava e `ANDRÉ:` nao — e o modo de falha era
+#      mudo, a task so nascia sem dono. Mesmo buraco para JOSÉ, INES/INÊS,
+#      ANTONIO/ANTÔNIO. A caixa alta e a forma que o proprio recap usa.
+_TAG_PREFIXO = re.compile(r"^\s*\[[^\]]{1,40}\]\s*")
+_NOME = r"[A-ZÀ-Ý][A-Za-zÀ-ÿ]+"
 _PREFIX_PATTERN = re.compile(
-    r"^([A-ZÀ-Ý][a-zA-Zà-ÿ]+(?:\s+[A-ZÀ-Ý][a-zA-Zà-ÿ]+)*"
-    r"(?:\s*[+,]\s*[A-ZÀ-Ý][a-zA-Zà-ÿ]+(?:\s+[A-ZÀ-Ý][a-zA-Zà-ÿ]+)*)*)\s*:\s+"
+    rf"^({_NOME}(?:\s+{_NOME})*"
+    rf"(?:\s*[+,]\s*{_NOME}(?:\s+{_NOME})*)*)\s*:\s+"
 )
+
+
+def strip_tag_de_projeto(titulo: str) -> str:
+    """Remove UMA tag `[...]` do inicio (`[Alba #26] SANDRA: x` -> `SANDRA: x`).
+
+    So a primeira e so no inicio: tag no meio do titulo e conteudo, nao rotulo.
+    """
+    return _TAG_PREFIXO.sub("", titulo or "", count=1)
 
 # Padroes 2/3: linhas R: e A: na descricao
 _RACI_R_PATTERN = re.compile(r"(?:^|\n)\s*R\s*:\s*([^\n]+?)(?:\s*,\s*A\s*:|$|\n)", re.IGNORECASE)
@@ -61,9 +86,10 @@ def parse_raci(titulo: str, descricao: str) -> RaciResult:
     titulo = (titulo or "").strip()
     descricao = descricao or ""
 
-    # Padrao 1: prefix no titulo
+    # Padrao 1: prefix no titulo. A tag de projeto sai antes do match — ver a
+    # cegueira (1) na nota do _PREFIX_PATTERN.
     if titulo:
-        m = _PREFIX_PATTERN.match(titulo)
+        m = _PREFIX_PATTERN.match(strip_tag_de_projeto(titulo))
         if m:
             name_full = m.group(1).strip()
             # Multi-nome ("Renata + Lara" / "Thalita + Amadeo") -> primeiro
