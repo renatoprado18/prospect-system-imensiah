@@ -723,6 +723,11 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
     if not action_items:
         action_items = _proximos_passos_do_resumo(summary_md)
         origem_itens = "proximos_passos_md" if action_items else "nenhuma"
+    # Cabecalho de dono ("Sandra:") nao e encaminhamento: vira posse do item
+    # abaixo, nao task. Roda ANTES do corte de 10 de proposito — cada cabecalho
+    # gastava um slot, e era assim que o item sob o ULTIMO cabecalho sumia sem
+    # erro nenhum (o gate da frente Alba, em 24/08).
+    action_items, cabecalhos_descartados = separar_cabecalhos(action_items)
     date_iso = adapted.get("date") or ""
     share_url = adapted.get("share_url") or ""
     attendees = meeting_payload.get("calendar_invitees") or []
@@ -847,12 +852,27 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
     delegadas_count = 0
     primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
 
+    # CAP DE 10 DEIXOU DE SER SILENCIOSO. Truncar sem dizer e indistinguivel de
+    # "a reuniao so tinha 10 encaminhamentos" — quem le a stat conclui cobertura
+    # total. Agora o excedente sai no retorno e no log.
+    itens_truncados = max(0, len(action_items) - 10)
+    if itens_truncados:
+        logger.warning(
+            "Fathom rec %s: %s action_item(s) ALEM do cap de 10 nao viraram task",
+            rec_id, itens_truncados,
+        )
+
     if action_items:
         # Import local pra evitar ciclo de boot
         try:
-            from services.raci_parser import parse_raci
+            # `_PREFIX_PATTERN` vem de la de proposito, em vez de duplicar o
+            # regex aqui: se as duas copias divergirem, o prefixo que ESTE
+            # modulo escreve deixa de ser o que aquele modulo le, e a task volta
+            # a nascer na caixa errada sem nenhum erro.
+            from services.raci_parser import _PREFIX_PATTERN, parse_raci
         except Exception:  # pragma: no cover — defensive
             parse_raci = None
+            _PREFIX_PATTERN = None
             logger.warning("raci_parser indisponivel; tasks Fathom seguirao como pending")
 
         with get_db() as conn:
@@ -862,6 +882,14 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 playback = ai.get("recording_playback_url") or ""
                 if not desc:
                     continue
+                # O dono vem do cabecalho da secao quando o item nao o traz na
+                # propria linha. Prefixar aqui e o que faz o `raci_parser` ver
+                # "Sandra: revisar a DRE" e nascer `delegated` — antes, o item
+                # sob cabecalho chegava anonimo e caia na caixa do Renato.
+                dono_secao = ai.get("_dono_da_secao")
+                if (dono_secao and _PREFIX_PATTERN is not None
+                        and not _PREFIX_PATTERN.match(desc.strip())):
+                    desc = f"{dono_secao}: {desc.strip()}"
                 titulo_short = desc[:200]
 
                 # Dedup: ja existe task pra esse recording_id + titulo?
@@ -1011,6 +1039,11 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
         # e reunião cujo importador não achou nada são a MESMA linha de log.
         "origem_itens": origem_itens,
         "itens_encontrados": len(action_items),
+        # Cabecalhos de dono removidos antes de virar task (o defeito de 24/08),
+        # e o excedente do cap de 10. Ambos no retorno de proposito: eram
+        # descartes MUDOS, e descarte mudo le-se como cobertura total.
+        "cabecalhos_descartados": cabecalhos_descartados,
+        "itens_truncados_pelo_cap": itens_truncados,
         "nota_projeto_id": nota_id,
         "projeto_id": project_id,
         "projeto_origem": projeto_origem,  # 'parametro' | como foi inferido | por que não
@@ -1180,6 +1213,70 @@ _SECOES_PROXIMOS = (
 # `  - [**Renato:** Consolidar os questionarios.](https://fathom.video/...)`
 _BULLET = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
 _LINK_MD = re.compile(r"^\[(.+)\]\((\S+)\)$", re.DOTALL)
+
+
+_CABECALHO_MAX_CHARS = 60
+
+
+def _e_cabecalho_de_dono(desc: str) -> bool:
+    """A linha e um CABECALHO de responsavel ("Sandra:"), nao um encaminhamento.
+
+    POR QUE EXISTE (31/08/26). O recap agrupa os proximos passos por dono —
+    `Sandra:` / item / item · `Guilherme:` / item — e o importador quebrava linha
+    a linha. Cada cabecalho virava uma task de titulo vazio, e os itens sob ele
+    perdiam o dono. Nas 2 reunioes Alba de 24/08 saiu isto: #999972 `Renato:`,
+    #999987 `Sandra:`, #999991 `Guilherme:`, #999994 `Andre:`, #999996
+    `Sandra, Israel, Andre e Guilherme:`. A CoS cancelou as cinco a mao e o
+    defeito seguiu vivo — reincidiu em 25/08 (`Eliane:`, `Renato:`) e em 29/08
+    (`Renato F A Prado:`, `Almeida Prado:`, ainda pending em 31/08).
+
+    O TESTE E TERMINAR EM `:`, nao procurar verbo. O contraste que fixa a regra
+    esta nos proprios dados: a #999971 nasceu CERTA — `Israel: Apresentar suas
+    preocupacoes...` — porque nome e texto vieram na MESMA linha, e ela nao
+    termina em dois-pontos. Cabecalho e a linha que so anuncia de quem e a bola.
+    Procurar verbo erraria em "Sandra: revisao da DRE" (substantivo) e depende de
+    lista de verbos que envelhece.
+
+    Vale pros DOIS caminhos de entrada: os `action_items` da API (foi de la que
+    vieram os de 29/08, com `recording_playback_url` preenchido) e o fallback
+    `_proximos_passos_do_resumo` da conta FREE.
+    """
+    if not desc:
+        return False
+    d = desc.strip().replace("**", "").strip()
+    if not d.endswith(":"):
+        return False
+    # Guarda de tamanho: um item real que por acaso termine em ':' (ex. uma frase
+    # longa introduzindo lista) nao deve ser engolido como cabecalho. Nome de
+    # dono e curto — o maior visto ate hoje tem 34 chars ("Sandra, Israel, Andre
+    # e Guilherme:").
+    return len(d) <= _CABECALHO_MAX_CHARS
+
+
+def separar_cabecalhos(action_items: List[Dict]) -> tuple:
+    """Separa cabecalhos de dono dos encaminhamentos reais, PRESERVANDO a posse.
+
+    Devolve `(itens, cabecalhos_descartados)`, onde cada item ganha
+    `_dono_da_secao` = o cabecalho vigente acima dele (None antes do primeiro).
+    O dono vai pro `raci_parser` como prefixo, que e o mecanismo ja existente pra
+    a task nascer `delegated` quando a bola nao e do Renato — sem isso, item de
+    terceiro cai na caixa dele. [[feedback_raci_parsing]]
+    """
+    itens: List[Dict] = []
+    descartados: List[str] = []
+    dono_atual: Optional[str] = None
+    for ai in action_items or []:
+        desc = (ai.get("description") or ai.get("text") or "").strip()
+        if not desc:
+            continue
+        if _e_cabecalho_de_dono(desc):
+            dono_atual = desc.replace("**", "").strip().rstrip(":").strip()
+            descartados.append(desc)
+            continue
+        novo = dict(ai)
+        novo["_dono_da_secao"] = dono_atual
+        itens.append(novo)
+    return itens, descartados
 
 
 def _proximos_passos_do_resumo(summary_md: str) -> List[Dict]:
