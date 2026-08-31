@@ -126,18 +126,26 @@ def expire_stale_signals(conn, *, detector: str, current_hashes: List[str], reas
     if not current_hashes:
         return 0
     cur = conn.cursor()
+    # O `reason` era ACEITO E DESCARTADO (31/08/26): a assinatura o pedia desde
+    # sempre, `alertar_portoes` passava "portao_fechou", e o UPDATE gravava o
+    # literal 'detector_expired' pra todo mundo. Sem isso, "o portao saiu do
+    # debriefing porque ele CUMPRIU" e "o hot take envelheceu" ficam
+    # indistinguiveis na leitura — e foi exatamente sobre essa mistura que o
+    # capability_registry construiu um value_ratio 0.0 (ver _detectors la).
+    # Grava como `detector_expired:<reason>` pra nao quebrar quem casa por
+    # prefixo. [[feedback_prompt_nao_le_comentario]]
     cur.execute(
         """
         UPDATE signals
         SET status = 'expired',
             resolved_at = NOW(),
-            resolved_by = 'detector_expired'
+            resolved_by = %s
         WHERE detector = %s
           AND status = 'open'
           AND signal_hash != ALL(%s)
         RETURNING id
         """,
-        (detector, current_hashes),
+        (f"detector_expired:{reason}", detector, current_hashes),
     )
     return cur.rowcount
 

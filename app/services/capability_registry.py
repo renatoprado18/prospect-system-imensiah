@@ -58,8 +58,38 @@ def _ratio(acted: int, ignored: int) -> Optional[float]:
 # 1) DETECTORES — via signals
 # ---------------------------------------------------------------------------
 def _detectors(cursor, days: int) -> List[Dict[str, Any]]:
-    """Valor por DETECTOR: emitido=volume; resolved=acionado;
-    expired+dismissed=ruido/ignorado. value_ratio = resolved/(resolved+ruido).
+    """Valor por DETECTOR: emitido=volume; resolved=acionado; ignorado = so o
+    que E EVIDENCIA DE IGNORANCIA. value_ratio = resolved/(resolved+ignorado).
+
+    NEM TODO `expired` E IGNORADO — e foi por confundi-los que este medidor
+    gravou o inverso da realidade (31/08/26). Havia UM balde de `expired` e ele
+    somava tres coisas incompativeis:
+
+      - `ttl_expired`      — passou o TTL sem ninguem agir. E ignorado: o
+                             signal ficou disponivel o prazo inteiro e nada veio.
+      - `detector_expired` — o hash SUMIU da run seguinte (expire_stale_signals).
+                             Pro `frente_review.alertar_portoes` isso e o mais
+                             perto de SUCESSO que existe: o portao saiu do
+                             debriefing porque foi CUMPRIDO. Contar como ruido
+                             inverte o sinal.
+      - `detector_disabled`— o detector foi desligado por decisao. Nao diz nada
+                             sobre o valor dele; diz que pararam de perguntar.
+
+    O que isso produzia, medido em prod: `detector:frente_review.alertar_portoes`
+    com value_ratio **0.0000** (0 acted / 5 ignored) em 25/08, e a serie piorando
+    a cada rodada diaria de persist_snapshot — enquanto **119 de 119** signals
+    desse detector constavam como ENTREGUES em `tonia_seen_signals`, e os dois
+    portoes de 22/08 (Orestes e Israel) viraram ato em menos de 24h. Cobertura de
+    entrega 100%, valor medido zero. Aposentar detector por esse numero mataria
+    justamente o que funcionava. [[feedback_otimizar_o_mensuravel_erra_o_alvo]]
+
+    Agora `detector_expired*` e `detector_disabled` nao contam em NENHUM lado —
+    ficam visiveis em `extra` como inconclusivos. Quando so sobra inconclusivo, o
+    denominador zera e `_ratio` abstem (None), que e a resposta honesta: este
+    detector nao tem fechador, entao nao ha o que medir aqui. A causa raiz —
+    `resolved` nunca ser marcado por ninguem desde que o `tonha_brain` morreu em
+    27/06 — e a task #999981, e continua aberta de proposito: abster e dizer "nao
+    sei" e correto; inventar 0.0 nao era. [[feedback_guarda_abstencao_vira_fabrica]]
 
     Sem custo isolado por detector (rodam dentro do cron detectors-run) ->
     cost_usd = None."""
@@ -68,9 +98,22 @@ def _detectors(cursor, days: int) -> List[Dict[str, Any]]:
         SELECT detector,
                COUNT(*)                                              AS invocations,
                COUNT(*) FILTER (WHERE status = 'resolved')           AS resolved,
-               COUNT(*) FILTER (WHERE status = 'expired')            AS expired,
                COUNT(*) FILTER (WHERE status = 'dismissed')          AS dismissed,
                COUNT(*) FILTER (WHERE status = 'open')               AS still_open,
+               COUNT(*) FILTER (WHERE status = 'expired'
+                                  AND COALESCE(resolved_by,'') = 'ttl_expired')
+                                                                     AS expired_ttl,
+               COUNT(*) FILTER (WHERE status = 'expired'
+                                  AND COALESCE(resolved_by,'') LIKE 'detector_expired%%')
+                                                                     AS expired_stale,
+               COUNT(*) FILTER (WHERE status = 'expired'
+                                  AND COALESCE(resolved_by,'') = 'detector_disabled')
+                                                                     AS expired_disabled,
+               COUNT(*) FILTER (WHERE status = 'expired'
+                                  AND COALESCE(resolved_by,'') NOT IN
+                                      ('ttl_expired','detector_disabled')
+                                  AND COALESCE(resolved_by,'') NOT LIKE 'detector_expired%%')
+                                                                     AS expired_outro,
                ROUND(AVG(urgencia)::numeric, 1)                      AS avg_urgencia
         FROM signals
         WHERE criado_em > NOW() - (%s || ' days')::interval
@@ -83,19 +126,45 @@ def _detectors(cursor, days: int) -> List[Dict[str, Any]]:
     for r in cursor.fetchall():
         r = dict(r)
         acted = int(r["resolved"])
-        ignored = int(r["expired"]) + int(r["dismissed"])
+        expired_ttl = int(r["expired_ttl"])
+        expired_stale = int(r["expired_stale"])
+        expired_disabled = int(r["expired_disabled"])
+        # `expired_outro` = resolved_by NULL ou valor fora do vocabulario
+        # conhecido. Entra como IGNORADO (conservador: nao inflar valor), mas
+        # fica separado em `extra` — se crescer, apareceu um escritor novo e a
+        # regra acima precisa aprender o rotulo dele.
+        expired_outro = int(r["expired_outro"])
+        ignored = expired_ttl + expired_outro + int(r["dismissed"])
+        inconclusive = expired_stale + expired_disabled
         ratio = _ratio(acted, ignored)
         extra: Dict[str, Any] = {
             "still_open": int(r["still_open"]),
             "resolved": acted,
-            "expired": int(r["expired"]),
+            "expired": expired_ttl + expired_stale + expired_disabled + expired_outro,
+            "expired_ttl": expired_ttl,
+            "expired_stale": expired_stale,
+            "expired_disabled": expired_disabled,
+            "expired_outro": expired_outro,
             "dismissed": int(r["dismissed"]),
+            "inconclusive": inconclusive,
             "avg_urgencia": float(r["avg_urgencia"]) if r["avg_urgencia"] is not None else None,
             "cost_note": "detector nao tem custo isolado (roda dentro de detectors-run)",
         }
         if ratio is None:
             extra["value_note"] = (
+                "sem base de valor na janela: nada foi resolvido nem ignorado. "
+                f"{inconclusive} sinal(is) saiu(ram) por ausencia na run ou por "
+                "detector desligado — isso NAO e ignorancia e nao entra na conta. "
+                "Detector sem fechador de ciclo (ver task #999981): abster e a "
+                "leitura honesta, 0.0 seria invencao."
+                if inconclusive else
                 "sem sinal de valor ainda — todos open/pendentes na janela"
+            )
+        elif inconclusive:
+            extra["value_note"] = (
+                f"value_ratio calculado sobre {acted + ignored} sinal(is) com "
+                f"desfecho legivel; outros {inconclusive} ficaram de fora por "
+                "serem inconclusivos (sairam da run ou detector desligado)."
             )
         out.append({
             "capability_key": f"detector:{r['detector']}",
