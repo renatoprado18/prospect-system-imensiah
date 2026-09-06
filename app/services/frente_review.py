@@ -960,11 +960,29 @@ async def alertar_portoes(limite: int = 20) -> Dict[str, Any]:
     from services.detectors._base import (
         emit_signal, expire_stale_signals, make_signal_hash,
     )
+    from services.signal_ato import fechar_signals_por_ato
 
     DETECTOR = "frente_review.alertar_portoes"
     resultado: Dict[str, Any] = {"portoes": 0, "emitidos": 0, "atualizados": 0,
                                  "ja_resolvidos": 0, "expirados": 0,
-                                 "skipped_reason": None}
+                                 "fechados_por_ato": 0, "skipped_reason": None}
+
+    def _fechar_por_ato(conn) -> int:
+        """ANTES de expirar: o portão cumprido tem que constar como CUMPRIDO.
+
+        A ordem é o ponto. `expire_stale_signals` carimba `detector_expired` em
+        tudo que sumiu do debriefing — e um portão some justamente porque foi
+        feito. Rodando depois, o ato viraria `expired` e o valor do detector
+        seguiria sem numerador, que é a task #999981. [[signal_ato]]
+        """
+        try:
+            return fechar_signals_por_ato(
+                conn, detector=DETECTOR, dry_run=False)["fechados"]
+        except Exception:
+            # Medir não pode derrubar o que mede: se o fechador falhar, o ciclo
+            # do portão segue e a perda é uma rodada de telemetria.
+            logger.exception("alertar_portoes: fechamento por ato falhou")
+            return 0
 
     portoes = portoes_abertos()
     if not portoes:
@@ -973,6 +991,7 @@ async def alertar_portoes(limite: int = 20) -> Dict[str, Any]:
         # sempre o que ele já fez — a reclamação de "dou feedback e continua lá".
         resultado["skipped_reason"] = "sem_portao_aberto"
         with get_db() as conn:
+            resultado["fechados_por_ato"] = _fechar_por_ato(conn)
             resultado["expirados"] = expire_stale_signals(
                 conn, detector=DETECTOR, current_hashes=[],
                 reason="portao_fechou")
@@ -1007,6 +1026,11 @@ async def alertar_portoes(limite: int = 20) -> Dict[str, Any]:
                 # parte porque somar com 'atualizados' esconderia o caso em que
                 # o agente insiste num pedido já fechado.
                 resultado["ja_resolvidos"] += 1
+
+        # Fecha por ATO antes de expirar — ver _fechar_por_ato: um portão some
+        # do debriefing porque foi cumprido, e chamar isto depois carimbaria
+        # `detector_expired` justamente no que virou ato.
+        resultado["fechados_por_ato"] = _fechar_por_ato(conn)
 
         # Portão que saiu do debriefing desde a última rodada.
         resultado["expirados"] = expire_stale_signals(

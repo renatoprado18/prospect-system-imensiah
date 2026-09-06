@@ -166,6 +166,23 @@ def _detectors(cursor, days: int) -> List[Dict[str, Any]]:
                 f"desfecho legivel; outros {inconclusive} ficaram de fora por "
                 "serem inconclusivos (sairam da run ou detector desligado)."
             )
+
+        # COBERTURA — sem ela o ratio mente pelo avesso. Em 06/09/26, assim que o
+        # fechamento por ato deu numerador ao `alertar_portoes`, o ratio pulou
+        # para **1.0** (18 acted / 0 ignored) enquanto 168 sinais seguiam
+        # inconclusivos: lido sozinho, "100% de valor" para uma medicao que
+        # alcanca 9% dos casos. E o mesmo defeito de 31/08 com o sinal trocado —
+        # antes um 0.0 que inventava fracasso, agora um 1.0 que inventaria
+        # sucesso. Quem consome o ratio precisa ver sobre quanto ele foi
+        # calculado. [[feedback_regua_cobertura_parcial]]
+        denom = acted + ignored
+        extra["value_coverage"] = (
+            round(denom / int(r["invocations"]), 4) if r["invocations"] else None
+        )
+        extra["value_coverage_note"] = (
+            f"{denom} de {int(r['invocations'])} sinal(is) da janela tem desfecho "
+            "legivel; o ratio vale sobre esses, nao sobre o total."
+        )
         out.append({
             "capability_key": f"detector:{r['detector']}",
             "capability_type": "detector",
