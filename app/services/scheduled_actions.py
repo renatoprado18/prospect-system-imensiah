@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
 # Tipos suportados em V0
 SUPPORTED_ACTION_TYPES = {"wa_send"}
 
+# Instancias Evolution que existem de fato (conferido em 06/09/26 via
+# GET /instance/fetchInstances). 'intel-bot' sem o -v2 esta FORA de proposito:
+# foi contra ela que os 4 agendamentos de junho falharam calados, porque o
+# docstring de schedule_wa a ensinava e _dispatch aceitava qualquer string.
+INSTANCIAS_VALIDAS = {"rap-whatsapp", "intel-bot-v2"}
+
 
 def _normalize_dt(dt: datetime) -> datetime:
     """Garante tz-aware UTC, depois retorna naive UTC pra storage TIMESTAMP."""
@@ -61,7 +67,13 @@ def schedule_wa(
     Se dedup_key existir, retorna id existente sem duplicar (idempotency).
 
     Args:
-        instance: 'rap-whatsapp' ou 'intel-bot' (nome de instancia Evolution).
+        instance: 'rap-whatsapp' (numero do Renato) ou 'intel-bot-v2' (o bot).
+            ⚠️ 'intel-bot' SEM o -v2 nao existe mais no servidor Evolution. Este
+            docstring ensinou o nome errado ate 06/09/26 e as 4 unicas acoes
+            agendadas contra ele falharam (13-14/06/26, "Connection Closed"):
+            os lembretes de Wadhwani, Assespro, Editorial e do Claude Plus nunca
+            chegaram. Conferir com GET /instance/fetchInstances antes de inventar
+            um nome — _dispatch valida contra INSTANCIAS_VALIDAS abaixo.
         number: telefone no formato '5511984153337' (sera normalizado no envio).
         text: corpo da mensagem.
         scheduled_for: datetime quando deve disparar (UTC tz-aware preferencialmente).
@@ -150,6 +162,16 @@ async def _execute_wa_send(row: Dict[str, Any]) -> Dict[str, Any]:
 
     if not instance or not number or not text:
         return {"ok": False, "error": f"payload incompleto: {payload!r}"}
+
+    # Falhar aqui, com o nome errado na mensagem, e' melhor que 3 tentativas contra
+    # uma instancia inexistente devolvendo "Connection Closed" — que foi o que
+    # aconteceu em junho e escondeu a causa real por 3 meses.
+    if instance not in INSTANCIAS_VALIDAS:
+        return {
+            "ok": False,
+            "error": (f"instancia '{instance}' nao existe. "
+                      f"Validas: {sorted(INSTANCIAS_VALIDAS)}"),
+        }
 
     try:
         client = EvolutionAPIClient(instance_name=instance)

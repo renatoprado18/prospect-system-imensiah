@@ -10404,20 +10404,78 @@ async def cron_daily_sync(request: Request):
         return await _aio.to_thread(_run)
 
     async def step_contacts():
+        # Este step ficou 4 meses devolvendo success/changes=0 (69 de 69 execucoes,
+        # 03/05 a 06/09/26) com TRES defeitos que se escondiam mutuamente:
+        #   1. lia stats["total_changes"], chave que sync_contacts_incremental nunca
+        #      devolve — com .get(...,0) o resultado era 0 ate com o sync perfeito;
+        #   2. ignorava full_sync_required, entao o deadlock "sem token -> exige full
+        #      sync -> ninguem agenda full sync -> token nunca nasce" nunca se rompia;
+        #   3. usava `conn` FORA do `with get_db()`, ja devolvido ao pool — inofensivo
+        #      enquanto a funcao retornava antes de tocar a conexao, e uma bomba no
+        #      instante em que o token passasse a existir.
+        # Corrigir um so nao adianta: o except: pass devolvia tudo a changes=0.
+        # O caminho correto ja existia em /api/cron/sync-contacts (trigger manual, sem
+        # agendador); aqui ele passa a ser o que roda de fato. Relatorio e medicao no
+        # recado de 06/09 no session_locks + task #1000155.
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE")
             accounts = [dict(row) for row in cursor.fetchall()]
-        synced = 0
-        for account in accounts:
-            try:
-                stats = await sync_contacts_incremental(
-                    access_token=account["access_token"], refresh_token=account["refresh_token"],
-                    account_email=account["email"], sync_token=account.get("sync_token"), db_connection=conn)
-                synced += stats.get("total_changes", 0)
-            except Exception:
-                pass
-        return {"changes": synced}
+
+            synced = 0
+            por_conta = {}
+            for account in accounts:
+                email = account["email"]
+                try:
+                    stats = await sync_contacts_incremental(
+                        access_token=account["access_token"],
+                        refresh_token=account["refresh_token"],
+                        account_email=email,
+                        sync_token=account.get("sync_token"),
+                        db_connection=conn,
+                    )
+
+                    # Sem sync_token o incremental sai antes de qualquer HTTP, e a
+                    # semeadura tem que vir de um full sync.
+                    #
+                    # ⚠️ E o full sync NAO CABE AQUI. Medido em 06/09/26 contra prod:
+                    # 5.824 contatos levam mais de 12 minutos (uma ida ao Neon por
+                    # contato), e este step roda com timeout de 90s (run_step abaixo).
+                    # Chamar sync_contacts_from_google inline seria trocar o
+                    # "success" mentiroso por um "timeout" diario — o token continuaria
+                    # NULL e a deriva continuaria crescendo, so que com outro rotulo.
+                    #
+                    # Entao o desenho e' outro: semeadura e' evento UNICO, fora do
+                    # cron, pelo /api/cron/sync-contacts (trigger manual, sem timeout,
+                    # que ja trata full_sync_required). O que este step faz e' GRITAR
+                    # quando falta o token, em vez de fingir que trabalhou.
+                    if stats.get("full_sync_required"):
+                        logger.error(
+                            f"daily-sync: {email} esta SEM sync_token — o incremental "
+                            f"nao roda ate alguem semear via /api/cron/sync-contacts. "
+                            f"Nenhum contato novo do Google entra ate la.")
+                        por_conta[email] = {
+                            "modo": "BLOQUEADO_sem_sync_token",
+                            "acao": "semear com /api/cron/sync-contacts (sem timeout)",
+                        }
+                        mudou = 0
+                    else:
+                        mudou = stats["imported"] + stats["updated"] + stats["deleted"]
+                        por_conta[email] = {
+                            "modo": "incremental",
+                            "imported": stats["imported"],
+                            "updated": stats["updated"],
+                            "deleted": stats["deleted"],
+                            "errors": stats["errors"],
+                        }
+                    synced += mudou
+                except Exception as e:
+                    # Registra em vez de engolir: era o `except: pass` que fazia o
+                    # step parecer saudavel enquanto nao fazia nada.
+                    logger.error(f"daily-sync step_contacts falhou em {email}: {e}")
+                    por_conta[email] = {"modo": "erro", "erro": str(e)[:200]}
+
+        return {"changes": synced, "por_conta": por_conta}
 
     async def step_calendar():
         from services.calendar_sync import get_calendar_sync
@@ -14888,7 +14946,7 @@ async def gmail_sync_single_contact(
             raise HTTPException(status_code=404, detail="Contato não encontrado")
 
         # Get first Gmail account
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
         if not account:
             raise HTTPException(status_code=400, detail="Nenhuma conta Gmail conectada")
@@ -15147,7 +15205,7 @@ async def api_create_meeting_from_suggestion(request: Request, contact_id: int):
     # Obter token do Gmail (mesmo OAuth)
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:
@@ -16175,7 +16233,7 @@ async def calendar_today(request: Request, debug: bool = False):
     # Buscar token da primeira conta Google conectada
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:
@@ -16343,7 +16401,7 @@ async def list_tasks(
     if source in ["google", "both"]:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
             account = cursor.fetchone()
 
         if account:
@@ -16597,7 +16655,7 @@ async def complete_task(request: Request, task_id: str):
         # It's a Google Task ID - complete directly via API
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
             account = cursor.fetchone()
 
         if not account:
@@ -20927,7 +20985,7 @@ def _check_calendar_write_scope() -> Optional[Dict]:
     """
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT email, scopes FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT email, scopes FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
     if not account:
         return {"code": "no_google_account", "message": "Nenhuma conta Google conectada."}
@@ -20995,7 +21053,7 @@ async def list_calendar_events(
     # Buscar token da conta Google conectada
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:
@@ -21263,7 +21321,7 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
             raise HTTPException(status_code=404, detail="Contato não encontrado")
 
         # Buscar token Google
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:
@@ -21382,7 +21440,7 @@ async def trigger_calendar_sync(request: Request):
     # Buscar conta Google
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:
@@ -21404,7 +21462,7 @@ async def trigger_full_calendar_sync(request: Request):
     # Buscar conta Google
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE AND tipo = 'professional' ORDER BY id LIMIT 1")
         account = cursor.fetchone()
 
     if not account:

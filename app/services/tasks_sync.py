@@ -45,7 +45,13 @@ class TasksSyncService:
         """Obtem access token valido da conta Google conectada."""
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            # `LIMIT 1` sem ORDER BY escolhia a conta pela ordem do heap: caía na
+            # profissional por acaso, e um VACUUM FULL poderia inverter isso calado.
+            # O Google Tasks e' profissional por decisao, entao a decisao vai escrita.
+            cursor.execute(
+                "SELECT * FROM google_accounts "
+                "WHERE conectado = TRUE AND tipo = 'professional' "
+                "ORDER BY id LIMIT 1")
             account = cursor.fetchone()
 
         if not account:

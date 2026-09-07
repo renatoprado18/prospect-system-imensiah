@@ -57,7 +57,11 @@ class CalendarSyncService:
             row = cursor.fetchone()
             if row:
                 return row["email"]
-            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            # Fallback deliberado: qualquer conta serve quando a do tipo pedido nao
+            # existe. O ORDER BY e' so pra escolha nao depender da ordem do heap.
+            cursor.execute(
+                "SELECT email FROM google_accounts WHERE conectado = TRUE "
+                "ORDER BY id LIMIT 1")
             row = cursor.fetchone()
             return row["email"] if row else None
 

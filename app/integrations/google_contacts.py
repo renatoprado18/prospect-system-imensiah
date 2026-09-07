@@ -207,13 +207,26 @@ async def get_user_email(access_token: str) -> str:
         return response.json().get("email", "")
 
 
-async def fetch_all_contacts(access_token: str, page_size: int = 1000) -> List[Dict]:
+async def fetch_all_contacts(
+    access_token: str,
+    page_size: int = 1000,
+    return_sync_token: bool = False,
+):
     """
     Fetch all contacts from Google Contacts using People API
-    Returns list of contact dictionaries
+    Returns list of contact dictionaries.
+
+    Com return_sync_token=True devolve `(contatos, next_sync_token)` em vez da lista
+    pura. Existe porque o full sync precisa SEMEAR `google_accounts.sync_token`: sem
+    essa semente o incremental devolve `full_sync_required` para sempre e o sync de
+    contatos nunca sai do lugar (medido em 06/09/26: 69 de 69 execucoes do daily-sync
+    com changes=0, sync_token NULL nas duas contas, ~1.255 contatos de deriva).
+    O flag e opcional de proposito — os outros 11 chamadores (google_push, scripts/)
+    seguem recebendo so a lista, sem mudanca de comportamento.
     """
     contacts = []
     next_page_token = None
+    next_sync_token = None
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         while True:
@@ -222,6 +235,11 @@ async def fetch_all_contacts(access_token: str, page_size: int = 1000) -> List[D
                 "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships,addresses,relations",
                 "sources": "READ_SOURCE_TYPE_CONTACT"
             }
+
+            # So pede o token quando alguem vai usa-lo: requestSyncToken muda o
+            # contrato da resposta e nao ha razao de impo-lo a quem so quer a lista.
+            if return_sync_token:
+                params["requestSyncToken"] = True
 
             if next_page_token:
                 params["pageToken"] = next_page_token
@@ -242,9 +260,16 @@ async def fetch_all_contacts(access_token: str, page_size: int = 1000) -> List[D
             connections = data.get("connections", [])
             contacts.extend(connections)
 
+            # A People API so devolve nextSyncToken na ULTIMA pagina.
+            if data.get("nextSyncToken"):
+                next_sync_token = data["nextSyncToken"]
+
             next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
+
+    if return_sync_token:
+        return contacts, next_sync_token
 
     return contacts
 
@@ -547,17 +572,22 @@ async def sync_contacts_from_google(
     Returns stats: {imported, updated, skipped, errors}
     """
     stats = {"imported": 0, "updated": 0, "skipped": 0, "errors": 0}
+    # Semente do incremental. Ver o docstring de fetch_all_contacts: sem gravar isto
+    # aqui, o proximo incremental volta a pedir full sync e o ciclo nunca fecha.
+    next_sync_token = None
 
     try:
         # Fetch all contacts from Google
-        google_contacts = await fetch_all_contacts(access_token)
+        google_contacts, next_sync_token = await fetch_all_contacts(
+            access_token, return_sync_token=True)
     except Exception as e:
         if "Token expired" in str(e):
             # Try to refresh token
             try:
                 new_tokens = await refresh_access_token(refresh_token)
                 access_token = new_tokens["access_token"]
-                google_contacts = await fetch_all_contacts(access_token)
+                google_contacts, next_sync_token = await fetch_all_contacts(
+                    access_token, return_sync_token=True)
 
                 # Update token in database
                 cursor = db_connection.cursor()
@@ -602,11 +632,25 @@ async def sync_contacts_from_google(
 
     db_connection.commit()
 
-    # Update last sync time
-    cursor.execute('''
-        UPDATE google_accounts SET ultima_sync = CURRENT_TIMESTAMP
-        WHERE email = %s
-    ''', (account_email,))
+    # Update last sync time — e o sync_token, que e o que destrava o incremental.
+    # So sobrescreve quando a API devolveu um token: se veio None (pagina final sem
+    # nextSyncToken, ou chamada legada sem o flag), preservar o que ja estava vale
+    # mais do que zerar e voltar ao deadlock.
+    if next_sync_token:
+        cursor.execute('''
+            UPDATE google_accounts
+            SET ultima_sync = CURRENT_TIMESTAMP, sync_token = %s
+            WHERE email = %s
+        ''', (next_sync_token, account_email))
+        stats["next_sync_token"] = next_sync_token
+    else:
+        cursor.execute('''
+            UPDATE google_accounts SET ultima_sync = CURRENT_TIMESTAMP
+            WHERE email = %s
+        ''', (account_email,))
+        logger.warning(
+            f"full sync de {account_email} nao recebeu nextSyncToken — o proximo "
+            f"incremental vai pedir full sync de novo")
     db_connection.commit()
 
     return stats
