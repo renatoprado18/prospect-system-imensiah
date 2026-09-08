@@ -35,6 +35,10 @@ import httpx
 from database import get_db
 from services import llm, llm_usage
 from services.contact_identity import owner_contact_ids
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao/OCR do anexo quando existe, senao o `conteudo`.
+_TXT = texto_efetivo_sql("m")
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +129,11 @@ def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[
     Etiquetar mensagem-da-máquina como sinal de frente é o sistema medindo o
     próprio eco. Cortado na origem além de na leitura — assim o passivo para de
     crescer enquanto os 31 links antigos são limpos."""
-    cursor.execute("""
-        SELECT m.id, cv.canal, c.nome AS sender, m.direcao, m.conteudo,
+    # `_TXT`: transcricao/OCR do anexo quando ha, senao o conteudo. Vai TAMBEM
+    # no filtro de comprimento — `[Áudio]` tem 7 caracteres e o `> 20` o
+    # descartava aqui, entao audio nunca virava sinal de frente. [[wa_texto]]
+    cursor.execute(f"""
+        SELECT m.id, cv.canal, c.nome AS sender, m.direcao, {_TXT} AS conteudo,
                COALESCE(m.enviado_em, m.recebido_em) AS ts
         FROM messages m
         JOIN conversations cv ON cv.id = m.conversation_id
@@ -135,7 +142,7 @@ def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[
         WHERE m.direcao IN ('incoming', 'outgoing')  -- inclui o que o Renato ENVIA
           AND cv.canal IN ('email', 'whatsapp')
           AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' hours')::interval
-          AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 20
+          AND {_TXT} IS NOT NULL AND LENGTH({_TXT}) > 20
           AND NOT (cv.canal = 'email' AND et.classification = ANY(%s))
           AND NOT EXISTS (SELECT 1 FROM message_project_links l WHERE l.message_id = m.id)
           AND NOT (cv.contact_id = ANY(%s))

@@ -139,7 +139,13 @@ def cursor_caso_piccino():
         CREATE TEMPORARY TABLE messages (
             id INT PRIMARY KEY, conversation_id INT, contact_id INT, direcao TEXT,
             conteudo TEXT, metadata JSONB, enviado_em TIMESTAMP, recebido_em TIMESTAMP,
-            criado_em TIMESTAMP
+            criado_em TIMESTAMP, external_id TEXT
+        ) ON COMMIT DROP;
+        -- 08/09: o reconciler passou a ler a transcricao do anexo no lugar do
+        -- literal `[Áudio]`. Sem esta temporaria a subquery cairia na tabela
+        -- REAL, e o teste deixaria de ser hermetico. [[wa_texto]]
+        CREATE TEMPORARY TABLE wa_attachments (
+            id INT PRIMARY KEY, message_id TEXT, kind TEXT, extracted_text TEXT
         ) ON COMMIT DROP;
     """)
     cur.execute("""
@@ -201,6 +207,49 @@ def test_a_resposta_orfa_e_detectada(cursor_caso_piccino):
 
 def test_o_fup_na_ficha_irma_tambem_entra(cursor_caso_piccino):
     assert 100 in _casadas(cursor_caso_piccino, ["joao@piccino.com.br"], contact_ids=[2869])
+
+
+def test_resposta_por_audio_chega_com_o_que_foi_dito(cursor_caso_piccino, monkeypatch):
+    """Controle positivo do conserto de 08/09: a resposta veio por AUDIO.
+
+    O reconciler decide se a espera de uma task acabou lendo o texto das
+    mensagens. Enquanto ele lia `m.conteudo`, uma resposta por audio valia o
+    literal `[Áudio]` — nao encerrava nada e nao dizia por que. Agora tem de
+    chegar aqui com a transcricao, senao o audio volta a ser silencio.
+
+    Inserido AQUI e nao no fixture: uma linha com `contact_id = 2869` quebraria
+    a premissa de `test_a_resposta_orfa_e_detectada`, que exige a ficha #2869
+    sem nenhuma mensagem propria."""
+    cursor_caso_piccino.execute("""
+        INSERT INTO messages (id, conversation_id, contact_id, direcao, conteudo,
+                              metadata, criado_em, external_id) VALUES
+          (104, 20, 2869, 'incoming', '[Áudio]', '{"type":"audio"}',
+           '2026-08-07 10:00:00', 'WA_EXT_104');
+        INSERT INTO wa_attachments (id, message_id, kind, extracted_text) VALUES
+          (1, 'WA_EXT_104', 'audio',
+           'Renato, sobre a procuracao: o banco recusou, tem que ser pelo juiz.');
+    """)
+
+    class _Conn:
+        def cursor(self_):
+            return cursor_caso_piccino
+
+        def __enter__(self_):
+            return self_
+
+        def __exit__(self_, *a):
+            return False
+
+    monkeypatch.setattr(tr, "get_db", lambda: _Conn())
+    msgs = tr._fetch_messages_since(
+        {"contact_ids": [2869], "emails": ["joao@piccino.com.br"]},
+        "2026-01-01 00:00:00",
+    )
+    textos = [m["conteudo"] for m in msgs]
+    assert any("o banco recusou" in (t or "") for t in textos), (
+        "a transcricao do audio nao chegou ao reconciler: " + repr(textos)
+    )
+    assert "[Áudio]" not in textos, "o literal nao pode mais aparecer no lugar do texto"
 
 
 def test_terceiro_com_o_contato_em_copia_nao_conta_como_resposta(cursor_caso_piccino):

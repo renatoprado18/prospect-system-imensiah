@@ -7,6 +7,10 @@ import io
 from typing import List, Dict, Optional
 from datetime import datetime
 from database import get_db
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao/OCR do anexo quando existe, senao o `conteudo`.
+_TXT = texto_efetivo_sql("m")
 
 
 class ExportService:
@@ -136,9 +140,9 @@ class ExportService:
 
                 # Include messages if requested
                 if include_messages:
-                    cursor.execute("""
-                        SELECT direcao, conteudo, enviado_em
-                        FROM messages
+                    cursor.execute(f"""
+                        SELECT direcao, {_TXT} AS conteudo, enviado_em
+                        FROM messages m
                         WHERE contact_id = %s
                         ORDER BY enviado_em DESC
                         LIMIT 50

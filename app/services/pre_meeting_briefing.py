@@ -15,6 +15,10 @@ import httpx
 
 from database import get_db
 from services.tz import now_utc, to_brt
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao/OCR do anexo quando existe, senao o `conteudo`.
+_TXT = texto_efetivo_sql("m")
 
 logger = logging.getLogger(__name__)
 
@@ -167,8 +171,8 @@ async def _generate_meeting_briefing(meeting: Dict, cursor) -> Optional[str]:
     contact_info = ""
     if meeting.get('contact_id'):
         cid = meeting['contact_id']
-        cursor.execute("""
-            SELECT m.conteudo, m.direcao, m.enviado_em
+        cursor.execute(f"""
+            SELECT {_TXT} AS conteudo, m.direcao, m.enviado_em
             FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
             WHERE cv.contact_id = %s AND m.conteudo IS NOT NULL
             ORDER BY m.enviado_em DESC LIMIT 3

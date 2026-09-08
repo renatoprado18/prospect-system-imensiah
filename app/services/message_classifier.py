@@ -23,6 +23,10 @@ import logging
 from typing import Optional, Tuple
 
 from database import get_db
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao/OCR do anexo quando existe, senao o `conteudo`.
+_TXT = texto_efetivo_sql("m")
 
 logger = logging.getLogger(__name__)
 
@@ -332,8 +336,8 @@ async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                SELECT m.id, m.contact_id, m.conteudo,
+                f"""
+                SELECT m.id, m.contact_id, {_TXT} AS conteudo,
                        c.nome AS sender_name,
                        c.empresa AS sender_company,
                        c.circulo AS sender_circle

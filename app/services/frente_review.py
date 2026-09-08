@@ -33,6 +33,12 @@ from database import get_db
 from services import llm, llm_usage
 from services.group_message_sync import get_group_messages
 from services.tz import now_utc
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO da mensagem: transcricao do audio / OCR da imagem quando ha
+# anexo extraido, senao o `conteudo`. Constante de modulo porque entra em
+# varias queries E nos filtros de comprimento delas.
+_TXT = texto_efetivo_sql("m")
 
 logger = logging.getLogger(__name__)
 
@@ -250,9 +256,9 @@ def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int],
     #23419 (18). `owner_ids` vazio ⇒ não filtra nada (nunca filtra tudo)."""
     rows: List[Dict[str, Any]] = []
     try:
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT DISTINCT m.id, cv.canal, COALESCE(m.enviado_em, m.recebido_em) AS ts,
-                   c.nome AS para, LEFT(m.conteudo, 500) AS conteudo
+                   c.nome AS para, LEFT({_TXT}, 500) AS conteudo
             FROM messages m
             JOIN conversations cv ON cv.id = m.conversation_id
             JOIN contacts c ON c.id = cv.contact_id
@@ -261,7 +267,7 @@ def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int],
             WHERE m.direcao = 'outgoing'
               AND cv.canal IN ('email', 'whatsapp')
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
-              AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
+              AND {_TXT} IS NOT NULL AND LENGTH({_TXT}) > 10
               AND (cv.contact_id = ANY(%s) OR l.project_id = %s)
               AND NOT (cv.contact_id = ANY(%s))
               -- mesmo filtro anti-vazamento do bloco de DMs: outbound que o
@@ -362,15 +368,19 @@ def _gather_frente(cursor, project_id: int,
         # foi o que escondeu o e-mail que o Renato JÁ tinha enviado (Luminosità,
         # 25/07: 48 msgs no window, o outbound recém-enviado caía fora do LIMIT).
         # O _fmt_gather re-ordena cronológico por contato na hora de exibir.
-        cursor.execute("""
-            SELECT m.id, m.conteudo, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
+        # `_TXT` = conteudo, ou a transcricao/OCR do anexo quando a mensagem e
+        # midia. Aplicado TAMBEM no filtro de comprimento: `[Áudio]` tem 7
+        # caracteres e era descartado aqui antes de chegar na projecao — o
+        # audio decisivo nao "aparecia truncado", nem entrava. [[wa_texto]]
+        cursor.execute(f"""
+            SELECT m.id, {_TXT} AS conteudo, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
                    c.nome AS contact_nome
             FROM messages m
             JOIN conversations cv ON cv.id = m.conversation_id
             JOIN contacts c ON c.id = cv.contact_id
             WHERE cv.contact_id = ANY(%s)
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
-              AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
+              AND {_TXT} IS NOT NULL AND LENGTH({_TXT}) > 10
               AND NOT (cv.contact_id = ANY(%s))
               AND (
                     EXISTS (SELECT 1 FROM message_project_links le
@@ -388,9 +398,9 @@ def _gather_frente(cursor, project_id: int,
     dm_ids = {m.get("id") for m in dms if m.get("id")}
     routed: List[Dict[str, Any]] = []
     try:
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT m.id, cv.canal, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
-                   c.nome AS sender, LEFT(m.conteudo, 400) AS conteudo
+                   c.nome AS sender, LEFT({_TXT}, 400) AS conteudo
             FROM message_project_links l
             JOIN messages m ON m.id = l.message_id
             JOIN conversations cv ON cv.id = m.conversation_id

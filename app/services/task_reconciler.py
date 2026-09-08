@@ -60,6 +60,13 @@ import re
 from datetime import timedelta
 from database import get_db
 from services import llm, llm_usage
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao do audio / OCR da imagem quando ha anexo extraido.
+# Aqui pesa duas vezes — o reconciler decide se a espera de uma task acabou, e
+# uma resposta que chegou POR AUDIO valia `[Áudio]`: nao encerrava nada e nao
+# dizia por que. [[wa_texto]]
+_TXT = texto_efetivo_sql("m")
 from services.contact_identity import (
     contact_emails,
     contact_ids_by_emails,
@@ -285,7 +292,7 @@ def _fetch_messages_since(scope, since):
         cur = conn.cursor()
         cur.execute(f"""
             WITH base AS (
-                SELECT m.direcao, m.conteudo,
+                SELECT m.direcao, {_TXT} AS conteudo,
                        COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS ts,
                        COALESCE(cv.canal, 'whatsapp') AS canal,
                        -- QUEM falou. Uma task sem ficha pode citar mais de um
@@ -586,7 +593,7 @@ def _last_substantive_incoming(scope, since):
         cur = conn.cursor()
         cur.execute(f"""
             WITH base AS (
-                SELECT m.conteudo, COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS ts,
+                SELECT {_TXT} AS conteudo, COALESCE(m.enviado_em, m.recebido_em, m.criado_em) AS ts,
                        COALESCE(cv.canal, 'whatsapp') AS canal
                 FROM messages m
                 LEFT JOIN conversations cv ON cv.id = m.conversation_id

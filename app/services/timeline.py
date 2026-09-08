@@ -16,6 +16,10 @@ from typing import List, Dict, Optional
 from datetime import datetime, date
 from collections import defaultdict
 from database import get_db
+from services.wa_texto import texto_efetivo_sql
+
+# Texto EFETIVO: transcricao/OCR do anexo quando existe, senao o `conteudo`.
+_TXT = texto_efetivo_sql("m")
 
 logger = logging.getLogger(__name__)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -64,8 +68,8 @@ class TimelineService:
                 )
 
                 # Buscar preview das mensagens (primeiras 3)
-                cursor.execute("""
-                    SELECT m.conteudo, m.direcao, m.enviado_em
+                cursor.execute(f"""
+                    SELECT {_TXT} AS conteudo, m.direcao, m.enviado_em
                     FROM messages m
                     WHERE m.id = ANY(%s)
                     ORDER BY m.enviado_em DESC
@@ -196,8 +200,8 @@ class TimelineService:
             return cached['summary']
 
         # Buscar conteudo das mensagens para gerar resumo
-        cursor.execute("""
-            SELECT m.conteudo, m.direcao
+        cursor.execute(f"""
+            SELECT {_TXT} AS conteudo, m.direcao
             FROM messages m
             WHERE m.id = ANY(%s)
             ORDER BY m.enviado_em ASC
@@ -339,10 +343,10 @@ Responda APENAS com o resumo, sem explicacoes."""
         """Retorna detalhes de um grupo de mensagens para expandir."""
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
                     m.id,
-                    m.conteudo,
+                    {_TXT} AS conteudo,
                     m.direcao,
                     m.enviado_em,
                     c.canal
