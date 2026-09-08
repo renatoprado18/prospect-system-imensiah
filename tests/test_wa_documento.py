@@ -178,3 +178,50 @@ class TestWiring:
                    encoding="utf-8").read()
         assert 'if kind in ("pdf", "documento")' in src
         assert 'payload["mimetype"]' in src
+
+
+class TestSemNomeNemMime:
+    """CASO REAL: quando o documento vem com LEGENDA em vez de nome de arquivo,
+    `filename` e `mimetype` chegam vazios.
+
+    Foi o caso dos que mais importavam — "o documento dos processos internos"
+    (31/08), os relatórios financeiros mensais da Vallen e a ata da reunião
+    extraordinária de 28/07. Decidir o formato só pelo nome deixaria de fora
+    exatamente esses, e o buraco continuaria onde dói.
+    """
+
+    def setup_method(self):
+        self.w = _carregar_worker()
+
+    def _zip(self, arquivos: dict) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for nome, conteudo in arquivos.items():
+                z.writestr(nome, conteudo)
+        return buf.getvalue()
+
+    def test_docx_sem_nome_e_reconhecido_pelo_conteudo(self):
+        dados = self._zip({"word/document.xml":
+                           "<w:document><w:p><w:r><w:t>Processos internos v2</w:t></w:r></w:p></w:document>"})
+        texto, motor, erro = self.w._extrair_texto_documento(dados, "", "")
+        assert erro is None and motor == "zip:docx"
+        assert "Processos internos v2" in texto
+
+    def test_xlsx_sem_nome_e_reconhecido_pelo_conteudo(self):
+        dados = self._zip({"xl/sharedStrings.xml": "<sst><t>Repasses</t><t>48200</t></sst>",
+                           "xl/worksheets/sheet1.xml": "<worksheet/>"})
+        texto, motor, erro = self.w._extrair_texto_documento(dados, "", "")
+        assert erro is None and motor == "zip:xlsx"
+        assert "Repasses" in texto and "48200" in texto
+
+    def test_nome_explicito_ainda_manda(self):
+        """A detecção por conteúdo é FALLBACK. Se o nome diz .docx, respeita o
+        nome — senão um zip atípico mudaria o parser sem ninguém ver."""
+        dados = self._zip({"word/document.xml": "<w:document><w:t>ata</w:t></w:document>"})
+        _, motor, _ = self.w._extrair_texto_documento(dados, "reuniao.docx", "")
+        assert motor == "zip:docx"
+
+    def test_zip_qualquer_sem_nome_ainda_falha_com_motivo(self):
+        dados = self._zip({"leiame.txt": "nada aqui"})
+        texto, _, erro = self.w._extrair_texto_documento(dados, "", "")
+        assert texto is None and erro and "nao_reconhecido" in erro

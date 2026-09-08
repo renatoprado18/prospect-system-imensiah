@@ -46,6 +46,21 @@ def _extrair_texto_documento(conteudo: bytes, filename: str, mimetype: str = "")
         zf = zipfile.ZipFile(io.BytesIO(conteudo))
         nomes = zf.namelist()
 
+        # Quando o WhatsApp manda o documento com LEGENDA em vez de nome de
+        # arquivo, `filename` e `mimetype` chegam vazios — e foi justamente o
+        # caso dos que mais importavam ("o documento dos processos internos",
+        # os relatorios financeiros da Vallen, a ata de 28/07). Decidir so pelo
+        # nome deixaria exatamente esses de fora. O conteudo do ZIP diz o
+        # formato sem depender de metadado: `xl/` e planilha, `word/` e
+        # documento, `ppt/` e apresentacao.
+        if not nome and not mime:
+            if any(n.startswith("xl/") for n in nomes):
+                nome = ".xlsx"
+            elif any(n.startswith("word/") for n in nomes):
+                nome = ".docx"
+            elif any(n.startswith("ppt/") for n in nomes):
+                nome = ".pptx"
+
         # XLSX: strings compartilhadas + células inline.
         if _por_extensao(".xlsx", ".ods") or "spreadsheet" in mime:
             partes = []
