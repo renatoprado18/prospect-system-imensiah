@@ -55,8 +55,26 @@ def _registrar_falha(message_id: str, phone: str, kind: str, motivo: str) -> Non
         )
 
 
+# Documento que NAO e PDF mas tem texto extraivel. Medido em 08/09: dos 110
+# documentos de grupo com anexo gravado, **110 eram pdf** — nenhum xlsx, nenhum
+# docx. O detector so reconhecia PDF, entao planilha e Word caiam fora sem erro
+# nenhum: `dispatch` devolvia "no_attachment" e a mensagem seguia como se nao
+# tivesse anexo. Foi assim que "o documento dos processos internos" (31/08) e o
+# `Vallen_Registro_Indicadores.xlsx` ficaram invisiveis — e a CoS chegou a
+# afirmar que o mapeamento de processos NAO EXISTIA, a partir da propria
+# cegueira. [[feedback_filtro_vocabulario_errado_falha_calado]]
+EXTENSOES_DOCUMENTO = (
+    ".xlsx", ".xls", ".docx", ".doc", ".pptx", ".ppt",
+    ".csv", ".txt", ".md", ".rtf", ".odt", ".ods",
+)
+_MIMES_DOCUMENTO = (
+    "spreadsheet", "wordprocessing", "presentation", "msword",
+    "ms-excel", "ms-powerpoint", "csv", "text/plain", "opendocument", "rtf",
+)
+
+
 def _detect_attachment_kind(message_obj: Dict) -> Optional[str]:
-    """Returns 'audio', 'image', 'pdf', or None."""
+    """Returns 'audio', 'image', 'pdf', 'documento', or None."""
     if not isinstance(message_obj, dict):
         return None
     if "audioMessage" in message_obj:
@@ -69,6 +87,12 @@ def _detect_attachment_kind(message_obj: Dict) -> Optional[str]:
         fname = (doc.get("fileName") or "").lower()
         if "pdf" in mime or fname.endswith(".pdf"):
             return "pdf"
+        # `documento` cobre o resto do que da pra ler como TEXTO. Video e zip
+        # ficam de fora de proposito: nao ha extrator pra eles, e devolver um
+        # kind que o worker nao sabe tratar trocaria um silencio por um erro
+        # gravado a cada mensagem.
+        if fname.endswith(EXTENSOES_DOCUMENTO) or any(m in mime for m in _MIMES_DOCUMENTO):
+            return "documento"
     return None
 
 
@@ -108,7 +132,12 @@ async def dispatch_attachment_to_worker(
         _registrar_falha(message_id, phone, kind, "dispatch: WORKER_SECRET ausente")
         return {"dispatched": False, "reason": "worker_secret_missing", "kind": kind}
 
-    endpoint_map = {"audio": "/transcribe", "pdf": "/analyze-pdf", "image": "/analyze-image"}
+    endpoint_map = {
+        "audio": "/transcribe",
+        "pdf": "/analyze-pdf",
+        "image": "/analyze-image",
+        "documento": "/analyze-document",
+    }
     endpoint = endpoint_map[kind]
 
     main_instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp").strip()
@@ -121,10 +150,13 @@ async def dispatch_attachment_to_worker(
         "instance": main_instance,
         "silent": True,
     }
-    if kind == "pdf":
+    if kind in ("pdf", "documento"):
         doc = message_obj.get("documentMessage") or {}
-        payload["filename"] = doc.get("fileName") or "documento.pdf"
+        payload["filename"] = doc.get("fileName") or (
+            "documento.pdf" if kind == "pdf" else "documento"
+        )
         payload["caption"] = doc.get("caption") or ""
+        payload["mimetype"] = doc.get("mimetype") or ""
     elif kind == "image":
         img = message_obj.get("imageMessage") or {}
         payload["caption"] = img.get("caption") or ""

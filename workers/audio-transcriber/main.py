@@ -3607,3 +3607,96 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8001))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+# ─────────────────────── documentos que não são PDF ──────────────────────────
+# 08/09/26. O detector do INTEL só reconhecia PDF entre os `documentMessage`:
+# dos 110 documentos de grupo com anexo gravado, 110 eram pdf e ZERO xlsx/docx.
+# Planilha e Word não davam erro — o dispatch devolvia "no_attachment" e a
+# mensagem seguia como se não tivesse anexo. Foi assim que "o documento dos
+# processos internos" (31/08) e o `Vallen_Registro_Indicadores.xlsx` ficaram
+# invisíveis, e a camada CoS chegou a afirmar que o mapeamento de processos NÃO
+# EXISTIA — conclusão tirada da própria cegueira.
+
+# Extrator em modulo proprio: importar o main sobe FastAPI+scheduler, e o
+# teste do extrator viraria skip. Ver doc_extract.py.
+from doc_extract import _extrair_texto_documento  # noqa: E402
+
+
+@app.post("/analyze-document")
+async def analyze_document(request: Request):
+    """Documento do WhatsApp que NÃO é PDF (xlsx/docx/pptx/csv/txt).
+
+    Mesmo contrato do /analyze-pdf: fast-ACK quando silent, processa em
+    background e persiste em `wa_attachments` com kind='documento'.
+    """
+    data = await request.json()
+    if not _check_worker_secret(data.get("secret")):
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not data.get("key"):
+        return JSONResponse(status_code=400, content={"error": "missing key"})
+
+    if data.get("source", "bot") != "bot":
+        asyncio.create_task(_analyze_document_inner(data))
+        return {"status": "accepted", "message_id": data.get("message_id", ""), "queued": True}
+    return await _analyze_document_inner(data)
+
+
+async def _analyze_document_inner(data: dict) -> dict:
+    import base64
+
+    key = data.get("key", {})
+    phone = data.get("phone", "")
+    message_id = data.get("message_id", "")
+    filename = data.get("filename", "documento")
+    mimetype = data.get("mimetype", "")
+    source = data.get("source", "bot")
+    instance = data.get("instance") or (
+        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
+        else INTEL_BOT_INSTANCE
+    )
+
+    logger.info(f"document analysis msg={message_id} file={filename} mime={mimetype}")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            dl = await client.post(
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{instance}",
+                headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
+                json={"message": {"key": key}, "convertToMp4": False},
+            )
+        if dl.status_code not in (200, 201):
+            _save_wa_attachment(message_id, phone, "documento", original_filename=filename,
+                                mime_type=mimetype,
+                                error=f"download_failed {dl.status_code}")
+            return {"error": "download_failed", "status": dl.status_code}
+
+        b64 = (dl.json() or {}).get("base64", "")
+        if not b64:
+            _save_wa_attachment(message_id, phone, "documento", original_filename=filename,
+                                mime_type=mimetype, error="download_sem_base64")
+            return {"error": "no_base64"}
+
+        conteudo = base64.b64decode(b64)
+        texto, motor, erro = _extrair_texto_documento(conteudo, filename, mimetype)
+
+        # Grava SEMPRE — inclusive a falha. Sem a linha, a mensagem volta a
+        # parecer "sem anexo" e o buraco fica indistinguível de não ter havido
+        # arquivo nenhum, que foi o defeito original.
+        _save_wa_attachment(
+            message_id, phone, "documento",
+            original_filename=filename, mime_type=mimetype,
+            size_bytes=len(conteudo),
+            extracted_text=(texto[:200000] if texto else None),
+            extraction_model=motor, error=erro,
+        )
+        logger.info(
+            f"document msg={message_id} file={filename} "
+            f"chars={len(texto) if texto else 0} motor={motor} erro={erro}"
+        )
+        return {"ok": True, "chars": len(texto) if texto else 0, "motor": motor, "erro": erro}
+    except Exception as e:
+        logger.exception(f"analyze-document falhou msg={message_id}")
+        _save_wa_attachment(message_id, phone, "documento", original_filename=filename,
+                            mime_type=mimetype, error=f"{type(e).__name__}: {e}"[:400])
+        return {"error": f"{type(e).__name__}: {e}"}
