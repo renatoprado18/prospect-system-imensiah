@@ -74,6 +74,13 @@ AUTH_CALLS = {
     # corpo do endpoint. Ancorar no nome da funcao e nao no docstring: docstring
     # se reescreve sem querer, e a rota voltaria a contar como aberta.
     "handle_fathom_webhook",
+    # Mesmo caso (08/09): o porteiro do webhook do Autentique e HMAC-SHA256 do
+    # header `X-Autentique-Signature` OU o segredo compartilhado em `?token=`,
+    # e a comparacao mora em `services/autentique.py`, nao no corpo da rota. A
+    # rota REJEITA com 401 quando `autorizar_webhook` devolve False — inclusive
+    # quando `AUTENTIQUE_WEBHOOK_SECRET` nao esta configurado (fail-closed),
+    # porque ela grava evento e dispara aviso ao Renato.
+    "autorizar_webhook",
 }
 
 # Segredos de PROVEDOR: o terceiro assina/carimba a requisicao do jeito dele.

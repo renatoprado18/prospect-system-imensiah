@@ -1837,6 +1837,55 @@ async def fathom_webhook(request: Request):
     return result
 
 
+# ============== Autentique (assinatura de documento) ==============
+# Assinatura era canal cego: o INTEL só soube que o Baeta assinou o acordo de
+# não-circunvenção porque o Renato contou.
+#
+# SEM `require_api_auth` DE PROPÓSITO — mesma razão do Fathom acima: quem chama
+# é o Autentique, que não tem cookie nem X-API-Key. O porteiro é o HMAC-SHA256
+# do header `X-Autentique-Signature`, conferido em `processar_webhook` sobre o
+# corpo CRU. (Em 03/08 uma varredura de "rotas sem consumidor" pôs auth nos
+# webhooks e a Fathom levou 401 por um dia — webhook tem o consumidor FORA do
+# repo por definição.)
+@app.post("/api/webhooks/autentique")
+async def autentique_webhook(request: Request, token: str = ""):
+    """Webhook do Autentique — assinatura/conclusão de documento.
+
+    Lê o corpo CRU (não `.json()`): o formato antigo entrega
+    `x-www-form-urlencoded`, e `.json()` estouraria nele. `processar_webhook`
+    decide o formato pelo conteúdo e nunca levanta — devolver 500 vira
+    reentrega e, em alguns provedores, desativação do endpoint.
+
+    PORTEIRO: HMAC-SHA256 (formato novo) OU `?token=` batendo com
+    `AUTENTIQUE_WEBHOOK_SECRET` (formato antigo, que não assina nada). Sem
+    segredo configurado nada passa — a rota GRAVA e AVISA o Renato, então
+    deixá-la aberta seria permitir que um estranho inventasse "fulano assinou".
+    """
+    from services.autentique import autorizar_webhook, processar_webhook
+    raw = await request.body()
+    headers = dict(request.headers)
+    autorizado, verificado = autorizar_webhook(raw, headers, token)
+    if not autorizado:
+        raise HTTPException(status_code=401, detail="Webhook não autorizado")
+    return await processar_webhook(raw, headers, verificado=verificado)
+
+
+@app.post("/api/autentique/sync")
+async def autentique_sync(request: Request):
+    """Reconcilia o estado dos documentos com a API (rede de segurança).
+
+    O caminho principal é o webhook. Isto existe porque webhook que se perde,
+    se perde CALADO: sem uma leitura de reconciliação, a ausência de eventos é
+    indistinguível de 'ninguém assinou'. Sob demanda — não há cron."""
+    if not verify_cron_auth(request) and not get_current_user(request):
+        raise HTTPException(status_code=401, detail="Não autorizado")
+    from services.autentique import sincronizar
+    try:
+        return await sincronizar()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Autentique: {e}"[:200])
+
+
 # ============== WhatsApp Integration ==============
 # NOTE: O endpoint POST /api/webhooks/whatsapp está definido mais abaixo,
 # na seção "Evolution API Integration", usando handle_evolution_webhook
