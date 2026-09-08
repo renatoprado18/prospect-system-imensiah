@@ -70,8 +70,29 @@ def _api_key() -> Optional[str]:
 
 
 def _webhook_secret() -> Optional[str]:
+    """Segredo compartilhado que autoriza o CHAMADOR (vai em `?token=` na URL)."""
     v = (os.getenv("AUTENTIQUE_WEBHOOK_SECRET") or "").strip()
     return v or None
+
+
+def _signing_secret() -> Optional[str]:
+    """Segredo que o Autentique usa pra ASSINAR o corpo (Endpoint Secret).
+
+    Var separada de propósito. São coisas diferentes: o `?token=` prova que
+    quem chamou conhece um segredo nosso; a assinatura prova que o corpo veio
+    do Autentique. E a URL registrada no painel carrega o token — trocar o
+    valor de `AUTENTIQUE_WEBHOOK_SECRET` pelo signing secret quebraria a
+    entrega sem quebrar nenhum teste.
+
+    ⚠️ O painel mostra o Endpoint Secret UMA vez, na criação ("após fechar
+    esta janela não será mais possível obter o Secret"). Perdê-lo custa criar
+    um endpoint novo.
+
+    Cai para o segredo compartilhado quando não está setado, pra não deixar a
+    verificação simplesmente morta enquanto a var não existe.
+    """
+    v = (os.getenv("AUTENTIQUE_SIGNING_SECRET") or "").strip()
+    return v or _webhook_secret()
 
 
 # ─────────────────────────────── verificacao ────────────────────────────────
@@ -85,7 +106,7 @@ def verificar_assinatura(raw_body: bytes, headers: Dict[str, str]) -> bool:
     Sem segredo configurado devolve False (nao "True por otimismo"). O chamador
     decide o que fazer com evento nao verificado; aqui nao se inventa confianca.
     """
-    segredo = _webhook_secret()
+    segredo = _signing_secret()
     if not segredo or not raw_body:
         return False
     recebida = ""

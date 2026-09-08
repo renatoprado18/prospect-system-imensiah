@@ -258,3 +258,41 @@ class TestPorteiro:
         corpo = src[i:i + 1800]
         assert "autorizar_webhook" in corpo
         assert "status_code=401" in corpo
+
+
+class TestSegredosSeparados:
+    """08/09: o painel entregou um *Endpoint Secret* na criação do endpoint —
+    e ele é uma coisa DIFERENTE do `?token=` da URL.
+
+    O token prova que quem chamou conhece um segredo nosso; a assinatura prova
+    que o corpo veio do Autentique. Como a URL registrada no painel carrega o
+    token, trocar `AUTENTIQUE_WEBHOOK_SECRET` pelo signing secret quebraria a
+    ENTREGA sem quebrar teste nenhum — daí duas vars.
+    """
+
+    def test_hmac_usa_o_signing_secret_quando_existe(self, monkeypatch):
+        monkeypatch.setenv("AUTENTIQUE_WEBHOOK_SECRET", "token-da-url")
+        monkeypatch.setenv("AUTENTIQUE_SIGNING_SECRET", "secret-do-painel")
+        corpo = b"corpo qualquer"
+        assinado_certo = hmac.new(b"secret-do-painel", corpo, hashlib.sha256).hexdigest()
+        assinado_errado = hmac.new(b"token-da-url", corpo, hashlib.sha256).hexdigest()
+        assert verificar_assinatura(corpo, {"X-Autentique-Signature": assinado_certo})
+        assert not verificar_assinatura(corpo, {"X-Autentique-Signature": assinado_errado})
+
+    def test_sem_signing_secret_cai_no_compartilhado(self, monkeypatch):
+        """Não deixar a verificação morta enquanto a var não existe."""
+        monkeypatch.setenv("AUTENTIQUE_WEBHOOK_SECRET", "so-esse")
+        monkeypatch.delenv("AUTENTIQUE_SIGNING_SECRET", raising=False)
+        corpo = b"x"
+        assert verificar_assinatura(
+            corpo, {"X-Autentique-Signature": hmac.new(b"so-esse", corpo, hashlib.sha256).hexdigest()})
+
+    def test_token_da_url_NAO_aceita_o_signing_secret(self, monkeypatch):
+        """O porteiro do `?token=` compara com o segredo compartilhado. Se
+        aceitasse o signing secret também, um vazamento de um valeria pelos
+        dois caminhos."""
+        from services.autentique import autorizar_webhook
+        monkeypatch.setenv("AUTENTIQUE_WEBHOOK_SECRET", "token-da-url")
+        monkeypatch.setenv("AUTENTIQUE_SIGNING_SECRET", "secret-do-painel")
+        assert autorizar_webhook(b"x", {}, token_query="secret-do-painel") == (False, False)
+        assert autorizar_webhook(b"x", {}, token_query="token-da-url") == (True, False)
