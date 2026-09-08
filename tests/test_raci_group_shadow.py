@@ -264,3 +264,68 @@ def test_env_threshold_parsing():
             _os.environ.pop("RACI_EVIDENCE_MAX_AGE_DAYS", None)
         else:
             _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = saved
+
+
+# ---------------------------------------------------------------- peca inteira
+# 08/09/26: o sweep processava uma RACI COMPLETA publicada por terceiro e gerava
+# ZERO propostas, porque `propose` so sabe mexer em item que ja existe
+# (add_note/update_status/update_prazo/complete). Os 10 itens ineditos da peca
+# da Kelly (Alba, 04/09) sumiram calados, com a mensagem marcada processada.
+
+
+def test_peca_publicada_com_item_inedito_e_contada():
+    """O sweep tem de CONTAR o que a auditoria achou — sem criar proposta."""
+    h = _Harness()
+    out, props = h.run(
+        _msgs((1, "jid-1", "Kelly Souza", "RACI completa aqui")),
+        auditar_publicada=lambda m: {"itens_publicados": 16, "itens_no_banco": 6,
+                                     "nao_absorvidos": [{"acao": "x"}] * 10,
+                                     "total_nao_absorvidos": 10},
+    )
+    assert out["raci_publicadas"] == 1
+    assert out["itens_nao_absorvidos"] == 10
+    assert props == [], "auditoria NAO pode virar proposta: a fila ja tem 33 paradas"
+    assert h.marked == [1]
+
+
+def test_sem_auditoria_o_sweep_segue_igual():
+    """Retrocompatibilidade: a dep e opcional e o default nao muda nada."""
+    out, _ = _Harness().run(_msgs((1, "jid-1", "Kelly", "texto qualquer")))
+    assert out["raci_publicadas"] == 0
+    assert out["itens_nao_absorvidos"] == 0
+    assert "auditorias" not in out
+
+
+def test_auditoria_que_explode_nao_derruba_a_mensagem():
+    """Mesma garantia de progresso monotonico do resto do sweep: a auditoria e
+    acessoria e nunca pode custar o processamento da mensagem."""
+    def boom(m):
+        raise RuntimeError("parser explodiu")
+
+    h = _Harness()
+    out, _ = h.run(_msgs((1, "jid-1", "Kelly", "RACI")), auditar_publicada=boom)
+    assert h.marked == [1], "a mensagem tem de avancar mesmo com a auditoria quebrada"
+    assert out["processed_msgs"] == 1
+    assert out["raci_publicadas"] == 0
+
+
+def test_mensagem_que_nao_e_peca_nao_conta_como_auditada():
+    """`None` = nao era peca. Contar isso inflaria o numero que vai pro Renato."""
+    h = _Harness()
+    out, _ = h.run(_msgs((1, "jid-1", "Thalita", "item 3 concluido")),
+                   auditar_publicada=lambda m: None)
+    assert out["raci_publicadas"] == 0
+    assert "auditorias" not in out
+
+
+def test_producao_liga_a_auditoria_de_verdade():
+    """Guard de wiring: os testes acima injetam um fake, entao passariam mesmo
+    com a auditoria desligada em producao. Aqui se checa o call-site real —
+    era exatamente esse tipo de furo (produtor sem consumidor) que deixou os
+    10 itens da Alba sumirem. [[feedback_consumidor_morto_wiring]]"""
+    import inspect
+    from services import raci_group_shadow as sh
+
+    src = inspect.getsource(sh.process_unreviewed_groups)
+    assert "auditar_publicada=_auditar_peca_publicada" in src
+    assert "_notify_peca_publicada" in src

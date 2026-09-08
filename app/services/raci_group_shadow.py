@@ -144,6 +144,7 @@ async def _run_sweep(
     mark_processed: Callable[[int], None],
     max_age_days: Optional[int] = None,
     now_fn: Callable[[], datetime] = now_utc,
+    auditar_publicada: Optional[Callable[[Dict[str, Any]], Optional[Dict[str, Any]]]] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Nucleo resiliente do sweep (deps injetadas -> testavel sem DB).
 
@@ -161,9 +162,11 @@ async def _run_sweep(
     proposta — so marca processada (dreno silencioso) e conta em `stale_skipped`.
     Evita inundar a fila de review da CoS ao destravar backlog historico."""
     out: Dict[str, Any] = {"scanned": 0, "proposals": 0, "processed_msgs": 0,
-                           "errors": 0, "stale_skipped": 0}
+                           "errors": 0, "stale_skipped": 0,
+                           "raci_publicadas": 0, "itens_nao_absorvidos": 0}
     emp_cache: Dict[str, Optional[Tuple[str, str]]] = {}
     new_proposals: List[Dict[str, Any]] = []
+    auditorias: List[Dict[str, Any]] = []
     stale_cutoff = (now_fn() - timedelta(days=max_age_days)) if max_age_days else None
 
     for m in msgs:
@@ -212,6 +215,27 @@ async def _run_sweep(
                 continue
 
             empresa_id, empresa_nome = emp
+
+            # 2a. A peca INTEIRA. `propose` so sabe mexer em item que existe
+            # (add_note/update_status/update_prazo/complete), entao uma RACI
+            # completa publicada por um terceiro com itens que o banco nunca
+            # viu passava por aqui gerando ZERO propostas — e saia marcada como
+            # processada. Foi o que aconteceu com a peca da Kelly em 04/09: 16
+            # itens publicados, 6 no banco, dez sumindo calados. Aqui a
+            # auditoria so CONTA e NOMEIA; nao cria item nem proposta.
+            # [[raci_publicada]]
+            if auditar_publicada is not None:
+                try:
+                    auditoria = auditar_publicada(m)
+                except Exception:
+                    log.exception("raci_group_shadow: auditoria da peca falhou id=%s", mid)
+                    auditoria = None
+                if auditoria:
+                    out["raci_publicadas"] += 1
+                    out["itens_nao_absorvidos"] += auditoria.get("total_nao_absorvidos", 0)
+                    auditorias.append({**auditoria, "empresa_nome": empresa_nome,
+                                       "sender_name": m.get("sender_name")})
+
             props = await propose(m["content"], empresa_id)
             acoes = fetch_acoes([str(p.get("item_id")) for p in props]) if props else {}
 
@@ -236,6 +260,8 @@ async def _run_sweep(
             except Exception:
                 log.exception("raci_group_shadow: mark_processed falhou id=%s (fica pro proximo run)", mid)
 
+    if auditorias:
+        out["auditorias"] = auditorias
     return out, new_proposals
 
 
@@ -282,6 +308,7 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
         store_proposal=_store_proposal,
         mark_processed=_mark_processed,
         max_age_days=_evidence_max_age_days(),
+        auditar_publicada=_auditar_peca_publicada,
     )
 
     if new_proposals:
@@ -289,6 +316,12 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
             await _notify_renato(new_proposals)
         except Exception:
             log.exception("raci_group_shadow: falha notificando Renato")
+
+    if out.get("itens_nao_absorvidos"):
+        try:
+            await _notify_peca_publicada(out.get("auditorias") or [])
+        except Exception:
+            log.exception("raci_group_shadow: falha avisando da peca publicada")
 
     log.info("raci_group_shadow: %s", out)
     return out
@@ -325,6 +358,89 @@ def unprocessed_backlog_stats(stale_days: int = 3) -> Dict[str, Any]:
         "stale_days": stale_days,
         "oldest": oldest.isoformat() if oldest else None,
     }
+
+
+def _acoes_raci_do_grupo(group_jid: str) -> List[str]:
+    """Acoes que o INTEL conhece pro projeto daquele grupo (`raci_itens`).
+
+    Fonte deliberada: foi em `raci_itens` que os 10 itens da Alba faltaram, e e
+    o que a pagina `/projetos/{id}/raci` serve. O ConselhoOS tem a sua propria
+    copia — cruzar as duas e outra frente."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT ri.acao
+                 FROM raci_itens ri
+                 JOIN project_whatsapp_groups pwg ON pwg.project_id = ri.project_id
+                WHERE pwg.group_jid = %s AND pwg.ativo = TRUE""",
+            (group_jid,),
+        )
+        return [dict(r)["acao"] for r in cur.fetchall() if dict(r).get("acao")]
+
+
+def _auditar_peca_publicada(m: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Se a mensagem e uma RACI COMPLETA, conta o que ela traz e o banco nao tem.
+
+    So conta e nomeia — nao cria item, nao gera proposta. O sweep ja roda so
+    sobre `from_me = FALSE`, entao as 17 pecas que o proprio INTEL publicou
+    (geradas A PARTIR do banco) nunca chegam aqui: auditar aquelas seria a
+    maquina ouvindo o proprio eco."""
+    from services.raci_publicada import auditar_texto, parece_raci_publicada
+
+    texto = m.get("content") or ""
+    if not parece_raci_publicada(texto):
+        return None
+    return auditar_texto(texto, _acoes_raci_do_grupo(m["group_jid"]))
+
+
+async def _notify_peca_publicada(auditorias: List[Dict[str, Any]]) -> None:
+    """Avisa o NUMERO. Sem isto o furo continua existindo e calado.
+
+    Nao entra em `raci_group_proposals` de proposito: aquela fila tem 33
+    pendentes, a mais antiga de 22/07, e somar producao a uma fila sem consumo
+    seria trocar um buraco silencioso por outro."""
+    from services.notification_router import notify
+
+    linhas: List[str] = []
+    for a in auditorias:
+        fora = a.get("nao_absorvidos") or []
+        if not fora:
+            continue
+        linhas.append(
+            f"*{a.get('empresa_nome') or 'RACI'}* — {a.get('sender_name') or 'alguem'} "
+            f"publicou uma RACI com {a.get('itens_publicados')} itens; "
+            f"{len(fora)} não estão no INTEL ({a.get('itens_no_banco')} lá):"
+        )
+        for item in fora[:8]:
+            resp = f" — {item['responsavel']}" if item.get("responsavel") else ""
+            st = f" [{item['status']}]" if item.get("status") else ""
+            linhas.append(f"• {item['acao'][:110]}{resp}{st}")
+        if len(fora) > 8:
+            linhas.append(f"_(+{len(fora) - 8} não listados)_")
+
+    if not linhas:
+        return
+
+    total = sum(len(a.get("nao_absorvidos") or []) for a in auditorias)
+    empresas = [a.get("empresa_nome") for a in auditorias if a.get("empresa_nome")]
+    await notify(
+        "raci_group_shadow",
+        f"📋 RACI publicada no grupo — {total} item(ns) que o INTEL não tem",
+        "\n".join(linhas)
+        + "\n\n_Nada foi criado: é aviso. A página do RACI segue sendo a fonte._",
+        7,
+        msg_type="raci_publicada_nao_absorvida",
+        # Dedup pelo conteudo: republicar a MESMA peca nao avisa de novo, peca
+        # com item novo avisa. Sem isto, uma RACI reenviada no grupo viraria
+        # aviso repetido e o Renato aprenderia a ignorar este canal.
+        dedup="raci_publicada:" + "|".join(
+            sorted(
+                (i.get("acao") or "")[:40]
+                for a in auditorias for i in (a.get("nao_absorvidos") or [])
+            )
+        )[:180],
+        topics=empresas or None,
+    )
 
 
 def _mark_processed(group_message_id: int) -> None:
