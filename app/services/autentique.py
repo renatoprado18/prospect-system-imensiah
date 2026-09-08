@@ -309,12 +309,27 @@ async def buscar_documentos(limit: int = 60) -> List[Dict[str, Any]]:
     return ((corpo.get("data") or {}).get("documents") or {}).get("data") or []
 
 
-def _resumo_signatarios(doc: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int, Optional[str]]:
+def _resumo_signatarios(
+    doc: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], int, Optional[str], int]:
+    """Resume as partes. O total conta só quem PRECISA agir.
+
+    ⚠️ Nem toda parte do documento é signatária. No contrato Mayer há três
+    e-mails, e `mayercomunicacaodigital@gmail.com` tem `action: null` — é
+    destinatário, não assina. Contando os três, o documento ficava eternamente
+    "2/3" e NUNCA seria marcado como concluído, mesmo com o painel do
+    Autentique exibindo "Assinado". Foi o painel que denunciou: o dado da API
+    estava certo, a leitura e que estava errada.
+    """
     sigs = []
+    exigem_acao = 0
     assinados = 0
     ultimo: Optional[str] = None
     for s in doc.get("signatures") or []:
         assinado_em = (s.get("signed") or {}).get("created_at")
+        acao = (s.get("action") or {}).get("name")
+        if acao:
+            exigem_acao += 1
         if assinado_em:
             assinados += 1
             if ultimo is None or assinado_em > ultimo:
@@ -322,19 +337,21 @@ def _resumo_signatarios(doc: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int,
         sigs.append({
             "nome": s.get("name"),
             "email": s.get("email"),
-            "acao": (s.get("action") or {}).get("name"),
+            "acao": acao,
             "assinado_em": assinado_em,
             "visto_em": (s.get("viewed") or {}).get("created_at"),
             "recusado_em": (s.get("rejected") or {}).get("created_at"),
         })
-    return sigs, assinados, ultimo
+    # Se NINGUEM declara acao, o campo nao e confiavel naquele documento —
+    # cair para o total evita inventar "0 pendentes" a partir de metadado
+    # ausente, que seria o erro caro (dizer que fechou sem ter fechado).
+    return sigs, assinados, ultimo, (exigem_acao or len(sigs))
 
 
 def upsert_documento(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Grava o ESTADO do documento. Devolve o que mudou em relacao ao que havia."""
-    sigs, assinados, ultimo = _resumo_signatarios(doc)
-    total = len(sigs)
-    finalizado = ultimo if (total and assinados == total) else None
+    sigs, assinados, ultimo, total = _resumo_signatarios(doc)
+    finalizado = ultimo if (total and assinados >= total) else None
 
     with get_db() as conn:
         cur = conn.cursor()

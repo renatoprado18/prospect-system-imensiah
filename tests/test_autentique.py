@@ -172,27 +172,44 @@ class TestResumoSignatarios:
             {"email": "a@x.com", "signed": {"created_at": "2026-09-08T16:49:25Z"}},
             {"email": "b@x.com", "signed": {"created_at": "2026-09-08T16:52:10Z"}},
         ]}
-        sigs, assinados, ultimo = _resumo_signatarios(doc)
+        sigs, assinados, ultimo, total = _resumo_signatarios(doc)
         assert len(sigs) == 2 and assinados == 2
         assert ultimo.startswith("2026-09-08T16:52")
 
-    def test_quem_nao_assinou_nao_conta(self):
-        """Caso real: o contrato Mayer tem 3 partes e uma NUNCA abriu."""
+    def test_destinatario_sem_acao_nao_conta_como_signatario(self):
+        """CASO REAL — e a primeira leitura disto estava ERRADA.
+
+        O contrato Mayer tem 3 e-mails, mas `mayercomunicacaodigital@gmail.com`
+        vem com `action: null`: é destinatário, não assina. Contando os três, o
+        documento ficava "2/3" para sempre e NUNCA seria marcado como
+        concluído — enquanto o painel do Autentique o exibia como "Assinado".
+        """
         doc = {"signatures": [
-            {"email": "a@x.com", "signed": {"created_at": "2025-03-05T11:00:00Z"}},
-            {"email": "b@x.com", "signed": {"created_at": "2025-03-05T12:00:00Z"}},
-            {"email": "c@x.com"},
+            {"email": "dest@x.com", "action": None},
+            {"email": "a@x.com", "action": {"name": "SIGN"},
+             "signed": {"created_at": "2025-03-05T11:00:00Z"}},
+            {"email": "b@x.com", "action": {"name": "SIGN"},
+             "signed": {"created_at": "2025-03-05T12:00:00Z"}},
         ]}
-        sigs, assinados, _ = _resumo_signatarios(doc)
-        assert len(sigs) == 3 and assinados == 2
-        assert sigs[2]["assinado_em"] is None and sigs[2]["visto_em"] is None
+        sigs, assinados, _, total = _resumo_signatarios(doc)
+        assert len(sigs) == 3, "o destinatário continua listado"
+        assert total == 2, "mas só 2 precisam agir"
+        assert assinados == 2, "e os 2 agiram: o documento está COMPLETO"
+
+    def test_sem_action_em_ninguem_cai_pro_total(self):
+        """Metadado ausente não pode virar '0 pendentes'. Dizer que fechou sem
+        ter fechado é o erro caro; contar gente demais só atrasa um aviso."""
+        doc = {"signatures": [{"email": "a@x.com"}, {"email": "b@x.com"}]}
+        _, _, _, total = _resumo_signatarios(doc)
+        assert total == 2
 
     def test_recusa_e_registrada(self):
-        """No formato antigo a RECUSA nao chega por webhook — so aparece aqui,
-        na leitura de estado. Por isso silencio nunca prova que ninguem
-        recusou: prova que ninguem assinou."""
+        """A recusa aparece na leitura de estado. No webhook, ela só chega no
+        formato JSON (`signature.rejected`, marcado no endpoint registrado em
+        08/09); no formato antigo NÃO era enviada — por isso silêncio nunca
+        prova que ninguém recusou, só que ninguém assinou."""
         doc = {"signatures": [{"email": "a@x.com", "rejected": {"created_at": "2026-01-02T10:00:00Z"}}]}
-        sigs, assinados, ultimo = _resumo_signatarios(doc)
+        sigs, assinados, ultimo, _ = _resumo_signatarios(doc)
         assert assinados == 0 and ultimo is None
         assert sigs[0]["recusado_em"].startswith("2026-01-02")
 
