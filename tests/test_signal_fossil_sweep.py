@@ -111,6 +111,22 @@ class TestTTLDosDigests:
         for t in ("morning_briefing", "evening_briefing"):
             assert 24 <= EPHEMERAL_SIGNAL_TTL_HOURS[t] <= 72
 
+    def test_news_pendente_tem_ttl(self):
+        """08/09: nasceu sem TTL e sem detector recorrente. 17 'open' de 22/08
+        a 08/09, zero expired e zero resolved na historia do detector — com
+        urgencia 8, empurrando pra fora do LIMIT 30 do get_cockpit o
+        weekly_digest de 07/09 e o PDCA editorial de 01/09."""
+        assert EPHEMERAL_SIGNAL_TTL_HOURS["news_pendente"] == 48
+
+    def test_news_watcher_fora_de_known_detectors(self):
+        """A armadilha da receita 'alternativa': registrar o watcher em
+        KNOWN_DETECTORS parece equivalente ao TTL e NAO e. `all_detectors`
+        esta todo comentado desde 20/07, entao `expire_disabled_detector_
+        signals` recebe enabled=[] e varreria TODO signal dele a cada hora —
+        desligar o watcher por via travessa. Desligar ou nao e decisao do
+        Renato, nao efeito colateral de um conserto de TTL."""
+        assert "project_news_watcher" not in KNOWN_DETECTORS
+
 
 class TestSincronia:
     def test_known_detectors_bate_com_os_modulos(self):
@@ -129,3 +145,45 @@ class TestSincronia:
         src = inspect.getsource(_base.run_all_detectors)
         assert "expire_disabled_detector_signals" in src
         assert '"disabled_expired": disabled_expired' in src
+
+    def test_todo_emissor_avulso_tem_quem_o_expire(self):
+        """O defeito de CLASSE por tras do `news_pendente` (08/09).
+
+        Signal so sai de 'open' por tres caminhos: ausencia na run seguinte
+        (`expire_stale_signals`, so pra quem tem detector recorrente), idade
+        (`EPHEMERAL_SIGNAL_TTL_HOURS`) ou um fechador proprio. Quem emite com
+        `detector=` fora de KNOWN_DETECTORS e sem nenhum dos tres acumula
+        'open' pra sempre — foi assim que o news chegou a 17 sem um unico
+        expired, ocupando metade da fila que o get_cockpit corta em 30.
+
+        Este teste varre os emissores em vez de confiar em memoria: emissor
+        novo sem expirador falha aqui, nao seis meses depois no cockpit.
+        """
+        import pathlib
+        import re
+
+        pat = re.compile(r"emit_signal\s*\((.*?)\n\s*\)", re.S)
+        orfaos = []
+        for p in (pathlib.Path(_ROOT) / "app").glob("**/*.py"):
+            src = p.read_text(encoding="utf-8", errors="ignore")
+            tem_stale_proprio = "expire_stale_signals" in src
+            for m in pat.finditer(src):
+                bloco = m.group(1)
+                t = re.search(r'tipo\s*=\s*["\']([\w.]+)["\']', bloco)
+                d = re.search(r'detector\s*=\s*["\']([\w.]+)["\']', bloco)
+                # sem detector literal nao da pra decidir estaticamente:
+                # e o caso dos modulos em detectors/, que expiram por ausencia
+                if not t or not d:
+                    continue
+                if d.group(1) in KNOWN_DETECTORS:
+                    continue
+                if t.group(1) in EPHEMERAL_SIGNAL_TTL_HOURS:
+                    continue
+                if tem_stale_proprio:
+                    continue
+                orfaos.append(f"{p.name}: tipo={t.group(1)} detector={d.group(1)}")
+
+        assert not orfaos, (
+            "emissor de signal sem nada que o expire (vira fossil 'open' "
+            "permanente na fila do get_cockpit): " + "; ".join(sorted(orfaos))
+        )

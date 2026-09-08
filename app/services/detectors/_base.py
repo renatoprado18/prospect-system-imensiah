@@ -177,6 +177,28 @@ EPHEMERAL_SIGNAL_TTL_HOURS: Dict[str, int] = {
     # atraso de leitura sem virar passivo.
     "morning_briefing": 48,
     "evening_briefing": 48,
+    # 08/09 — `news_pendente` nascia sem TTL e sem detector recorrente que o
+    # expirasse: 17 'open' de 22/08 a 08/09, ZERO expired e ZERO resolved na
+    # historia inteira do detector. Com urgencia 8 competiam de igual com os
+    # portoes, e o consumidor (mcp/db.py get_cockpit, LIMIT 30 por urgencia
+    # DESC) ja cortava 12 — dos quais o weekly_digest de 07/09 e o PDCA
+    # editorial de 01/09, ambos legitimos e recentes. O passivo de noticia
+    # estava expulsando da tela dele signal de verdade.
+    #
+    # 48h e nao 168h: a analogia certa e o digest, nao `cruzamento_noticia_
+    # contato`. O emit marca `pushed_at = NOW()` nos hits no MESMO commit
+    # (project_news_watcher.py:988) — o conteudo ja foi entregue, entao o
+    # signal aberto depois disso e retrato velho, nao pendencia viva. Com 168h
+    # sobrariam ~7 permanentes na fila (um por dia); com 48h, ~2.
+    #
+    # ⚠️ NAO por `project_news_watcher` em KNOWN_DETECTORS como "alternativa" a
+    # esta linha: `all_detectors` esta todo comentado desde 20/07, entao
+    # `expire_disabled_detector_signals` varreria TODO signal dele a cada hora
+    # — desligar o watcher por via travessa. Desligar ou nao e decisao do
+    # Renato (o gate de 08/09, `5d89a4b`, mediu lift de +1 contato e -6
+    # perdidos em 105 alertas). Este TTL e ortogonal a ela: drena o passivo
+    # sem tocar na emissao.
+    "news_pendente": 48,
 }
 
 # Os 9 detectores que EXISTEM como modulo. `run_all_detectors` decide quais
