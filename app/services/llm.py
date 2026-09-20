@@ -16,12 +16,88 @@ classify_with_advisor.
 import os
 import asyncio
 import logging
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
 FAST = "claude-haiku-4-5-20251001"     # classificação, triagem, OCR, extração barata
 BALANCED = "claude-sonnet-4-6"          # geração, draft, análise média (default)
 DEEP = "claude-opus-4-7"                # análise profunda (raro)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLINDAGEM DE TROCA DE MODELO (#1000265, 20/09/26)
+# ─────────────────────────────────────────────────────────────────────────────
+# Trocar uma das 3 constantes acima por um modelo da geração 5 muda DUAS coisas
+# que nenhum call site declara, e as duas derrubam a classificação sem erro:
+#
+#   1. `thinking` LIGA sozinho. Em Haiku 4.5, Sonnet 4.6 e Opus 4.7, omitir o
+#      parâmetro = não pensar. Em Opus 5, Sonnet 5, Fable 5 e Mythos 5, omitir =
+#      pensar em modo adaptive. E `max_tokens` passa a ser teto de thinking +
+#      resposta, não só da resposta — com os 200 do default histórico daqui, o
+#      teto estoura DENTRO do raciocínio e não sobra bloco de texto nenhum.
+#
+#   2. O bloco 0 deixa de ser o texto. Com thinking ligado, `content[0]` é um
+#      bloco `thinking`; e `display` vem "omitted" por default nessa geração, ou
+#      seja o campo vem vazio. `ThinkingBlock.text` NÃO existe — acessar levanta
+#      `AttributeError` (medido no SDK 0.89.0; não devolve "" como se supunha).
+#      Dentro do `try/except Exception` abaixo isso vira um `logger.warning` e um
+#      `None` devolvido: a classificação inteira para de acontecer.
+#
+# As 3 funções abaixo são o antídoto e são PÚBLICAS de propósito — há outros 35
+# call sites no repo extraindo `content[0]["text"]` na mão (HTTP cru, sem SDK),
+# e todos têm exatamente o mesmo furo. Ver o relato da frente.
+_THINKING_ON_BY_DEFAULT = (
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+)
+
+# Piso de max_tokens quando o modelo pensa por default. Não é estimativa fina: é
+# folga suficiente pra o raciocínio caber e ainda sobrar resposta nas chamadas de
+# classificação daqui (que pedem dezenas de tokens de saída, não milhares).
+MIN_MAX_TOKENS_THINKING = 2000
+
+
+def thinks_by_default(model: str) -> bool:
+    """O modelo pensa quando o parâmetro `thinking` é omitido?
+
+    Prefixo, não igualdade: cobre tanto o alias (`claude-opus-5`) quanto uma
+    eventual variante sufixada.
+    """
+    return (model or "").strip().startswith(_THINKING_ON_BY_DEFAULT)
+
+
+def block_kinds(payload: Any) -> List[str]:
+    """Tipos dos blocos da resposta, pra log. ['thinking','text'] diz tudo."""
+    blocks = payload.get("content") if isinstance(payload, dict) else getattr(payload, "content", None)
+    if not blocks:
+        return []
+    return [
+        (b.get("type") if isinstance(b, dict) else getattr(b, "type", None)) or "?"
+        for b in blocks
+    ]
+
+
+def first_text(payload: Any) -> Optional[str]:
+    """Primeiro bloco `text` da resposta — NUNCA `content[0]`.
+
+    Aceita tanto o objeto do SDK quanto o dict do JSON cru (os call sites HTTP
+    deste repo usam `resp.json()`). Devolve None quando não há bloco de texto:
+    é o sinal de que o modelo gastou o teto pensando, e quem chama precisa
+    tratar como falha e não como resposta vazia.
+    """
+    blocks = payload.get("content") if isinstance(payload, dict) else getattr(payload, "content", None)
+    if not blocks:
+        return None
+    for b in blocks:
+        if isinstance(b, dict):
+            if b.get("type") == "text":
+                return b.get("text")
+        elif getattr(b, "type", None) == "text":
+            return getattr(b, "text", None)
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,6 +168,17 @@ def _call_model(model: str, prompt: str, max_tokens: int = 200,
     except ImportError:
         logger.warning("llm._call_model: anthropic SDK ausente")
         return None
+    # Blindagem #1000265: num modelo que pensa por default, `max_tokens` cobre
+    # thinking + resposta. Subir o teto com aviso é a única saída que mantém a
+    # função funcionando na troca de modelo — o default de 200 garante falha.
+    if thinks_by_default(model) and max_tokens < MIN_MAX_TOKENS_THINKING:
+        logger.warning(
+            "llm._call_model %s pensa por default e max_tokens=%s não cabe thinking + "
+            "resposta — subindo pra %s. Ajuste o call site de %s.",
+            model, max_tokens, MIN_MAX_TOKENS_THINKING, function,
+        )
+        max_tokens = MIN_MAX_TOKENS_THINKING
+
     try:
         client = anthropic.Anthropic(api_key=api_key)
         msg = client.messages.create(
@@ -104,7 +191,19 @@ def _call_model(model: str, prompt: str, max_tokens: int = 200,
             llm_usage.record_response(function, model, msg.model_dump())
         except Exception:
             pass
-        return msg.content[0].text if msg.content else ""
+        text = first_text(msg)
+        if text is None:
+            # Sem bloco de texto não houve classificação. Isso é ERRO, não resposta
+            # vazia: com `warning` a troca de modelo passaria como degradação normal.
+            logger.error(
+                "llm._call_model %s devolveu resposta SEM bloco de texto "
+                "(function=%s stop_reason=%s max_tokens=%s blocos=%s). "
+                "Se há bloco 'thinking', o teto acabou dentro do raciocínio.",
+                model, function, getattr(msg, "stop_reason", None),
+                max_tokens, block_kinds(msg),
+            )
+            return None
+        return text
     except Exception as e:
         logger.warning(f"llm._call_model {model} erro: {e}")
         return None
