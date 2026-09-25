@@ -650,11 +650,19 @@ def render(d, cur_cos, cos_em):
             except ValueError:
                 pay = {}
         horas_rev = float(rev["horas"]) if rev["horas"] is not None else None
+        # 25/09/26 — a camada assíncrona foi DESLIGADA (cos-agent local + cron de
+        # fallback), então este aviso passaria a disparar todo dia, para sempre. Um
+        # alarme que nunca desliga deixa de ser lido — e o que ele diz ("verificar o
+        # Mac") viraria mentira: não há nada quebrado para consertar. Vira nota de
+        # estado. O corte de 20h continua valendo para o caso de a camada voltar:
+        # abaixo dele o portão é de hoje e nada é dito.
         if horas_rev is not None and horas_rev > 20:
             portao_aviso = (
-                f'<div class="alerta-cano">A camada não julga há <b>{horas_rev/24:.0f} dia(s)</b>. '
-                f'O portão abaixo é o último que ela produziu — trate como histórico, não como hoje. '
-                f'O resto desta página (agenda, tarefas, WhatsApp) não depende dela.</div>')
+                f'<div class="alerta-cano">A camada assíncrona está <b>desligada</b> desde 25/09 '
+                f'(produzia 686 análises/dia e 21 portões no mês). O julgamento por frente agora '
+                f'acontece nas sessões <code>/cos</code>. O portão abaixo é o último que ela '
+                f'produziu, há <b>{horas_rev/24:.0f} dia(s)</b> — histórico, não hoje. '
+                f'O resto desta página (agenda, tarefas, WhatsApp) nunca dependeu dela.</div>')
         linhas = []
         for f in (pay.get("frentes") or []):
             pv = f.get("precisa_de_voce") or {}

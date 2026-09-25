@@ -119,6 +119,10 @@ def retratar(pessoa: dict, ro_url: str) -> dict:
     cmd = [
         "claude", "-p", prompt,
         "--output-format", "json",
+        # 25/09/26 — `--model sonnet` explícito, mesmo motivo do cos_agent/run.py:
+        # sem a flag o subprocesso herda o Opus 5 default da conta. Resumo de
+        # contato não precisa de Opus, e no Max 5x a cota é o recurso escasso.
+        "--model", "sonnet",
         "--max-turns", str(MAX_TURNS),
         "--allowedTools", "Bash", "Read", "Grep", "Glob",
         "--disallowedTools", "Write", "Edit", "MultiEdit", "NotebookEdit",

@@ -10915,6 +10915,26 @@ async def cron_cos_daily_review(request: Request):
     import asyncio as _aio
     from services.frente_review import run_and_persist
 
+    # 25/09/26 — DESLIGADO POR DECISÃO, não por falha. A camada assíncrona foi
+    # cortada: em 30 dias produziu 686 análises/dia sobre as MESMAS 49 frentes
+    # (redundância 14:1), ~250 itens/dia marcados "precisa_de_você" — e do outro
+    # lado, 21 vereditos de portão no mês, nenhum depois de 12/09, e 3 registros
+    # em `cos_action_log` desde julho. O julgamento passou a ser feito dentro das
+    # sessões `/cos`, onde o contexto já está carregado e o Renato está na frente.
+    #
+    # Por que o kill-switch mora AQUI e não no scheduler: o scheduler dos 52 crons
+    # vive no worker Railway, fora deste repo. Desligar só o launchd do Mac faria
+    # a checagem abaixo concluir "o agente local não escreveu hoje" e esta rota
+    # assumiria o trabalho TODO DIA — a economia de R$0 viraria US$17-20/mês de
+    # API, calada. O fallback só é rede de segurança enquanto existe um motor pra
+    # cair; sem motor, ele É o motor.
+    #
+    # Pra religar: apague este bloco e recarregue o launchd
+    # (`com.almeidaprado.cos-agent.plist.disabled`). Ver [[project_auditoria_custo_25_09]].
+    return {"status": "disabled", "job": "cos-daily-review",
+            "motivo": "camada assincrona cortada em 25/09 por decisao (ver comentario)",
+            "custo_evitado": True}
+
     # 10/08/26 — REDE DE SEGURANÇA, não motor. O agente local (Max, custo zero)
     # roda 14×/dia e escreve o mesmo debriefing; esta rota existia em paralelo,
     # refazendo o trabalho por US$16,83/mês. Agora só assume quando o agente
@@ -11436,6 +11456,17 @@ async def cron_run_auto_enrich(request: Request):
 
     import asyncio as _aio
     from services.contact_enrichment import auto_enrich_priority_contacts
+
+    # 25/09/26 — DESLIGADO POR DECISÃO, junto com o `enrich-agent` local. Mesmo
+    # raciocínio do `cos-daily-review` acima: sem motor no Mac, este fallback
+    # deixa de ser rede de segurança e vira o motor — US$7,96/mês fixos, calados.
+    # O enriquecimento passou a ser feito dentro das sessões, sob demanda.
+    #
+    # Pra religar: apague este bloco e recarregue
+    # `com.almeidaprado.enrich-agent.plist.disabled`.
+    return {"status": "disabled", "job": "run-auto-enrich",
+            "motivo": "enriquecimento assincrono cortado em 25/09 por decisao",
+            "custo_evitado": True}
 
     # 10/08/26 — REDE DE SEGURANÇA, não motor. O enriquecimento migrou para
     # agente local (`scripts/enrich_agent/`, launchd 06:40 BRT, Max, custo zero).

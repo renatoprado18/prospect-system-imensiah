@@ -2984,7 +2984,15 @@ async def _analyze_pdf_inner(data: dict) -> dict:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    # 25/09/26 — Sonnet → Haiku 4.5. Era US$13,36/mês, o 2º maior
+                    # ralo da API depois do `cos.frente_review`: 175 PDFs a ~19 mil
+                    # tokens de input cada. Haiku custa 1/3 do Sonnet por token
+                    # (US$1/US$5 por milhão contra US$3/US$15) e tem 200K de
+                    # contexto — folga de 10× sobre o maior PDF que passou por aqui.
+                    # A tarefa é extrair e resumir, não raciocinar: o caso de uso do
+                    # Haiku. Se a qualidade cair em documento denso (contrato, tabela
+                    # com números), voltar para Sonnet SÓ aqui e medir de novo.
+                    "model": "claude-haiku-4-5",
                     "max_tokens": 2000,
                     "messages": [{
                         "role": "user",
@@ -3009,7 +3017,7 @@ async def _analyze_pdf_inner(data: dict) -> dict:
         # o volume está). Agora sai do mesmo `compute_cost` do resto: o valor
         # gravado em wa_attachments e o de tonia_llm_usage não podem discordar.
         cost = llm_usage.record_response(
-            "worker.pdf_analyze", "claude-sonnet-4-6", result,
+            "worker.pdf_analyze", "claude-haiku-4-5", result,
             metadata={"filename": filename, "size_bytes": size_bytes},
         ) or 0.0
 

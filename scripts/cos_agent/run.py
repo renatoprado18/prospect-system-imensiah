@@ -248,6 +248,13 @@ def julgar(frente: dict, ro_url: str) -> dict:
     cmd = [
         "claude", "-p", prompt,
         "--output-format", "json",
+        # 25/09/26 — `--model sonnet` explícito. Sem esta flag o subprocesso herda
+        # o modelo default da conta, que era Opus 5: medido em 7 dias, este agente
+        # gerou 7.930 mensagens e 8,9M tokens de output — MAIS que todas as sessões
+        # interativas somadas. Opus queima cota do plano numa taxa muito maior que
+        # Sonnet, e o julgamento por frente não precisa de Opus. Com o downgrade
+        # pro Max 5x (25/09), cota virou o recurso escasso — não dólar.
+        "--model", "sonnet",
         "--max-turns", str(MAX_TURNS),
         "--allowedTools", "Bash", "Read", "Grep", "Glob",
         "--disallowedTools", "Write", "Edit", "MultiEdit", "NotebookEdit",
