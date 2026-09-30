@@ -106,7 +106,12 @@ document.getElementById("limpar").addEventListener("click",()=>{
   document.getElementById("saida").style.display="none"; pintar();
 });
 document.getElementById("copiar").addEventListener("click",async()=>{
-  const L=["PLACAR CAMADA CoS — 30/07 a 04/08"], c={certa:0,errada:0,passou:0};
+  // A janela sai dos dias que estão NA página (ordem de geração = crescente).
+  // Era fixa em "30/07 a 04/08" e datava errado todo placar desde então — o texto
+  // copiado é o que se arquiva, então um cabeçalho fixo mente no arquivo morto.
+  const D=[...document.querySelectorAll(".dia h2")].map(h=>h.textContent.trim());
+  const jan=D.length?(D[0]+(D.length>1?" a "+D[D.length-1]:"")):"sem portões";
+  const L=["PLACAR CAMADA CoS — "+jan], c={certa:0,errada:0,passou:0};
   document.querySelectorAll(".dia").forEach(sec=>{
     const dia=sec.querySelector("h2").textContent;
     sec.querySelectorAll(".portao").forEach(p=>{
