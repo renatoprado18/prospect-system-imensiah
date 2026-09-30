@@ -1,0 +1,30 @@
+# Dependências que rodam SÓ na máquina do Renato — nunca em produção.
+#
+# POR QUE ESTE ARQUIVO EXISTE. O `requirements.txt` é o de produção: o Railway o
+# instala nos TRÊS serviços (`intel-api`, worker do scheduler,
+# `claude-code-delegator`) a cada deploy. O que entra lá sem ser importado pelo
+# app é peso morto pago em todo build.
+#
+# O boletim semanal é o caso: ele é um LaunchAgent local
+# (`com.almeidaprado.boletim`, sexta 7h30) que gera `~/cockpit/boletim.html` —
+# arquivo, não rota. Nada em `app/` importa `trafilatura`; só
+# `scripts/boletim_dossie.py`, e o único consumidor dele é o LaunchAgent.
+#
+# Instalar (uma vez, e depois de todo `pip install -r requirements.txt`, que não
+# arrasta este arquivo):
+#   .venv/bin/pip install -r requirements-local.txt
+#
+# ⚠️ Rodar o dossiê sem `trafilatura` NÃO envenena o cache: o ImportError é
+# tratado como falha de ambiente e devolve sem gravar
+# (`boletim_dossie.py:texto_artigo`). Sem essa guarda, uma rodada sem a lib
+# gravaria o erro em 85 arquivos de cache e a camada 2 morreria calada pra
+# sempre. O boletim sai degradado pra camada 1 e AVISA nos cards.
+
+-r requirements.txt
+
+# Extração de texto de artigo de notícia (20/09/2026) — o dossiê do boletim
+# precisa do CORPO da matéria, não só do título: título traz 2 entidades, o
+# corpo traz 10 com cargo. Só virou possível quando as fontes livres entraram
+# (paywall não rende texto). Arrasta 7 deps (lxml, courlan, htmldate, justext,
+# charset_normalizer, certifi, urllib3) — nenhuma usada pelo app.
+trafilatura>=2.0.0

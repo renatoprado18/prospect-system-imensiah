@@ -36,3 +36,8 @@ python-dateutil>=2.8.0
 python-docx
 pyyaml>=6.0
 croniter>=2.0.0
+
+# ⚠️ Este arquivo é o de PRODUÇÃO — o Railway o instala nos três serviços a cada
+# deploy. Dependência de script que roda só na máquina do Renato vai pro
+# `requirements-local.txt` (que faz `-r` neste). Ex.: `trafilatura`, do boletim
+# semanal — 7 deps transitivas que o app nunca importa.

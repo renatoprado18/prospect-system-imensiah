@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Boletim de Inteligência semanal — sexta de manhã, na máquina do Renato.
+
+  Instalar:
+    cp scripts/boletim.plist ~/Library/LaunchAgents/com.almeidaprado.boletim.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.almeidaprado.boletim.plist
+  Disparar a mão (não espera sexta):
+    launchctl kickstart -k gui/$(id -u)/com.almeidaprado.boletim
+  Desligar:
+    launchctl bootout gui/$(id -u)/com.almeidaprado.boletim
+
+  POR QUE SEXTA 7H30, E POR QUE SEMANAL. A entrega diária por WhatsApp foi
+  desligada em 17/07 e ninguém sentiu falta: notícia não interrompe. Sexta de
+  manhã a semana chega fechada, e o que pede ação tem o fim de semana pra ser
+  pensado antes de segunda. O Renato escolheu a cadência em 20/09 ("vamos de
+  semanal") depois de recusar o WhatsApp ("o ideal seria um boletim para bater
+  o olho").
+
+  StartCalendarInterval, não StartInterval: aqui o horário É o desenho — ao
+  contrário do cockpit, cujo dado muda o dia inteiro. Weekday 5 = sexta.
+
+  RunAtLoad FALSE, de propósito. O cockpit gera ao carregar porque abrir o Mac e
+  achar a página velha seria pior. Aqui é o oposto: a edição PUBLICA (marca as
+  manchetes como mostradas), então um disparo acidental no `bootstrap`
+  queimaria o conteúdo da sexta seguinte. Pra rodar fora de hora existe o
+  `--previa`, que não marca nada.
+
+  SONO DA MÁQUINA. Se o Mac estiver dormindo às 7h30 de sexta, o launchd dispara
+  ao acordar — e isso é aceitável porque o carimbo do boletim mostra a data real.
+  Não vale `pmset` pra acordar a máquina: ele lê o boletim quando senta, e nesse
+  momento a máquina está acordada.
+
+  CUSTO. Zero de API: nenhuma chamada de LLM. O que gasta é rede (85 artigos, com
+  cache em ~/cockpit/.cache_artigos) e ~2s de Neon. A camada de julgamento por
+  LLM ficou de fora até o Renato decidir (~US$2,50/mês no Sonnet 5).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.almeidaprado.boletim</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/rap/prospect-system/scripts/boletim_semanal.sh</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>5</integer>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/rap/prospect-system</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rap/.cos-agent/boletim.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/rap/.cos-agent/boletim.err</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

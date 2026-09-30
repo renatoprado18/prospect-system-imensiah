@@ -36,75 +36,170 @@ def _normalize_dates(item: Dict) -> Dict:
     return item
 
 # Fontes RSS - Perfil amplo do Renato: governança, IA, empreendedorismo, esporte, sustentabilidade
+#
+# ── ACESSO (20/09/2026) ─────────────────────────────────────────────────────
+# Campo `acesso` ∈ {livre, medidor, paywall}. O Renato NÃO consegue ler o Valor
+# ("as notícias do Valor são bloqueadas"), e isso reinterpreta o aproveitamento
+# medido: 13 aproveitadas contra 160 descartadas naquela fonte pode ser 160
+# paywalls, não 160 manchetes irrelevantes. O campo existe pra que o boletim
+# semanal prefira o veículo legível quando a MESMA história existe em dois
+# lugares, e rotule o item quando só existe atrás do muro — em vez de oferecer
+# um clique que morre. Consumidor: scripts/boletim.py.
+#
+# O feed do Valor era `pox.globo.com/rss/valor/` — a HOME do jornal, e por isso
+# o Valor sozinho respondia por 905 dos 3.388 itens de 30 dias (27% do corpus),
+# trazendo Datafolha, campanha eleitoral em SC e celular de investigado. Trocado
+# pelas três editorias que casam com o perfil dele. A manchete e o resumo seguem
+# valendo como sinal mesmo sem o clique.
 NEWS_SOURCES = {
     # Negócios & Economia (Brasil)
-    "valor_economia": {
-        "name": "Valor Econômico",
-        "url": "https://pox.globo.com/rss/valor/",
-        "category": "economia"
+    "valor_empresas": {
+        "name": "Valor Econômico — Empresas",
+        "url": "https://pox.globo.com/rss/valor/empresas/",
+        "category": "economia",
+        "acesso": "paywall"
+    },
+    "valor_financas": {
+        "name": "Valor Econômico — Finanças",
+        "url": "https://pox.globo.com/rss/valor/financas/",
+        "category": "economia",
+        "acesso": "paywall"
+    },
+    "valor_legislacao": {
+        "name": "Valor Econômico — Legislação",
+        "url": "https://pox.globo.com/rss/valor/legislacao/",
+        "category": "juridico",
+        "acesso": "paywall"
     },
     "exame": {
         "name": "Exame",
         "url": "https://exame.com/feed/",
-        "category": "negocios"
+        "category": "negocios",
+        "acesso": "medidor"
+    },
+    # ── Fontes LIVRES (20/09/2026) ──────────────────────────────────────────
+    # Medido antes de somar: dos 10 itens curados de 20/09, 3 tinham gêmeo no
+    # pool antigo. A Agência Brasil sozinha recuperou 3 dos 7 órfãos (Petrobras,
+    # BNDES, Bolsa Família) — cobertura legível de 3/10 para 6/10.
+    # Agência Brasil é conteúdo público (reprodução livre). Deliberadamente SEM
+    # o feed de política: era exatamente o ruído que a home do Valor trazia.
+    "agencia_brasil_economia": {
+        "name": "Agência Brasil — Economia",
+        "url": "https://agenciabrasil.ebc.com.br/rss/economia/feed.xml",
+        "category": "economia",
+        "acesso": "livre"
+    },
+    "agencia_brasil_justica": {
+        "name": "Agência Brasil — Justiça",
+        "url": "https://agenciabrasil.ebc.com.br/rss/justica/feed.xml",
+        "category": "juridico",
+        "acesso": "livre"
+    },
+    "infomoney": {
+        "name": "InfoMoney",
+        "url": "https://www.infomoney.com.br/feed/",
+        "category": "economia",
+        "acesso": "livre"
+    },
+    "money_times": {
+        "name": "Money Times",
+        "url": "https://www.moneytimes.com.br/feed/",
+        "category": "economia",
+        "acesso": "livre"
+    },
+    "poder360": {
+        "name": "Poder360",
+        "url": "https://www.poder360.com.br/feed/",
+        "category": "economia",
+        "acesso": "livre"
+    },
+    "brazil_journal": {
+        "name": "Brazil Journal",
+        "url": "https://braziljournal.com/feed/",
+        "category": "negocios",
+        "acesso": "livre"
+    },
+    "neofeed": {
+        "name": "NeoFeed",
+        "url": "https://neofeed.com.br/feed/",
+        "category": "negocios",
+        "acesso": "livre"
+    },
+    # Jurídico livre — cobre a beat que ficou órfã no Valor (LC 236 / Código
+    # Tributário). Capital Aberto ficou FORA: o feed responde vazio (testado).
+    "conjur": {
+        "name": "Conjur",
+        "url": "https://www.conjur.com.br/rss.xml",
+        "category": "juridico",
+        "acesso": "livre"
     },
     # Governança & Conselhos
     "google_governanca": {
         "name": "Google News - Governança Corporativa",
         "url": "https://news.google.com/rss/search?q=governan%C3%A7a+corporativa+conselho+administra%C3%A7%C3%A3o&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "governanca"
+        "category": "governanca",
+        "acesso": "varia"
     },
     # IA & Tecnologia
     "google_tech_br": {
         "name": "Google News - Tecnologia",
         "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FuQjBHZ0pDVWlnQVAB?hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "tecnologia"
+        "category": "tecnologia",
+        "acesso": "varia"
     },
     "google_ia_br": {
         "name": "Google News - Inteligência Artificial",
         "url": "https://news.google.com/rss/search?q=intelig%C3%AAncia+artificial+empresas&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "ia"
+        "category": "ia",
+        "acesso": "varia"
     },
     # Empreendedorismo & Startups
     "google_startups_br": {
         "name": "Google News - Startups Brasil",
         "url": "https://news.google.com/rss/search?q=startups+empreendedorismo+brasil&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "empreendedorismo"
+        "category": "empreendedorismo",
+        "acesso": "varia"
     },
     # Recuperação Judicial / Investimentos (case Fictor)
     "google_rj_br": {
         "name": "Google News - Recuperação Judicial",
         "url": "https://news.google.com/rss/search?q=recupera%C3%A7%C3%A3o+judicial+credores&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "juridico"
+        "category": "juridico",
+        "acesso": "varia"
     },
     # ESG & Sustentabilidade
     "google_esg_br": {
         "name": "Google News - ESG Brasil",
         "url": "https://news.google.com/rss/search?q=ESG+sustentabilidade+empresas+brasil&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "esg"
+        "category": "esg",
+        "acesso": "varia"
     },
     # Esporte & Gestão Esportiva (judô, CAP)
     "google_gestao_esportiva": {
         "name": "Google News - Gestão Esportiva",
         "url": "https://news.google.com/rss/search?q=gest%C3%A3o+esportiva+clube+atletico&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "esporte"
+        "category": "esporte",
+        "acesso": "varia"
     },
     # Agronegócio (fazendas)
     "google_agro": {
         "name": "Google News - Agronegócio",
         "url": "https://news.google.com/rss/search?q=agroneg%C3%B3cio+sustent%C3%A1vel+fazenda&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "agro"
+        "category": "agro",
+        "acesso": "varia"
     },
     # Internacional - IA (inglês)
     "mit_tech_review": {
         "name": "MIT Technology Review",
         "url": "https://www.technologyreview.com/feed/",
-        "category": "ia"
+        "category": "ia",
+        "acesso": "medidor"
     },
     "google_estrategia": {
         "name": "Google News - Estratégia Empresarial",
         "url": "https://news.google.com/rss/search?q=estrat%C3%A9gia+empresarial+lideran%C3%A7a&hl=pt-BR&gl=BR&ceid=BR:pt-419",
-        "category": "estrategia"
+        "category": "estrategia",
+        "acesso": "varia"
     },
 }
 
@@ -155,8 +250,24 @@ def strip_html(text: str) -> str:
 async def fetch_rss_feed(url: str, source_name: str) -> List[Dict]:
     """Busca e parseia um feed RSS"""
     try:
+        # 20/09/2026 — SEM User-Agent, o httpx se anuncia como `python-httpx/x.y`
+        # e parte dos servidores barra: a Agência Brasil devolvia 500 e a NeoFeed
+        # 403 nos MESMOS feeds que o curl abria sem reclamar. Descoberto ao somar
+        # as fontes livres — e é a classe de falha que mais engana, porque o feed
+        # "existe", o cron roda, e a fonte simplesmente nunca entrega item nenhum.
+        # Agência Brasil importa: sozinha recuperou 3 dos 7 itens que só o Valor
+        # cobria. Ver [[feedback_guarda_abstencao_vira_fabrica]].
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/140.0 Safari/537.36 INTEL-clipping/1.0"
+            ),
+            "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        }
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=15.0, follow_redirects=True)
+            response = await client.get(
+                url, timeout=15.0, follow_redirects=True, headers=headers
+            )
             response.raise_for_status()
 
         root = ET.fromstring(response.text)
