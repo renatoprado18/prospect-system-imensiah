@@ -612,10 +612,38 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
         elif event == "send.message":
             # Mensagem enviada
             result = await process_sent_message(data, replay=replay)
+
+            # PERSISTE o enviado (30/09/2026). A Evolution NAO emite
+            # `messages.upsert` para envio via API — so `SEND_MESSAGE`. Ate aqui
+            # `process_sent_message` logava, checava resposta a proposta e
+            # retornava SEM GRAVAR: medido em 6 meses, `rap-whatsapp` gravou
+            # **0 de 337** envios (o `intel-bot-v2`, 248 de 338, porque o
+            # caminho da Tonia ja persistia no `send.message` desde 08/07).
+            # Quem cobria o buraco era o polling do `whatsapp_sync`, com ~16 min
+            # de atraso — ou seja, a mensagem era entregue e o historico so a
+            # alcancava depois. No dia em que o polling falhar, ela sai e some
+            # do CRM sem rastro.
+            #
+            # Em replay NAO grava: reprocessar auditoria antiga inseriria
+            # historico novo com data de hoje. A dedup pegaria o que ainda
+            # existe em `messages`, mas nao o que foi apagado de proposito.
+            stored = {"stored": False, "reason": "replay"}
+            if not replay:
+                import asyncio as _asyncio
+
+                from services.wa_ingest import persist_sent_message
+
+                stored = await _asyncio.to_thread(persist_sent_message, payload)
+
             _record_webhook_audit(
                 **audit_ctx,
                 decision="processed" if result.get("processed") else "skipped",
-                decision_reason=result.get("reason") or "send.message",
+                # O motivo do envio (proposta/replay) continua mandando; o do
+                # armazenamento entra como sufixo para o furo ficar MEDIVEL por
+                # `decision_reason`, em vez de so por `resulting_message_id` NULL.
+                decision_reason=(result.get("reason") or "send.message")
+                + f"|store:{stored.get('reason') or 'unknown'}",
+                resulting_message_id=stored.get("message_id"),
                 processing_ms=int((datetime.now() - started).total_seconds() * 1000),
             )
         else:

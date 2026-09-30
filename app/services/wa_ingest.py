@@ -118,6 +118,69 @@ def ingest_evolution_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"stored": False, "reason": "error"}
 
 
+def persist_sent_message(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Persiste UM `send.message` sem tocar em auditoria — para o caminho
+    principal (`rap-whatsapp`), que grava a própria linha de `webhook_audit`.
+
+    POR QUE EXISTE (30/09/2026). A Evolution **não emite `messages.upsert` para
+    envio via API** — só `SEND_MESSAGE`. O comentário logo acima, em
+    `ingest_evolution_payload`, já dizia isso em 08/07, e por isso o caminho da
+    Tonia persiste no `send.message`. O caminho do `rap-whatsapp` nunca recebeu
+    o mesmo tratamento: `process_sent_message` loga, checa resposta a proposta e
+    **retorna sem gravar nada**. Medido em 6 meses: `intel-bot-v2` gravou 248 de
+    338 envios; `rap-whatsapp`, **0 de 337**.
+
+    O efeito era pior que "não grava": a mensagem ERA entregue ao destinatário e
+    o histórico ficava dependendo do polling do `whatsapp_sync` para alcançá-la
+    (~16 min, medido). Enquanto o polling roda, funciona; no dia em que ele
+    falhar, a mensagem sai e some do CRM sem deixar rastro — a mesma classe de
+    falha calada que manteve a saída do WhatsApp quebrada por 11 dias sem
+    ninguém ver.
+
+    Devolve `{"stored": bool, "reason": str, "message_id": int|None}` para que o
+    chamador registre `resulting_message_id` na SUA linha de auditoria — sem
+    isso o furo continuaria invisível justamente no campo que o mede.
+
+    Idempotente: a dedup do `_ingest_upsert` é por `conversation_id` +
+    `metadata->>'message_id'`, a mesma chave que o `whatsapp_sync` grava. Se o
+    polling chegar primeiro, aqui dá `duplicate`; se aqui gravar primeiro, o
+    polling é que vê duplicata. Os dois caminhos convivem sem duplicar linha.
+
+    Sync (psycopg2) — chamador async deve envolver em `asyncio.to_thread`.
+    """
+    if not isinstance(payload, dict):
+        return {"stored": False, "reason": "invalid_payload", "message_id": None}
+
+    event = str(payload.get("event") or "").strip().lower().replace("_", ".")
+    instance = str(payload.get("instance") or "").strip()
+    data = payload.get("data") or {}
+    key = (data.get("key") if isinstance(data, dict) else {}) or {}
+    wa_message_id = key.get("id") or ""
+
+    captured: Dict[str, Any] = {"reason": None, "message_id": None}
+
+    def _audit(reason: str, resulting_message_id: int = None) -> None:
+        # No-op de telemetria: quem chama já grava a própria linha. Só capturamos
+        # o resultado. Duas linhas de `webhook_audit` para o mesmo evento fariam
+        # toda contagem por evento passar a mentir.
+        captured["reason"] = reason
+        captured["message_id"] = resulting_message_id
+
+    try:
+        result = _ingest_upsert(payload, event, instance, wa_message_id, _audit)
+    except Exception as e:
+        # Persistir é best-effort: falhar aqui não pode derrubar o webhook, que
+        # também trata resposta a proposta. Sai no log e o polling ainda cobre.
+        logger.warning(f"persist_sent_message: erro ao persistir {wa_message_id}: {e}")
+        return {"stored": False, "reason": f"error: {e}", "message_id": None}
+
+    return {
+        "stored": bool(result.get("stored")),
+        "reason": result.get("reason") or captured["reason"] or "",
+        "message_id": captured["message_id"],
+    }
+
+
 def _resolve_contact_id(phone: str) -> int:
     """
     Resolve contato por telefone — matching digit-normalizado (mesma
