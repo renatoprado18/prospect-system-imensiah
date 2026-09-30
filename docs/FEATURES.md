@@ -756,3 +756,43 @@ Em 06/08: **26.712 mensagens**, cobertura 37% → 71%.
 
     ./scripts/backfill_grupo.py                     # dry-run, todos
     ./scripts/backfill_grupo.py <jid>@g.us --apply  # um grupo
+
+### `scripts/verifica_frescor.py` — o dado ainda está CHEGANDO? (30/09/2026)
+Terceiro verificador da abertura, ao lado do `verifica_modelo.py` (a estrutura
+bate com o contrato?) e do `verifica_boards.py` (o que eu li coube numa
+leitura?). Nenhum dos dois olhava se a fonte ainda tem pulso — e estrutura
+íntegra com board legível convive perfeitamente com uma fonte morta há dois
+dias, que é a combinação que produz sessão confiante decidindo sobre retrato
+velho.
+
+Em **28/09/26 às 17:47 BRT** a entrada do WhatsApp parou (`webhook_audit`, DMs e
+`copilot.group_messages` travaram juntas). A abertura de 29/09 rodou os dois
+verificadores, deu tudo verde, e o board ainda dizia *"a Evolution está VIVA"* —
+frase verdadeira quando foi escrita e falsa na manhã em que foi lida. A sessão
+de 30/09 só descobriu as **38 horas** porque um recado manual mandava retestar o
+host à mão. Simulado contra o incidente real, este script teria gritado às
+**09h02 de 29/09**, ~25h antes.
+
+Três decisões de desenho, cada uma vinda de um erro observado:
+- **Mede o CANAL, não a tabela.** Em 30/09 `messages` tinha 19 linhas frescas,
+  **todas `email`** — pela tabela, saudável; de WhatsApp, zero. As fontes de
+  conversa são definidas por join em `conversations.canal`.
+- **Horas úteis, não corridas** (seg–sex 8h–20h BRT). Limiar de 3h em horas
+  corridas gritaria todo sábado, e alarme de fim de semana se aprende a ignorar.
+- **O e-mail é controle positivo.** Foi ele que provou que o silêncio do WA não
+  era dia fraco, alvo errado nem medidor quebrado. Se ele também estourar, a
+  suspeita vira o alvo ou o medidor, não uma fonte só.
+
+**Fonte que não pôde ser medida sai 🔴, nunca verde** — na 1ª execução contra
+prod ele acusou as cinco de uma vez por um `RealDictCursor` (`row[0]` →
+`KeyError: 0`) e apontou para si mesmo em vez de certificar frescor. Exit 1 =
+descobrir se é queda ou desligamento que ninguém registrou, **antes** de propor
+frente. Só tem sentido contra prod: no banco local mediria a hora do
+`./dev.sh sync`, e com `DB_TARGET=local` ele diz isso em vez de fingir.
+
+Plugado nas duas aberturas (`.claude/skills/dev` e `.claude/skills/cos`) — na
+CoS porque fonte parada vira cockpit que afirma *"ninguém respondeu"* quando na
+verdade ninguém RECEBEU.
+
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/verifica_frescor.py
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/verifica_frescor.py --quiet

@@ -50,6 +50,15 @@ python3 /Users/rap/prospect-system/scripts/verifica_boards.py --quiet
 
 Acima do teto a leitura foi **truncada** e o cockpit do dia sai apoiado num pedaco do board, sem aviso (em 30/07 uma abertura leu 22% do arquivo). O `project_cos_status.md` e **teu** — se ele acusar, consolidar vem ANTES de montar o cockpit: compromisso com data vencida e decisao ja batida descem pro `project_cos_status_historico.md`. Board da Dev acima do teto nao se reescreve; deixa recado no `session_locks`.
 
+**E conferir se o dado que vai alimentar o cockpit ainda esta CHEGANDO:**
+
+```bash
+cd /Users/rap/prospect-system && set -a && source .env && set +a && \
+  DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 .venv/bin/python3 scripts/verifica_frescor.py --quiet
+```
+
+Board no teto garante que voce leu tudo; **isto garante que o "tudo" nao e de anteontem.** Em 28/09/26 a entrada do WhatsApp morreu as 17:47 e o cockpit do dia seguinte foi montado sobre 38h de silencio sem dizer uma palavra — a CoS le WA o tempo todo (mensagem do cliente, resposta que destrava gate), entao **fonte parada aqui vira cockpit que afirma "ninguem respondeu" quando na verdade ninguem RECEBEU**. Exit 1: **dizer ao Renato, no topo do cockpit, desde quando esta cego** — e nao tratar ausencia de resposta como sinal enquanto durar. O e-mail e controle positivo: se ele tambem estourar, o problema nao e de uma fonte, e do alvo ou do medidor.
+
 ### 2. Abrir com "ONDE PARAMOS + PROXIMOS PASSOS" (a dor real do Renato)
 
 ANTES do cockpit de hoje, mostrar 2 blocos curtos extraidos dos boards:

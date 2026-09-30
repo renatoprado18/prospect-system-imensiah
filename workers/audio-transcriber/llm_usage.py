@@ -75,6 +75,32 @@ def _extract_usage(response_json: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
+def first_text(payload: Any) -> Optional[str]:
+    """Primeiro bloco `text` da resposta — NUNCA `content[0]`.
+
+    Espelho de `app/services/llm.first_text`, aqui pelo mesmo motivo que o resto
+    deste arquivo: o `app/` do INTEL nao existe no container do worker.
+
+    `content[0]` so e o texto por acidente do modelo em uso. Basta alguem trocar
+    a constante para um modelo que devolva `thinking` no bloco 0 — a troca de UMA
+    linha que derrubou 23 funcoes em `e5a8f0a` — e o `.get("text", "")` devolve
+    string vazia. O chamador entao reporta "nao consegui analisar", mensagem que
+    parece erro de VISAO e manda depurar a imagem, quando o texto estava ali no
+    bloco 1. None aqui significa "o modelo nao produziu texto", e quem chama
+    trata como falha; nunca como resposta vazia.
+    """
+    blocks = payload.get("content") if isinstance(payload, dict) else getattr(payload, "content", None)
+    if not blocks:
+        return None
+    for b in blocks:
+        if isinstance(b, dict):
+            if b.get("type") == "text":
+                return b.get("text")
+        elif getattr(b, "type", None) == "text":
+            return getattr(b, "text", None)
+    return None
+
+
 def record_response(function: str, model: str, response_json: Dict[str, Any],
                     *, conversation_id: Optional[int] = None,
                     metadata: Optional[Dict[str, Any]] = None) -> Optional[float]:
