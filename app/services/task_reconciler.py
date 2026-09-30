@@ -47,12 +47,31 @@ espera cujo canal é e-mail ficava CEGA pra sempre. Dois furos somados:
 E um terceiro, que é metade do problema: **task sem `contact_id`** (73 das 119
 abertas, 61%) some de qualquer gate que case por ficha.
 
+FASE 4 — PARAR DE JULGAR O MESMO LOTE (30/09, migration 083):
+O lote de mensagens sempre veio de `_fetch_messages_since(scope, data_criacao)` —
+a data de CRIAÇÃO da task, nunca o último julgamento. Consequência: task de 165
+dias voltava a julgamento TODO DIA com as mesmas 8 mensagens. Medido em prod
+antes do conserto: das **197 chamadas** da run diária, **100 (51%) julgavam lote
+inalterado**; mediana de idade das julgadas, 27 dias. A curva 151→193/dia seguia
+o TAMANHO DA FILA, não atividade — com a fila abrindo 3,8× mais do que fecha,
+crescia sem teto por construção.
+
+A chave é o **hash do prompt inteiro** (`prompt_fingerprint`), não um timestamp de
+"última mensagem": timestamp erra quando a transcrição/OCR chega depois por outro
+cano (mensagem antiga, texto novo), quando a CoS edita o enunciado da task, e
+quando o próprio prompt muda num deploy. Hash igual ⇒ mesma entrada ⇒ mesma
+resposta ⇒ a chamada não acontece. Nada do veredito é reaproveitado: não é cache
+de resposta, é a resposta a "há algo novo para julgar?".
+Kill-switch próprio: `reconciler_skip_unchanged_enabled`.
+
 O casamento agora é por IDENTIDADE (`services/contact_identity`): ficha da task
 + fichas irmãs pelo mesmo endereço + endereço citado no texto da task quando não
 há ficha. NÃO houve backfill de `contact_id` nos e-mails órfãos — medido, só 27
 dos 1.436 órfãos têm remetente que já é contato (1,9%): re-linkar dado
 resolveria quase nada, casar por endereço na hora da leitura resolve o caso.
 """
+import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -140,6 +159,97 @@ def is_on_hold_sweep_enabled() -> bool:
         return True
 
 
+def is_skip_unchanged_enabled() -> bool:
+    """Kill-switch DB do skip de lote inalterado (30/09), separado dos outros dois:
+    'reconciler_skip_unchanged_enabled' off/false/0 volta ao comportamento antigo
+    — julgar tudo toda run — sem deploy. Existe porque o skip decide NÃO chamar o
+    modelo, e a única forma de contraprovar uma suspeita de "deixou de fechar o que
+    fechava" é religar o julgamento cego e comparar ([[feedback_no_shadow_prefer_killswitch]])."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT setting_value FROM analyzer_settings WHERE setting_key = 'reconciler_skip_unchanged_enabled' LIMIT 1"
+            )
+            row = cur.fetchone()
+            if not row or row['setting_value'] is None:
+                return True
+            val = str(row['setting_value']).strip().strip('"').lower()
+            return val not in ("off", "false", "0", "no")
+    except Exception:
+        return True
+
+
+def _fetch_judgment_marks(task_ids) -> dict:
+    """`{task_id: prompt_hash}` do último julgamento de cada task (migration 083).
+
+    Uma query pro lote inteiro, não uma por task: a run varre ~250 candidatas e o
+    Neon cobra latência por ida-e-volta. Tabela ausente (migration não aplicada no
+    alvo) devolve `{}` — sem marcador nada é pulado, o comportamento degrada pro
+    antigo em vez de pular tudo achando que já julgou."""
+    if not task_ids:
+        return {}
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT task_id, prompt_hash FROM task_reconciler_judgments WHERE task_id = ANY(%s)",
+                (list(task_ids),),
+            )
+            return {r["task_id"]: r["prompt_hash"] for r in cur.fetchall()}
+    except Exception as e:
+        logger.warning(f"task_reconciler: marcadores indisponíveis ({e}) — julgando tudo")
+        return {}
+
+
+def _record_judgment(task_id, prompt_hash, verdict) -> None:
+    """Carimba o julgamento que ACABOU de acontecer. `judged_count` acumula — é o
+    número que responde "quantas vezes esta task já custou uma chamada", que hoje
+    não existe em lugar nenhum (`tonia_llm_usage.metadata` vem `{}` no `judge`)."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO task_reconciler_judgments
+                    (task_id, prompt_hash, last_judged_at, judged_count,
+                     last_done, last_confidence, last_reason)
+                VALUES (%s, %s, NOW(), 1, %s, %s, %s)
+                ON CONFLICT (task_id) DO UPDATE SET
+                    prompt_hash = EXCLUDED.prompt_hash,
+                    last_judged_at = NOW(),
+                    judged_count = task_reconciler_judgments.judged_count + 1,
+                    last_done = EXCLUDED.last_done,
+                    last_confidence = EXCLUDED.last_confidence,
+                    last_reason = EXCLUDED.last_reason
+            """, (task_id, prompt_hash, bool(verdict.get("done")),
+                  round(float(verdict.get("confidence") or 0.0), 3),
+                  str(verdict.get("reason") or "")[:400]))
+            conn.commit()
+    except Exception as e:
+        # Telemetria não derruba o sweep: falhar aqui custa um re-julgamento na
+        # próxima run, não um fechamento perdido.
+        logger.warning(f"task_reconciler: não gravou marcador da task {task_id}: {e}")
+
+
+def _record_skip(task_ids) -> None:
+    """Conta os skips no próprio marcador. Sem isto o conserto não tem régua: um
+    skip que não se conta é indistinguível de um skip que não aconteceu
+    ([[feedback_medidor_que_nao_mede_a_si_mesmo]])."""
+    if not task_ids:
+        return
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE task_reconciler_judgments SET skipped_count = skipped_count + 1 "
+                "WHERE task_id = ANY(%s)",
+                (list(task_ids),),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"task_reconciler: não contou os skips: {e}")
+
+
 def _fetch_candidate_tasks():
     """Tasks pending. Retorna (candidates, n_sem_identidade).
 
@@ -159,9 +269,20 @@ def _fetch_candidate_tasks():
         """)
         todas = [dict(r) for r in cur.fetchall()]
 
+    # Uma conexão e UMA resolução do dono pra varredura inteira (30/09). Antes,
+    # `_task_scope` abria conexão própria por task e re-perguntava quem é o dono em
+    # cada uma: ~250 tasks × (1 conexão + 2 queries fixas) de trabalho idêntico,
+    # contra um Neon que cobra latência por ida-e-volta. Os endereços e as fichas do
+    # Renato não mudam no meio de um sweep.
     cands, sem_identidade, so_o_dono = [], 0, 0
+    with get_db() as conn:
+        cur = conn.cursor()
+        do_dono = set(owner_emails(cur))
+        fichas_do_dono = set(owner_contact_ids(cur))
+        scopes = {t["id"]: _task_scope(t, cur=cur, do_dono=do_dono,
+                                       fichas_do_dono=fichas_do_dono) for t in todas}
     for task in todas:
-        scope = _task_scope(task)
+        scope = scopes[task["id"]]
         if scope["contact_ids"] or scope["emails"]:
             task["_scope"] = scope
             cands.append(task)
@@ -175,7 +296,7 @@ def _fetch_candidate_tasks():
     return cands, sem_identidade, so_o_dono
 
 
-def _task_scope(task) -> dict:
+def _task_scope(task, cur=None, do_dono=None, fichas_do_dono=None) -> dict:
     """Identidade do TERCEIRO da task: fichas equivalentes + endereços de e-mail.
 
     Ordem, e o porquê de cada degrau:
@@ -192,69 +313,81 @@ def _task_scope(task) -> dict:
     texto — essas têm dado a corrigir (linkar a ficha), não é para virar norma.
     `origem='dono'` é a task cuja única identidade era a ficha do próprio Renato:
     ela sai do escopo (ver abaixo) e é contada à parte, sem cap silencioso.
+
+    `cur`/`do_dono`/`fichas_do_dono` entram de fora quando o chamador varre um lote
+    (a varredura resolve o dono UMA vez e reusa a conexão); omitidos, abre conexão
+    e resolve aqui, que é o contrato antigo e o que os testes usam.
     """
-    contact_ids, emails, origem = [], [], "nenhum"
+    if cur is not None:
+        return _task_scope_com_cursor(task, cur, do_dono, fichas_do_dono)
     with get_db() as conn:
-        cur = conn.cursor()
-        # O e-mail do DONO nunca é critério de "o terceiro respondeu" — nos dois
-        # degraus, não só no do texto (22/08). A guarda nascera só no `else`, e o
-        # ramo da ficha entregava o eco de bandeja: 21 das 148 tasks pending
-        # apontam pra ficha #23419, que é a do PRÓPRIO Renato (as 4 fichas dele
-        # viraram uma em 06/08). Para essas, `emails` vinha
-        # ['renato@almeida-prado.com', 'renato.almeida.prado@gmail.com'] e a perna
-        # de endereço casava QUALQUER e-mail que ele mandou ou recebeu — 266
-        # mensagens entrando como evidência de resposta de terceiro. O reconciler
-        # ainda passa por LLM a 0.85, então não fecharia sozinho; mas alimentar o
-        # julgamento com evidência falsa é pior que não alimentar
-        # ([[feedback_maquina_ouve_o_proprio_eco]]).
+        return _task_scope_com_cursor(task, conn.cursor(), None, None)
+
+
+def _task_scope_com_cursor(task, cur, do_dono, fichas_do_dono) -> dict:
+    """O corpo do `_task_scope`, sobre um cursor já aberto."""
+    contact_ids, emails, origem = [], [], "nenhum"
+    # O e-mail do DONO nunca é critério de "o terceiro respondeu" — nos dois
+    # degraus, não só no do texto (22/08). A guarda nascera só no `else`, e o
+    # ramo da ficha entregava o eco de bandeja: 21 das 148 tasks pending
+    # apontam pra ficha #23419, que é a do PRÓPRIO Renato (as 4 fichas dele
+    # viraram uma em 06/08). Para essas, `emails` vinha
+    # ['renato@almeida-prado.com', 'renato.almeida.prado@gmail.com'] e a perna
+    # de endereço casava QUALQUER e-mail que ele mandou ou recebeu — 266
+    # mensagens entrando como evidência de resposta de terceiro. O reconciler
+    # ainda passa por LLM a 0.85, então não fecharia sozinho; mas alimentar o
+    # julgamento com evidência falsa é pior que não alimentar
+    # ([[feedback_maquina_ouve_o_proprio_eco]]).
+    if do_dono is None:
         do_dono = set(owner_emails(cur))
-        # A FICHA do dono também não é terceiro — não só os endereços dele (23/08).
-        # A guarda de 22/08 (acima) fechou a perna de e-mail e deixou a de
-        # `contact_id` aberta; pior, um teste passou a ratificar a lacuna
-        # ("a task não some do gate: segue alcançável pelo contact_id"). O que
-        # sobrava não era um resíduo: a ficha #23419 é onde mora o SELF-CHAT, o
-        # canal por onde o sistema fala com o Renato. Medido em 23/08 na #426
-        # ("Definir microlote separável para Portugal", 26 das 149 pending
-        # apontam pra lá): as 11 mensagens que foram a julgamento eram briefings
-        # automáticos, e-mails dele e A PRÓPRIA NOTIFICAÇÃO DO RECONCILER
-        # ("🤖 Reconciliação — fechei 2 tarefa(s)"). Nenhuma falava do assunto da
-        # task, e ela foi fechada assim mesmo, com 0,95 de confiança.
-        # Reconciliar é casar a task com o que UM TERCEIRO disse; quando o único
-        # interlocutor é o próprio dono, não há terceiro — e conversa nenhuma é
-        # melhor que a conversa da máquina consigo mesma
-        # ([[feedback_maquina_ouve_o_proprio_eco]]).
+    # A FICHA do dono também não é terceiro — não só os endereços dele (23/08).
+    # A guarda de 22/08 (acima) fechou a perna de e-mail e deixou a de
+    # `contact_id` aberta; pior, um teste passou a ratificar a lacuna
+    # ("a task não some do gate: segue alcançável pelo contact_id"). O que
+    # sobrava não era um resíduo: a ficha #23419 é onde mora o SELF-CHAT, o
+    # canal por onde o sistema fala com o Renato. Medido em 23/08 na #426
+    # ("Definir microlote separável para Portugal", 26 das 149 pending
+    # apontam pra lá): as 11 mensagens que foram a julgamento eram briefings
+    # automáticos, e-mails dele e A PRÓPRIA NOTIFICAÇÃO DO RECONCILER
+    # ("🤖 Reconciliação — fechei 2 tarefa(s)"). Nenhuma falava do assunto da
+    # task, e ela foi fechada assim mesmo, com 0,95 de confiança.
+    # Reconciliar é casar a task com o que UM TERCEIRO disse; quando o único
+    # interlocutor é o próprio dono, não há terceiro — e conversa nenhuma é
+    # melhor que a conversa da máquina consigo mesma
+    # ([[feedback_maquina_ouve_o_proprio_eco]]).
+    if fichas_do_dono is None:
         fichas_do_dono = set(owner_contact_ids(cur))
-        ficha = task.get("contact_id")
-        if ficha and ficha in fichas_do_dono:
-            # Cai no degrau do TEXTO de propósito, em vez de descartar: se a
-            # descrição citar o endereço de um terceiro, a task continua
-            # alcançável — é só a ficha do dono que não vale como identidade.
-            ficha = None
-            origem = "dono"
-        if ficha:
-            origem = "ficha"
-            contact_ids = [ficha]
-            cur.execute("SELECT emails FROM contacts WHERE id = %s", (ficha,))
-            row = cur.fetchone()
-            if row:
-                emails = [e for e in contact_emails({"emails": row["emails"]})
-                          if e not in do_dono]
-            # Sem endereço de terceiro sobrando, a perna de e-mail não casa nada e
-            # a task segue só pelo `contact_id` — que é exatamente o cano de antes.
-            for cid in contact_ids_by_emails(cur, emails):
-                if cid not in contact_ids and cid not in fichas_do_dono:
-                    contact_ids.append(cid)
-        else:
-            texto = f"{task.get('titulo') or ''} {task.get('descricao') or ''}"
-            emails = [e for e in extract_emails(texto) if e not in do_dono]
-            if emails:
-                # Ficha irmã do dono achada pelo endereço entra pela porta dos
-                # fundos se não for filtrada aqui também.
-                achadas = [c for c in contact_ids_by_emails(cur, emails)
-                           if c not in fichas_do_dono]
-                if achadas or emails:
-                    origem = "texto"
-                contact_ids = achadas
+    ficha = task.get("contact_id")
+    if ficha and ficha in fichas_do_dono:
+        # Cai no degrau do TEXTO de propósito, em vez de descartar: se a
+        # descrição citar o endereço de um terceiro, a task continua
+        # alcançável — é só a ficha do dono que não vale como identidade.
+        ficha = None
+        origem = "dono"
+    if ficha:
+        origem = "ficha"
+        contact_ids = [ficha]
+        cur.execute("SELECT emails FROM contacts WHERE id = %s", (ficha,))
+        row = cur.fetchone()
+        if row:
+            emails = [e for e in contact_emails({"emails": row["emails"]})
+                      if e not in do_dono]
+        # Sem endereço de terceiro sobrando, a perna de e-mail não casa nada e
+        # a task segue só pelo `contact_id` — que é exatamente o cano de antes.
+        for cid in contact_ids_by_emails(cur, emails):
+            if cid not in contact_ids and cid not in fichas_do_dono:
+                contact_ids.append(cid)
+    else:
+        texto = f"{task.get('titulo') or ''} {task.get('descricao') or ''}"
+        emails = [e for e in extract_emails(texto) if e not in do_dono]
+        if emails:
+            # Ficha irmã do dono achada pelo endereço entra pela porta dos
+            # fundos se não for filtrada aqui também.
+            achadas = [c for c in contact_ids_by_emails(cur, emails)
+                       if c not in fichas_do_dono]
+            if achadas or emails:
+                origem = "texto"
+            contact_ids = achadas
     return {"contact_ids": contact_ids, "emails": emails, "origem": origem}
 
 
@@ -377,12 +510,40 @@ def _evidencia_confere(trecho, exibidas) -> tuple:
     return True, ""
 
 
-def _judge(task, msgs) -> dict:
-    """LLM (Haiku) decide se a task foi concluída à luz das mensagens. JSON estrito.
-    Retorna {done, confidence, reason, evidencia}. Best-effort: erro → done=false.
+# As REGRAS do julgamento, fora do f-string. Duas razões, as duas descobertas ao
+# agrupar (30/09):
+#   (1) o fingerprint do skip precisa ser estável em relação a COM QUEM a task foi
+#       julgada. Hasheando o prompt inteiro, uma task entrar ou sair do grupo mudava
+#       o hash de todas as outras e o skip perdia metade do efeito — ele deve
+#       responder "mudou algo NESTA task?", não "o lote de companhia mudou?";
+#   (2) hash do template constante ainda é o que faz um deploy que mexe nas regras
+#       invalidar todo marcador sozinho, sem versão a bumpar à mão.
+_REGRAS = """REGRAS:
+- Cada linha traz QUEM falou e POR QUAL CANAL (whatsapp/email). A tarefa nomeia de quem se espera o retorno — resposta de OUTRA pessoa da mesma conversa NÃO conclui a espera.
+- Tarefa de AÇÃO (enviar/mandar/cobrar/falar/contatar/responder): só está concluída se HÁ mensagem SUA (você→…) que CUMPRE a ação.
+- Tarefa de ESPERA (aguardar/esperar retorno de alguém): só está concluída se a PESSOA ESPERADA respondeu (…→você) o que era esperado — por WhatsApp ou por e-mail, tanto faz o canal.
+- PLANO REGISTRADO NÃO É AÇÃO CUMPRIDA. Texto que anuncia intenção, descreve como algo será feito, ou registra uma decisão ("vamos separar X", "o critério é Y", "ficou definido que...") não conclui nada — a tarefa fecha quando o que ela pedia FOI FEITO, não quando alguém escreveu o que pretende fazer.
+- TAREFA QUE PEDE VÁRIAS COISAS só fecha com TODAS satisfeitas. Se ela pede 5 definições e as mensagens resolvem 2, done=false.
+- A DESCRIÇÃO DA TAREFA NÃO É EVIDÊNCIA. Ela é o enunciado do que falta fazer. Só as linhas M1..Mn acima contam como prova.
+- Na dúvida, done=false. Conversa tangencial NÃO conclui a tarefa."""
 
-    `done=true` só sobrevive se a citação que o modelo devolveu for encontrada
-    no texto que ele viu (`_evidencia_confere`)."""
+_PROVA = """Se (e só se) done=true, você DEVE apontar a prova:
+- "evidencia_id": o rótulo da mensagem que conclui a tarefa (ex.: "M3");
+- "evidencia_trecho": um trecho COPIADO LITERALMENTE dessa mensagem, palavra por palavra, sem parafrasear e sem juntar pedaços de mensagens diferentes.
+O trecho é conferido contra o texto acima. Se você não encontrar nas mensagens um trecho que sustente o fechamento, a resposta correta é done=false."""
+
+
+def _render_msgs(msgs) -> tuple:
+    """`(linhas, exibidas)` — as mensagens COMO vão ao prompt.
+
+    Uma montagem só, usada pelo prompt individual, pelo de grupo e pelo
+    fingerprint. Enquanto isto morava dentro do `_judge`, qualquer fingerprint
+    teria de reconstruir as mesmas linhas por fora, e as duas versões divergiriam
+    no primeiro ajuste de formatação — com o skip decidindo por um texto que não é
+    o que foi enviado.
+
+    Determinístico de propósito: nada de `now()` aqui, senão o hash muda a cada run
+    e o skip nunca pega nada."""
     # O CANAL vai no prompt (06/08): com e-mail na peneira, o julgamento muda —
     # "respondeu por e-mail" é a evidência que fecha a #999695, e sem o rótulo o
     # modelo lê uma thread de e-mail como se fosse recado de WhatsApp.
@@ -397,37 +558,94 @@ def _judge(task, msgs) -> dict:
         )
         linhas.append(f"[M{i} | {quem} por {m.get('canal') or 'whatsapp'} "
                       f"| {m['ts']:%d/%m %H:%M}] {texto}")
-    convo = "\n".join(linhas)
+    return linhas, exibidas
 
+
+def _enunciado(task) -> str:
+    """O que se pergunta sobre a task — o que muda o veredito se for editado."""
+    return (f"Título: {task['titulo']}\n"
+            f"Descrição: {task.get('descricao') or '(sem descrição)'}\n"
+            f"Criada em: {task['data_criacao']:%d/%m/%Y}")
+
+
+def _build_judge_prompt(task, msgs) -> tuple:
+    """Prompt de UMA task → `(prompt, exibidas)`. Usado nos grupos de tamanho 1."""
+    linhas, exibidas = _render_msgs(msgs)
     prompt = f"""Você decide se uma TAREFA pendente já foi CONCLUÍDA, à luz das mensagens trocadas com o contato DEPOIS que a tarefa foi criada.
 
 TAREFA:
-Título: {task['titulo']}
-Descrição: {task.get('descricao') or '(sem descrição)'}
-Criada em: {task['data_criacao']:%d/%m/%Y}
+{_enunciado(task)}
 
 MENSAGENS DESDE A CRIAÇÃO (cronológico, rotuladas M1, M2, ...):
-{convo}
+{chr(10).join(linhas)}
 
-REGRAS:
-- Cada linha traz QUEM falou e POR QUAL CANAL (whatsapp/email). A tarefa nomeia de quem se espera o retorno — resposta de OUTRA pessoa da mesma conversa NÃO conclui a espera.
-- Tarefa de AÇÃO (enviar/mandar/cobrar/falar/contatar/responder): só está concluída se HÁ mensagem SUA (você→…) que CUMPRE a ação.
-- Tarefa de ESPERA (aguardar/esperar retorno de alguém): só está concluída se a PESSOA ESPERADA respondeu (…→você) o que era esperado — por WhatsApp ou por e-mail, tanto faz o canal.
-- PLANO REGISTRADO NÃO É AÇÃO CUMPRIDA. Texto que anuncia intenção, descreve como algo será feito, ou registra uma decisão ("vamos separar X", "o critério é Y", "ficou definido que...") não conclui nada — a tarefa fecha quando o que ela pedia FOI FEITO, não quando alguém escreveu o que pretende fazer.
-- TAREFA QUE PEDE VÁRIAS COISAS só fecha com TODAS satisfeitas. Se ela pede 5 definições e as mensagens resolvem 2, done=false.
-- A DESCRIÇÃO DA TAREFA NÃO É EVIDÊNCIA. Ela é o enunciado do que falta fazer. Só as linhas M1..Mn acima contam como prova.
-- Na dúvida, done=false. Conversa tangencial NÃO conclui a tarefa.
+{_REGRAS}
 
-Se (e só se) done=true, você DEVE apontar a prova:
-- "evidencia_id": o rótulo da mensagem que conclui a tarefa (ex.: "M3");
-- "evidencia_trecho": um trecho COPIADO LITERALMENTE dessa mensagem, palavra por palavra, sem parafrasear e sem juntar pedaços de mensagens diferentes.
-O trecho é conferido contra o texto acima. Se você não encontrar nas mensagens um trecho que sustente o fechamento, a resposta correta é done=false.
+{_PROVA}
 
 Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "evidencia_id": "M1", "evidencia_trecho": "...", "reason": "1 frase curta"}}"""
+    return prompt, exibidas
+
+
+def task_fingerprint(task, msgs) -> str:
+    """SHA-256 de (regras + enunciado da task + lote exibido). Igual ⇒ mesma
+    entrada ⇒ o veredito seria o mesmo ⇒ a chamada não acontece.
+
+    Não é cache de resposta: nada do veredito é reaproveitado. É a resposta à
+    pergunta "há algo novo para julgar?". Contar com a variação estocástica do
+    modelo pra fechar uma task que ele já recusou seria transformar ruído em
+    decisão — o oposto do que a guarda de citação de 23/08 existe pra impedir.
+
+    Deliberadamente NÃO inclui as outras tasks do grupo: quem muda o veredito desta
+    task é o enunciado dela e as mensagens, não a companhia."""
+    linhas, _ = _render_msgs(msgs)
+    corpo = "\n".join([_REGRAS, _PROVA, _enunciado(task), *linhas])
+    return hashlib.sha256(corpo.encode("utf-8")).hexdigest()
+
+
+def batch_key(msgs) -> str:
+    """Chave de agrupamento: o LOTE EXIBIDO, não o contato (30/09).
+
+    Agrupar por terceiro é o que a medição pedia — 55 terceiros concentram 197
+    tasks, e tasks do mesmo contato veem as mesmas mensagens. Mas agrupar POR
+    CONTATO abre um furo de veredito: o lote de cada task vem de
+    `_fetch_messages_since(scope, task["data_criacao"])`, e as tasks de um mesmo
+    contato têm datas de criação DIFERENTES. Um lote comum ao grupo mostraria, para
+    a task mais recente, mensagens ANTERIORES à criação dela — exatamente as que
+    não bastaram, que é por isso que a task existe. O modelo fecharia a task com a
+    conversa que a originou.
+
+    Agrupar pelo lote já filtrado não tem esse furo e captura quase todo o ganho:
+    como a peneira devolve as N mais recentes, tasks antigas do mesmo contato caem
+    no MESMO lote naturalmente. Onde as janelas divergem, o grupo se separa — e
+    separar é o comportamento correto, não uma perda."""
+    linhas, _ = _render_msgs(msgs)
+    return hashlib.sha256("\n".join(linhas).encode("utf-8")).hexdigest()
+
+
+def _judge(task, msgs, prompt=None, exibidas=None) -> dict:
+    """LLM (Haiku) decide se a task foi concluída à luz das mensagens. JSON estrito.
+    Retorna {done, confidence, reason, evidencia}. Best-effort: erro → done=false.
+
+    `done=true` só sobrevive se a citação que o modelo devolveu for encontrada
+    no texto que ele viu (`_evidencia_confere`).
+
+    `prompt`/`exibidas` já montados entram de fora (o chamador precisa do prompt
+    antes, pro hash do skip) — omitidos, monta aqui, que é o contrato antigo e o
+    que os testes usam.
+
+    `judge_failed=True` marca o que NÃO é veredito: sem chave, parse quebrado,
+    exceção de rede. Todos devolvem `done=False` como sempre (best-effort), mas o
+    skip de lote inalterado precisa distinguir "o modelo disse não" de "a pergunta
+    não foi feita" — sem isso um timeout de API carimbaria o marcador e a task
+    ficaria congelada para sempre, porque o lote nunca mais muda."""
+    if prompt is None or exibidas is None:
+        prompt, exibidas = _build_judge_prompt(task, msgs)
 
     api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
-        return {"done": False, "confidence": 0.0, "reason": "sem API key"}
+        return {"done": False, "confidence": 0.0, "reason": "sem API key",
+                "judge_failed": True}
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
@@ -443,34 +661,153 @@ Responda APENAS um JSON: {{"done": true|false, "confidence": 0.0-1.0, "evidencia
         raw = msg.content[0].text if msg.content else ""
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if not m:
-            return {"done": False, "confidence": 0.0, "reason": "parse falhou"}
+            return {"done": False, "confidence": 0.0, "reason": "parse falhou",
+                    "judge_failed": True}
         data = json.loads(m.group(0))
-        verdict = {
-            "done": bool(data.get("done")),
-            "confidence": float(data.get("confidence") or 0.0),
-            "reason": str(data.get("reason") or "")[:200],
-            "evidencia_id": str(data.get("evidencia_id") or "")[:8],
-            "evidencia": str(data.get("evidencia_trecho") or "")[:400],
-        }
-        if verdict["done"]:
-            ok, motivo = _evidencia_confere(verdict["evidencia"], exibidas)
-            if not ok:
-                logger.warning(
-                    "task_reconciler: veredito DESCARTADO na task %s — %s. "
-                    "Citação: %r | reason: %r",
-                    task["id"], motivo, verdict["evidencia"][:160], verdict["reason"],
-                )
-                return {
-                    "done": False,
-                    "confidence": 0.0,
-                    "reason": f"evidência não confere: {motivo}",
-                    "evidencia": verdict["evidencia"],
-                    "evidencia_falha": motivo,
-                }
-        return verdict
+        return _finaliza_verdict(task, data, exibidas)
     except Exception as e:
         logger.warning(f"task_reconciler judge falhou (task {task['id']}): {e}")
-        return {"done": False, "confidence": 0.0, "reason": f"erro: {e}"}
+        return {"done": False, "confidence": 0.0, "reason": f"erro: {e}",
+                "judge_failed": True}
+
+
+# ==================== JULGAR O GRUPO NUMA CHAMADA (30/09) ====================
+#
+# Teto de tasks por chamada. 29 tasks num prompt só seria economia paga com
+# qualidade: quanto mais enunciados na mesma janela, mais fácil o modelo casar a
+# evidência com a tarefa errada — e a guarda de citação NÃO pega isso (ela confere
+# que o trecho existe nas mensagens, não que pertence àquela tarefa). Em blocos de
+# 8, o maior grupo medido (29 tasks) vira 4 chamadas em vez de 29, e o corte total
+# fica praticamente igual ao teórico.
+MAX_TASKS_POR_CHAMADA = 8
+
+
+def _build_group_prompt(tasks, msgs) -> tuple:
+    """Prompt de VÁRIAS tasks sobre o MESMO lote → `(prompt, exibidas, rotulos)`.
+
+    `rotulos` é `{"T1": task_id, ...}` — o casamento volta pelo rótulo, nunca pela
+    ordem do array que o modelo devolver."""
+    linhas, exibidas = _render_msgs(msgs)
+    rotulos, blocos = {}, []
+    for i, t in enumerate(tasks, start=1):
+        rot = f"T{i}"
+        rotulos[rot] = t["id"]
+        blocos.append(f"[{rot}]\n{_enunciado(t)}")
+
+    prompt = f"""Você decide, para CADA tarefa pendente abaixo, se ela já foi CONCLUÍDA à luz das mensagens trocadas com o contato DEPOIS que a tarefa foi criada.
+
+São {len(tasks)} tarefas do MESMO contato, julgadas contra a MESMA conversa.
+
+TAREFAS:
+{chr(10).join(blocos)}
+
+MENSAGENS (cronológico, rotuladas M1, M2, ...):
+{chr(10).join(linhas)}
+
+{_REGRAS}
+- CADA TAREFA É JULGADA SOZINHA. Não presuma que estarem juntas as torna parecidas: a mesma mensagem pode concluir uma e não concluir nenhuma das outras, e o normal é que a maioria siga aberta. Não use uma tarefa como contexto da outra.
+- A EVIDÊNCIA TEM DE FALAR DAQUELA TAREFA. Mensagem que conclui T1 não conclui T2 por estar na mesma conversa — se o que ela resolve não é o que T2 pede, T2 é done=false.
+
+{_PROVA}
+
+Responda APENAS um JSON, um objeto por tarefa, com o RÓTULO dela:
+{{"vereditos": [{{"tarefa": "T1", "done": true|false, "confidence": 0.0-1.0, "evidencia_id": "M1", "evidencia_trecho": "...", "reason": "1 frase curta"}}, ...]}}
+Inclua TODAS as {len(tasks)} tarefas, mesmo as que seguem abertas."""
+    return prompt, exibidas, rotulos
+
+
+def _judge_group(tasks, msgs) -> dict:
+    """Julga N tasks numa chamada → `{task_id: verdict}`.
+
+    Grupo de 1 cai no `_judge` individual, que já é o caminho testado desde julho.
+
+    Task que o modelo OMITIR volta como `judge_failed` — não como `done=false`.
+    Resposta faltando é pergunta não respondida, e carimbar isso congelaria a task
+    para sempre (ver `judge_failed` no laço)."""
+    if len(tasks) == 1:
+        return {tasks[0]["id"]: _judge(tasks[0], msgs)}
+
+    prompt, exibidas, rotulos = _build_group_prompt(tasks, msgs)
+    ids = [t["id"] for t in tasks]
+    por_id = {t["id"]: t for t in tasks}
+
+    def _falha(motivo):
+        return {tid: {"done": False, "confidence": 0.0, "reason": motivo,
+                      "judge_failed": True} for tid in ids}
+
+    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        return _falha("sem API key")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model=llm.FAST,
+            # O veredito de cada task carrega a citação; 400 tokens serviam pra um.
+            max_tokens=min(400 + 260 * len(tasks), 4000),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("task_reconciler.judge_grupo", llm.FAST, msg.model_dump())
+        except Exception:
+            pass
+        raw = msg.content[0].text if msg.content else ""
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not m:
+            return _falha("parse falhou (grupo)")
+        data = json.loads(m.group(0))
+    except Exception as e:
+        logger.warning(f"task_reconciler judge_grupo falhou (tasks {ids}): {e}")
+        return _falha(f"erro: {e}")
+
+    out = {}
+    for item in (data.get("vereditos") or []):
+        tid = rotulos.get(str(item.get("tarefa") or "").strip())
+        if tid is None or tid in out:
+            # Rótulo inventado ou repetido: descartar é o certo. Adivinhar por
+            # posição foi o que quase escrevi aqui, e é como um veredito acaba
+            # aplicado na task errada — dano pior que o de não julgar.
+            logger.warning("task_reconciler: rótulo %r fora do grupo %s — descartado",
+                           item.get("tarefa"), ids)
+            continue
+        out[tid] = _finaliza_verdict(por_id[tid], item, exibidas)
+
+    faltando = [tid for tid in ids if tid not in out]
+    if faltando:
+        logger.warning("task_reconciler: grupo devolveu %d de %d vereditos; faltaram %s",
+                       len(out), len(ids), faltando)
+        for tid in faltando:
+            out[tid] = {"done": False, "confidence": 0.0,
+                        "reason": "grupo não devolveu veredito", "judge_failed": True}
+    return out
+
+
+def _finaliza_verdict(task, data, exibidas) -> dict:
+    """Normaliza o JSON do modelo e aplica a guarda de citação. Mesma função nos
+    dois caminhos — a guarda de 23/08 não pode valer só no individual."""
+    verdict = {
+        "done": bool(data.get("done")),
+        "confidence": float(data.get("confidence") or 0.0),
+        "reason": str(data.get("reason") or "")[:200],
+        "evidencia_id": str(data.get("evidencia_id") or "")[:8],
+        "evidencia": str(data.get("evidencia_trecho") or "")[:400],
+    }
+    if verdict["done"]:
+        ok, motivo = _evidencia_confere(verdict["evidencia"], exibidas)
+        if not ok:
+            logger.warning(
+                "task_reconciler: veredito DESCARTADO na task %s — %s. "
+                "Citação: %r | reason: %r",
+                task["id"], motivo, verdict["evidencia"][:160], verdict["reason"],
+            )
+            return {
+                "done": False,
+                "confidence": 0.0,
+                "reason": f"evidência não confere: {motivo}",
+                "evidencia": verdict["evidencia"],
+                "evidencia_falha": motivo,
+            }
+    return verdict
 
 
 def _close_task(task, verdict):
@@ -799,9 +1136,92 @@ async def _notify_reopened(reopened):
     )
 
 
-async def run_task_reconciler(dry_run: bool = False) -> dict:
+# ==================== PARALELISMO (30/09) ====================
+#
+# Tetos conservadores de propósito, e cada um limitado por coisa diferente:
+#
+#   DB — o Neon derruba conexão em lote longo e o pooler tem teto de conexões
+#   ([[project_dev_backlog]] "Neon derruba conexão em lote longo"). `_fetch_messages_since`
+#   abre uma conexão por chamada, então concorrência aqui é conexão simultânea.
+#
+#   LLM — a cota da Anthropic é janela ROLANTE de 5h ([[reference_medidor_cota_claude]]);
+#   estourar rate limit devolve 429, que neste código cai em `judge_failed` e some
+#   como "não julgado". Barato de reduzir, caro de descobrir.
+#
+# Em env (`RECONCILER_DB_CONC`/`RECONCILER_LLM_CONC`) pra poder baixar sem deploy se
+# o Neon ou a cota reclamarem.
+def _conc(var, default):
+    try:
+        return max(1, int(os.getenv(var) or default))
+    except ValueError:
+        return default
+
+
+async def _fetch_lotes(candidates) -> dict:
+    """`{task_id: msgs}` — os lotes de todas as candidatas, em paralelo.
+
+    Falha de uma query não derruba a run: a task fica sem lote e não é julgada
+    nesta passada (mesmo efeito de não ter mensagem), com o erro no log. Engolir
+    calado aqui seria transformar uma queda do Neon em "nada a fazer hoje"."""
+    sem = asyncio.Semaphore(_conc("RECONCILER_DB_CONC", 8))
+
+    async def _um(task):
+        async with sem:
+            scope = task.get("_scope") or _task_scope(task)
+            try:
+                return task["id"], await asyncio.to_thread(
+                    _fetch_messages_since, scope, task["data_criacao"])
+            except Exception as e:
+                logger.warning(f"task_reconciler: lote da task {task['id']} falhou: {e}")
+                return task["id"], None
+
+    pares = await asyncio.gather(*[_um(t) for t in candidates])
+    return {tid: msgs for tid, msgs in pares if msgs}
+
+
+async def _judge_blocos(blocos) -> dict:
+    """`{task_id: verdict}` de todos os blocos, julgados em paralelo.
+
+    Bloco que estoura vira `judge_failed` para as suas tasks, não exceção que mata a
+    run: uma task cujo julgamento falhou é tentada de novo amanhã; uma run morta no
+    meio deixa tudo o que vinha depois sem julgamento e sem aviso."""
+    sem = asyncio.Semaphore(_conc("RECONCILER_LLM_CONC", 4))
+
+    async def _um(bloco):
+        tasks = [t for t, _, _ in bloco]
+        async with sem:
+            try:
+                return await asyncio.to_thread(_judge_group, tasks, bloco[0][1])
+            except Exception as e:
+                logger.warning("task_reconciler: bloco %s morreu: %s",
+                               [t["id"] for t in tasks], e)
+                return {t["id"]: {"done": False, "confidence": 0.0,
+                                  "reason": f"erro no bloco: {e}",
+                                  "judge_failed": True} for t in tasks}
+
+    out = {}
+    for parcial in await asyncio.gather(*[_um(b) for b in blocos]):
+        out.update(parcial)
+    return out
+
+
+async def run_task_reconciler(dry_run: bool = False, marcar: bool = None) -> dict:
     """Sweep. Fecha tasks pending resolvidas por comunicação direta.
-    dry_run=True: julga e loga o que fecharia, mas NÃO fecha nem notifica."""
+    dry_run=True: julga e loga o que fecharia, mas NÃO fecha nem notifica.
+
+    `marcar` decide se os marcadores do skip são gravados. Default: só na run real.
+
+    Isto começou invertido, e a própria validação em prod mostrou o erro: o dry_run
+    carimbava "já julguei", e ele relatou **5 tasks que fechariam**. Como a run REAL
+    seguinte encontraria o marcador com o lote inalterado, ela pularia justamente
+    essas 5 — e os fechamentos ficariam engolidos até alguma mensagem nova mexer no
+    lote. Economizar uma chamada de dois centavos ao custo de não fechar o que
+    fechava é trocar a razão de existir do reconciler por troco.
+
+    `marcar=True` com `dry_run=True` é a medição do próprio skip (duas passadas
+    seguidas): pedido explicitamente, nunca por default."""
+    if marcar is None:
+        marcar = not dry_run
     # O kill-switch barra a ESCRITA, não a medição (23/08). Enquanto ele também
     # abortava o dry_run, a única forma de saber se o conserto funcionou era
     # religar em produção e olhar — gate que se valida ligando não é gate. Com a
@@ -824,27 +1244,83 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
     sem_evidencia = []
     por_texto = sum(1 for t in candidates if (t.get("_scope") or {}).get("origem") == "texto")
 
+    # SKIP DE LOTE INALTERADO (30/09). O lote sempre veio de `data_criacao`, nunca
+    # do último julgamento: task de 165 dias volta a julgamento todo dia com as
+    # MESMAS 8 mensagens. Medido em prod hoje, antes do conserto: de 197 chamadas
+    # da run, 100 (51%) eram disto. O que muda aqui é só QUANDO perguntar — a
+    # pergunta, o prompt e a barra continuam idênticos.
+    skip_ligado = is_skip_unchanged_enabled()
+    marks = _fetch_judgment_marks([t["id"] for t in candidates]) if skip_ligado else {}
+    skipped = []
+    falhas = []   # julgamento que NÃO aconteceu (rede/parse/chave) — não carimba
+
+    # Os lotes vêm EM PARALELO: são ~250 queries independentes contra um Neon que
+    # cobra latência por ida-e-volta, e sequenciais dominavam o relógio da run
+    # inteira (medido: mais tempo em espera de socket que em julgamento).
+    lotes = await _fetch_lotes(candidates)
+
+    a_julgar = []
     for task in candidates:
-        msgs = _fetch_messages_since(task.get("_scope") or _task_scope(task), task["data_criacao"])
+        msgs = lotes.get(task["id"])
         if not msgs:
             continue
-        verdict = _judge(task, msgs)
-        judged += 1
-        if verdict.get("evidencia_falha"):
-            sem_evidencia.append({"id": task["id"], "titulo": task["titulo"],
-                                  "motivo": verdict["evidencia_falha"],
-                                  "citacao": (verdict.get("evidencia") or "")[:160]})
-        if verdict["done"] and verdict["confidence"] >= CONFIDENCE_THRESHOLD:
-            rec = {
-                "id": task["id"], "titulo": task["titulo"],
-                "confidence": verdict["confidence"], "reason": verdict["reason"],
-                "evidencia": verdict.get("evidencia"),
-            }
-            if dry_run:
-                would_close.append(rec)
-            else:
-                _close_task(task, verdict)
-                closed.append(rec)
+        fingerprint = task_fingerprint(task, msgs)
+        if skip_ligado and marks.get(task["id"]) == fingerprint:
+            # Mesma pergunta, mesma prova, mesma resposta. Não chama o modelo.
+            skipped.append(task["id"])
+            continue
+        a_julgar.append((task, msgs, fingerprint))
+
+    # AGRUPAMENTO (30/09). Tasks que veem o MESMO lote vão numa chamada só — 55
+    # terceiros concentravam as 197 tasks, e o maior grupo tinha 29 delas fazendo a
+    # mesma pergunta sobre a mesma conversa. A chave é o LOTE, não o contato: ver
+    # `batch_key` pra o furo de veredito que agrupar por contato abriria.
+    grupos = {}
+    for item in a_julgar:
+        grupos.setdefault(batch_key(item[1]), []).append(item)
+    blocos = [g[i:i + MAX_TASKS_POR_CHAMADA]
+              for g in grupos.values()
+              for i in range(0, len(g), MAX_TASKS_POR_CHAMADA)]
+
+    vereditos = await _judge_blocos(blocos)
+
+    for bloco in blocos:
+        for task, _msgs, fingerprint in bloco:
+            verdict = vereditos.get(task["id"])
+            if verdict is None:
+                # Bloco inteiro perdido (exceção fora do `_judge_group`). Não é
+                # veredito e não carimba — a run seguinte tenta de novo.
+                falhas.append(task["id"])
+                continue
+            judged += 1
+            # Não se carimba o que não foi julgado: `judge_failed` é timeout de rede,
+            # parse quebrado, chave ausente, veredito omitido pelo grupo. Todos
+            # devolvem `done=False` como qualquer recusa, e confundir os dois seria
+            # fatal aqui — o lote não muda mais, então a task ficaria congelada para
+            # sempre por causa de uma falha de 3 segundos. Falha custa um
+            # re-julgamento na run seguinte, que é o preço certo.
+            if skip_ligado and marcar and not verdict.get("judge_failed"):
+                _record_judgment(task["id"], fingerprint, verdict)
+            elif verdict.get("judge_failed"):
+                falhas.append(task["id"])
+            if verdict.get("evidencia_falha"):
+                sem_evidencia.append({"id": task["id"], "titulo": task["titulo"],
+                                      "motivo": verdict["evidencia_falha"],
+                                      "citacao": (verdict.get("evidencia") or "")[:160]})
+            if verdict["done"] and verdict["confidence"] >= CONFIDENCE_THRESHOLD:
+                rec = {
+                    "id": task["id"], "titulo": task["titulo"],
+                    "confidence": verdict["confidence"], "reason": verdict["reason"],
+                    "evidencia": verdict.get("evidencia"),
+                }
+                if dry_run:
+                    would_close.append(rec)
+                else:
+                    _close_task(task, verdict)
+                    closed.append(rec)
+
+    if skipped and marcar:
+        _record_skip(skipped)
 
     if closed and not dry_run:
         await _notify_closed(closed)
@@ -876,6 +1352,22 @@ async def run_task_reconciler(dry_run: bool = False) -> dict:
         # corrigir (falta o `contact_id`). O número existe pra a CoS linkar as
         # fichas, não pra o texto virar o caminho normal.
         "scoped_by_text": por_texto,
+        # Chamadas POUPADAS por lote inalterado (30/09). O par `judged`+`skipped`
+        # é a régua do conserto: `skipped` em zero com `judged` alto significa que
+        # o skip não está pegando — marcador não gravou, hash instável, migration
+        # não aplicada no alvo — e não que não havia o que poupar.
+        "skipped_unchanged": len(skipped),
+        "skip_enabled": skip_ligado,
+        "marcou": marcar,   # dry_run não carimba: ver a docstring do run_task_reconciler
+        # AGRUPAMENTO: `judged` são as TASKS julgadas, `llm_calls` são as chamadas
+        # que isso custou. A distância entre os dois é o conserto — antes eram o
+        # mesmo número. Sem os dois lado a lado não se sabe se o agrupamento pegou.
+        "llm_calls": len(blocos),
+        "grupos": len(grupos),
+        # Julgamentos que não aconteceram (rede/parse/chave). Vão ser tentados de
+        # novo na run seguinte, de propósito — e o número tem de aparecer, senão
+        # uma queda da API vira "judged alto, nada fechou" sem explicação.
+        "judge_failed": len(falhas),
         "judged": judged,
         "closed": len(closed),
         "would_close": len(would_close),
