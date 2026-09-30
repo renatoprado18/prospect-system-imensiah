@@ -11,6 +11,7 @@ from services import llm
 import json
 import httpx
 import logging
+import mimetypes
 import re
 from typing import Optional, Dict, List, Any
 from datetime import datetime
@@ -333,22 +334,53 @@ class EvolutionAPIClient:
         document_url: str,
         filename: str,
         caption: str = "",
-        instance_name: str = None
+        instance_name: str = None,
+        mimetype: str = None,
+        timeout: float = 120.0,
     ) -> Dict:
-        """Envia documento"""
+        """Envia documento (PDF, PPTX, DOCX, XLSX...). `document_url` aceita URL
+        pública OU o conteúdo em base64.
+
+        CONSERTADO 30/09/26: postava em `/message/sendWhatsAppAudio/` — o endpoint
+        de ÁUDIO. Nenhum envio de documento jamais funcionou, e a função tinha ZERO
+        chamadores, o que fez o defeito parecer acadêmico por meses. Não era: em
+        30/09 o PPT de 4,99 MB ao cliente saiu por chamada manual à Evolution
+        (nota #2229), porque daqui não sairia. Função quebrada não tem chamador —
+        o trabalho vai por fora, e é isso que esconde o bug.
+
+        Três coisas além da URL, cada uma aprendida no envio manual:
+
+        - **`mimetype`**: sem ele o PPTX chega como arquivo genérico. Inferido do
+          nome pela stdlib, que cobre pptx/docx/xlsx/pdf/odt. Passe explícito só
+          quando o nome não tiver extensão confiável.
+        - **`timeout` 120s**, não os 30s do default: 5 MB viram ~6,6 MB em base64
+          subindo para uma VPS, e um upload cortado no meio devolve o mesmo
+          `{"error"}` de um payload inválido — indistinguíveis no log.
+        - **guarda de payload vazio**: o 400 que apareceu no envio manual não vinha
+          da Evolution, vinha de `media` vazio. Recusar aqui dá a mensagem certa em
+          vez de um 400 que parece ser do outro lado.
+        """
         name = instance_name or self.instance_name
         phone_clean = ''.join(filter(str.isdigit, phone))
 
         if not phone_clean.startswith('55') and len(phone_clean) <= 11:
             phone_clean = '55' + phone_clean
 
-        return await self._request("POST", f"/message/sendWhatsAppAudio/{name}", {
+        if not (document_url or "").strip():
+            return {"error": "send_document: `media` vazio (URL ou base64 do documento)"}
+        if not (filename or "").strip():
+            return {"error": "send_document: `filename` vazio — o WhatsApp mostra o nome do arquivo"}
+
+        mime = mimetype or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+        return await self._request("POST", f"/message/sendMedia/{name}", {
             "number": phone_clean,
             "mediatype": "document",
             "media": document_url,
             "fileName": filename,
-            "caption": caption
-        })
+            "mimetype": mime,
+            "caption": caption,
+        }, timeout=timeout)
 
     # ==================== CONTACTS ====================
 
