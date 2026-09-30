@@ -210,7 +210,7 @@ def _call_claude_batch(formatted: List[Dict]) -> Optional[Dict]:
         return None
 
     data = r.json()
-    text = data["content"][0]["text"]
+    text = llm.require_text(data, "wa_triage._call_claude_batch")
     classifications = _parse_claude_array(text)
     if classifications is None:
         logger.error(f"wa_triage JSON parse failed. Response: {text[:500]!r}")

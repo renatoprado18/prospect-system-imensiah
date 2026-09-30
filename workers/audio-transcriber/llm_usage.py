@@ -101,6 +101,41 @@ def first_text(payload: Any) -> Optional[str]:
     return None
 
 
+def block_kinds(payload: Any) -> list:
+    """Tipos dos blocos da resposta, pra log. ['thinking','text'] diz tudo."""
+    blocks = payload.get("content") if isinstance(payload, dict) else getattr(payload, "content", None)
+    if not blocks:
+        return []
+    return [
+        (b.get("type") if isinstance(b, dict) else getattr(b, "type", None)) or "?"
+        for b in blocks
+    ]
+
+
+class LlmNoTextError(RuntimeError):
+    """A resposta nao trouxe bloco de texto — o modelo gastou o teto pensando."""
+
+
+def require_text(payload: Any, where: str = "") -> str:
+    """`first_text` que FALHA em vez de devolver None.
+
+    Espelho de `app/services/llm.require_text` (o `app/` nao existe no container do
+    worker). Usada no sweep de 30/09: trocar `content[0]["text"]` por
+    `first_text(...) or ""` consertaria o caso comum e transformaria o caso ruim em
+    string vazia — o mesmo silencio, com outra roupa. Aqui a excecao diz QUAIS
+    blocos vieram, e `['thinking']` mata a duvida na hora.
+    """
+    texto = first_text(payload)
+    if texto is None:
+        kinds = block_kinds(payload)
+        raise LlmNoTextError(
+            f"{where or 'llm'}: resposta sem bloco de texto (blocos={kinds or 'nenhum'}). "
+            f"Modelo da geracao 5 pensa por default e o teto de max_tokens pode ter "
+            f"estourado dentro do raciocinio."
+        )
+    return texto
+
+
 def record_response(function: str, model: str, response_json: Dict[str, Any],
                     *, conversation_id: Optional[int] = None,
                     metadata: Optional[Dict[str, Any]] = None) -> Optional[float]:

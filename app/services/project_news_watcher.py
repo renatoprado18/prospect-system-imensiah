@@ -406,7 +406,7 @@ Retorne APENAS JSON: {{"score": <float entre 0 e 1>}}"""
 
         _llm_resp = resp.json()
         llm_usage.record_response("news_watcher.triage", ANTHROPIC_MODEL_HAIKU, _llm_resp)  # F-E: custo por-funcao
-        text = _llm_resp["content"][0]["text"]
+        text = llm.require_text(_llm_resp, "project_news_watcher.score_news_relevance")
         m = re.search(r'\{[\s\S]*?\}', text)
         if not m:
             logger.warning(f"score_news_relevance: sem JSON na resposta: {text[:100]}")
@@ -1075,7 +1075,7 @@ Resuma em 1-2 frases o tema geral desses {len(hits)} hits. Tom factual, conciso,
             return f"{len(hits)} noticia(s) capturada(s) (resumo IA falhou)."
         _llm_resp = resp.json()
         llm_usage.record_response("news_watcher.digest", ANTHROPIC_MODEL_SONNET, _llm_resp)  # F-E: custo por-funcao
-        text = _llm_resp["content"][0]["text"].strip()
+        text = llm.require_text(_llm_resp, "project_news_watcher._summarize_watcher_hits").strip()
         return text or f"{len(hits)} noticia(s) capturada(s)."
     except Exception as e:
         logger.warning(f"_summarize_watcher_hits falhou: {type(e).__name__}: {e}")

@@ -9502,7 +9502,7 @@ Seja direto. Portugues. Sem juridiques."""
                 json={"model": llm.FAST, "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
-            analysis = resp.json()["content"][0]["text"]
+            analysis = llm.require_text(resp.json(), "main.analyze_contact_conversations")
             return {"analysis": analysis, "has_data": True, "messages_analyzed": len(messages)}
         raise HTTPException(status_code=resp.status_code, detail="Erro na API")
     except HTTPException:
@@ -22734,7 +22734,7 @@ REGRAS:
                 return {"error": f"Claude API error: {resp.status_code}"}
 
             import json as _json
-            text = resp.json()["content"][0]["text"].strip()
+            text = llm.require_text(resp.json(), "main.api_project_briefing").strip()
             if text.startswith("```"):
                 text = text.split("```", 2)[1]
                 if text.startswith("json"):
@@ -23433,7 +23433,7 @@ INSTRUCOES:
         if resp.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Erro API: {resp.status_code}")
 
-        summary = resp.json()["content"][0]["text"]
+        summary = llm.require_text(resp.json(), "main.api_condense_analyses")
 
         # Save as resumo_executivo
         note = add_project_note(project_id, {
@@ -23526,7 +23526,7 @@ PARECER ORIGINAL (projeto: {project_name}):
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
-            message = resp.json()["content"][0]["text"]
+            message = llm.require_text(resp.json(), "main.api_adapt_analysis")
             return {"message": message, "channel": channel, "recipient": contact_name}
         raise HTTPException(status_code=resp.status_code, detail="Erro na API")
     except HTTPException:
@@ -24301,7 +24301,7 @@ Responda JSON puro, sem markdown:
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Claude API {resp.status_code}: {resp.text[:300]}")
-    text = resp.json()["content"][0]["text"].strip()
+    text = llm.require_text(resp.json(), "main.api_editorial_clipping_reflection").strip()
     if text.startswith("```"):
         text = text.split("```", 2)[1]
         if text.startswith("json"): text = text[4:]
@@ -26594,7 +26594,7 @@ NAO invente URLs ou links — se quiser referenciar um artigo, deixe em branco."
                           "messages": [{"role": "user", "content": prompt}]}
                 )
                 if resp.status_code == 200:
-                    linkedin_text = resp.json()["content"][0]["text"]
+                    linkedin_text = llm.require_text(resp.json(), "main.api_news_to_post")
         except Exception:
             linkedin_text = sugestao or titulo
 
@@ -26705,7 +26705,7 @@ INSTRUCOES - Gere APENAS a mensagem, nada mais:
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
-            message = resp.json()["content"][0]["text"]
+            message = llm.require_text(resp.json(), "main.api_generate_share_message")
             return {"message": message, "contact_name": contact['nome']}
     except Exception:
         pass
@@ -28235,7 +28235,11 @@ Retorne APENAS o JSON válido."""
         except Exception:
             pass
 
-        response_text = message.content[0].text if message.content[0].type == "text" else ""
+        # O guard antigo era `if message.content[0].type == "text" else ""` — e ELE
+        # era o furo: com thinking ligado o bloco 0 é `thinking`, o guard dava
+        # False, `response_text` virava "" e o `json_match` abaixo falhava logando
+        # "no JSON in response". A ata não saía e o erro acusava o JSON.
+        response_text = llm.require_text(message, "main._generate_ata_background")
         json_match = _re.search(r'\{[\s\S]*\}', response_text)
         if not json_match:
             logger.error(f"Ata generation: no JSON in response for {reuniao_id}")

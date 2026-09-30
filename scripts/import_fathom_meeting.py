@@ -43,6 +43,8 @@ if "--remote" not in sys.argv:
     os.environ["USE_LOCAL_DB"] = "1"
 sys.path.insert(0, str(PROJECT_DIR / "app"))
 
+from services import llm  # require_text: ver furo #1000265
+
 import httpx
 from database import get_db
 
@@ -484,7 +486,7 @@ async def generate_proposal_with_claude(
             raise RuntimeError(f"Claude API error {resp.status_code}: {resp.text[:500]}")
 
         data = resp.json()
-        text = data["content"][0]["text"].strip()
+        text = llm.require_text(data, "import_fathom_meeting").strip()
         if text.startswith("```"):
             text = text.split("```", 2)[1]
             if text.startswith("json"):

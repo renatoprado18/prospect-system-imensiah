@@ -148,7 +148,7 @@ Gere os 2 drafts em JSON."""
             return {"ok": False, "error": f"Claude {resp.status_code}: {resp.text[:200]}"}
         _llm_resp = resp.json()
         llm_usage.record_response("linkedin.reply_draft", MODEL, _llm_resp)  # F-E: custo por-funcao
-        raw = _llm_resp["content"][0]["text"].strip()
+        raw = llm.require_text(_llm_resp, "linkedin_reply_drafter.generate_reply_drafts").strip()
         if "```" in raw:
             m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
             if m:

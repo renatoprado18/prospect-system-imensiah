@@ -102,6 +102,7 @@ class _Banca:
                 texto = banca.resposta if banca.resposta is not None else _resposta_padrao(prompt)
 
                 class _B:
+                    type = "text"   # todo bloco do SDK tem `type`
                     text = texto
 
                 class _M:

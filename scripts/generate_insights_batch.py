@@ -28,6 +28,8 @@ if env_path.exists():
                 os.environ.setdefault(key, value)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+
+from services import llm  # require_text: ver furo #1000265
 sys.stdout.reconfigure(line_buffering=True)
 
 from database import get_db
@@ -55,7 +57,7 @@ async def call_claude(prompt: str, max_tokens: int = 2000) -> str:
         )
         if response.status_code == 200:
             data = response.json()
-            return data["content"][0]["text"]
+            return llm.require_text(data, "generate_insights_batch")
         else:
             raise Exception(f"Claude API error: {response.status_code} - {response.text}")
 

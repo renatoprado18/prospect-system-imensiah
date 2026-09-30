@@ -344,7 +344,7 @@ Responda APENAS com JSON:
                 return []
             _llm_resp = resp.json()
             llm_usage.record_response("auto_publisher.generate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-            text = _llm_resp["content"][0]["text"]
+            text = llm.require_text(_llm_resp, "auto_publisher._ask_ai")
             start = text.find("{"); end = text.rfind("}") + 1
             if start < 0:
                 return []
@@ -651,7 +651,7 @@ Responda APENAS JSON: {{"index": <numero>, "reason": "motivo curto"}}"""
             if resp.status_code == 200:
                 _llm_resp = resp.json()
                 llm_usage.record_response("auto_publisher.generate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-                text = _llm_resp["content"][0]["text"]
+                text = llm.require_text(_llm_resp, "auto_publisher.select_replacement_post")
                 start = text.find("{"); end = text.rfind("}") + 1
                 if start >= 0:
                     parsed = json.loads(text[start:end])

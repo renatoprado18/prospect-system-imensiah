@@ -84,7 +84,21 @@ def claude_call(client, system, user, max_tokens=8000):
         system=system,
         messages=[{"role": "user", "content": user}],
     )
-    return resp.content[0].text
+    # NUNCA `resp.content[0].text` (furo #1000265): com thinking ligado o bloco 0 é
+    # `thinking`, e `ThinkingBlock.text` não existe — levanta AttributeError. Este
+    # script gera ATA de conselho; falhar aqui com o índice errado significaria
+    # perder a ata de uma reunião presencial que não se repete.
+    texto = next(
+        (b.text for b in (resp.content or []) if getattr(b, "type", None) == "text"),
+        None,
+    )
+    if texto is None:
+        kinds = [getattr(b, "type", "?") for b in (resp.content or [])]
+        raise RuntimeError(
+            f"claude_call: resposta sem bloco de texto (blocos={kinds or 'nenhum'}) — "
+            f"o teto de max_tokens pode ter estourado dentro do raciocínio."
+        )
+    return texto
 
 
 def identificar_falantes(client, transcricao, pessoas, reuniao):

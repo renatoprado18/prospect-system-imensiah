@@ -100,6 +100,37 @@ def first_text(payload: Any) -> Optional[str]:
     return None
 
 
+class LlmNoTextError(RuntimeError):
+    """A resposta não trouxe bloco de texto — o modelo gastou o teto pensando."""
+
+
+def require_text(payload: Any, where: str = "") -> str:
+    """`first_text` que FALHA em vez de devolver None. É esta a forma usada no
+    sweep dos 45 call sites (30/09), e a escolha tem motivo.
+
+    O call site típico fazia `resp.json()["content"][0]["text"]`. Com thinking
+    ligado, o bloco 0 é `thinking` e isso levanta `KeyError`/`AttributeError`
+    DENTRO de um `except Exception` que só loga — a classificação parava de
+    acontecer sem ninguém saber. Trocar por `first_text(...) or ""` consertaria o
+    caso comum e transformaria o caso ruim em **string vazia**: o mesmo silêncio,
+    com outra roupa ([[feedback_guarda_abstencao_vira_fabrica]]).
+
+    Aqui a exceção é NOMEADA e diz quais blocos vieram (`['thinking']` mata a
+    dúvida na hora). Onde o call site já tem `try/except`, o comportamento externo
+    é o de hoje — só o log fica legível. Onde não tem, propaga, que é o certo:
+    resposta sem texto não é resposta.
+    """
+    texto = first_text(payload)
+    if texto is None:
+        kinds = block_kinds(payload)
+        raise LlmNoTextError(
+            f"{where or 'llm'}: resposta sem bloco de texto (blocos={kinds or 'nenhum'}). "
+            f"Modelo da geração 5 pensa por default e o teto de max_tokens pode ter "
+            f"estourado dentro do raciocínio — ver MIN_MAX_TOKENS_THINKING."
+        )
+    return texto
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ADVISOR — escalada de confiança Haiku→Sonnet na triagem
 # ─────────────────────────────────────────────────────────────────────────────

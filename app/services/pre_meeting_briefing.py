@@ -257,7 +257,7 @@ Responda APENAS com a sugestão, máximo 1 linha. Português. Comece com emoji."
                 if resp.status_code == 200:
                     _llm_resp = resp.json()
                     llm_usage.record_response("pre_meeting.briefing", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-                    suggestion = _llm_resp["content"][0]["text"].strip()
+                    suggestion = llm.require_text(_llm_resp, "pre_meeting_briefing._generate_meeting_briefing").strip()
                     briefing += f"\n\n💡 *Foco:* {suggestion}"
             except Exception:
                 pass

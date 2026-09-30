@@ -221,7 +221,7 @@ async def _avaliar_grupo(group_jid: str, group_name: str, projeto: str | None,
         if resp.status_code == 200:
             _llm_resp = resp.json()
             llm_usage.record_response("group_digest.summary", modelo, _llm_resp)
-            parsed = _parse_avaliacao(_llm_resp["content"][0]["text"])
+            parsed = _parse_avaliacao(llm.require_text(_llm_resp, "group_digest._avaliar_grupo"))
             return {"group": group_name, "projeto": projeto,
                     "messages": len(messages), **parsed}
         logger.warning("group_digest: API %s para %s", resp.status_code, group_name)

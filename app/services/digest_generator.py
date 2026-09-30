@@ -355,7 +355,7 @@ REGRAS:
             if resp.status_code == 200:
                 _llm_resp = resp.json()
                 llm_usage.record_response("digest.group", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-                return _llm_resp["content"][0]["text"]
+                return llm.require_text(_llm_resp, "digest_generator._generate_ai_summary")
         except Exception:
             pass
 
@@ -526,7 +526,7 @@ Seja conciso e direto."""
                 if response.status_code == 200:
                     data = response.json()
                     llm_usage.record_response("digest.generate", CLAUDE_MODEL, data)  # F-E: custo por-funcao
-                    summary = data["content"][0]["text"].strip()
+                    summary = llm.require_text(data, "digest_generator.generate_ai_summary").strip()
 
                     # Atualizar digest com resumo AI
                     with get_db() as conn:

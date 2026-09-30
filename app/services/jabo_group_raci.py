@@ -214,7 +214,7 @@ async def _julgar(mensagens: List[Dict], tasks: List[Dict]) -> List[Dict]:
             return []
         resp = r.json()
         llm_usage.record_response("jabo.raci_grupo", llm.FAST, resp)
-        texto = resp["content"][0]["text"]
+        texto = llm.require_text(resp, "jabo_group_raci._julgar")
         i, f = texto.find("["), texto.rfind("]") + 1
         if i < 0:
             return []

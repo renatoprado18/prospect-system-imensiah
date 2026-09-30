@@ -48,7 +48,7 @@ class AIAgentService:
                 if response.status_code == 200:
                     data = response.json()
                     llm_usage.record_response("ai_agent.respond", CLAUDE_MODEL, data)  # F-E: custo por-funcao
-                    return data["content"][0]["text"]
+                    return llm.require_text(data, "ai_agent.call_claude")
         except Exception as e:
             print(f"Claude API error: {e}")
         return None

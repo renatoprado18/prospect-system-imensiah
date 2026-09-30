@@ -134,7 +134,7 @@ Máximo 200 palavras. Português."""
         if resp.status_code == 200:
             _llm_resp = resp.json()
             llm_usage.record_response("article_knowledge.extract", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-            return _llm_resp["content"][0]["text"]
+            return llm.require_text(_llm_resp, "article_knowledge.summarize_article")
 
     except Exception as e:
         logger.error(f"Error summarizing article: {e}")

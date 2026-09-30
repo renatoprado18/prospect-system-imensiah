@@ -32,6 +32,8 @@ if "--remote" not in sys.argv:
     os.environ["USE_LOCAL_DB"] = "1"
 sys.path.insert(0, str(PROJECT_DIR / "app"))
 
+from services import llm  # require_text: ver furo #1000265
+
 import httpx
 from bs4 import BeautifulSoup
 from database import get_db
@@ -137,7 +139,7 @@ async def generate_body(client: httpx.AsyncClient, post: dict, article_content: 
     if resp.status_code != 200:
         print(f"  ❌ Claude API {resp.status_code}: {resp.text[:200]}")
         return None
-    text = resp.json()["content"][0]["text"].strip()
+    text = llm.require_text(resp.json(), "generate_repost_adaptations").strip()
     text = text.strip('"').strip("'").strip()
     return text
 

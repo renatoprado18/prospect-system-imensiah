@@ -82,7 +82,7 @@ async def _ocr_screenshot(image_b64: str, mime: str = "image/jpeg") -> Optional[
             return None
         _llm_resp = r.json()
         llm_usage.record_response("ocr.screenshot", llm.BALANCED, _llm_resp)  # F-E: custo por-funcao
-        raw = _llm_resp["content"][0]["text"].strip()
+        raw = llm.require_text(_llm_resp, "screenshot_ingest._ocr_screenshot").strip()
         # Remove markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]

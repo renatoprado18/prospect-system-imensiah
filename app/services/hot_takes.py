@@ -159,7 +159,7 @@ Responda APENAS com JSON: {{"categoria": "<nome exato de uma das categorias>"}}
             return None
         _llm_resp = resp.json()
         llm_usage.record_response("hot_takes.curate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-        text = _llm_resp["content"][0]["text"]
+        text = llm.require_text(_llm_resp, "hot_takes.classify_hot_take_category")
         m = re.search(r'\{[\s\S]*\}', text)
         if not m:
             return None
@@ -369,7 +369,13 @@ Responda APENAS com JSON:
             logger.error(f"Invalid filter response: {list(result.keys())}")
             return news_items[:limit]
 
-        content = result["content"][0]["text"]
+        content = llm.first_text(result)
+        if content is None:
+            # Degradação declarada: sem texto, devolve a lista sem filtrar em vez de
+            # explodir — é um filtro de curadoria, e "não filtrei" é pior que
+            # "filtrei" mas muito melhor que derrubar a geração. O log diz os blocos.
+            logger.error(f"No text block in filter response (blocks={llm.block_kinds(result)})")
+            return news_items[:limit]
 
         # Parse JSON da resposta
         json_match = re.search(r'\{[\s\S]*\}', content)
@@ -519,16 +525,18 @@ Responda em JSON:
             logger.error("Empty content array in response")
             return {"error": "Empty content array"}
 
-        first_content = result["content"][0]
-        if not isinstance(first_content, dict):
-            logger.error(f"content[0] is not a dict: {type(first_content)}")
-            return {"error": f"content[0] is not a dict: {type(first_content).__name__}"}
-
-        if "text" not in first_content:
-            logger.error(f"No 'text' in content[0]: {first_content}")
-            return {"error": f"No text in response: {first_content.get('type', 'unknown')}"}
-
-        content = first_content["text"]
+        # As quatro validações que havia aqui olhavam `content[0]` e mediam a coisa
+        # errada (30/09, furo #1000265). Este era o único call site do repo que NÃO
+        # falhava calado — ele logava. Só que com o diagnóstico invertido: com
+        # thinking ligado o bloco 0 é `thinking`, e o log dizia "No 'text' in
+        # content[0]" / "No text in response" enquanto o texto estava no bloco 1.
+        # Mensagem de erro confiante e errada custa mais que silêncio: manda
+        # investigar o prompt quando o defeito é o índice.
+        content = llm.first_text(result)
+        if content is None:
+            kinds = llm.block_kinds(result)
+            logger.error(f"No text block in response (blocks={kinds})")
+            return {"error": f"No text in response (blocks={kinds})"}
         logger.info(f"Claude response length: {len(content)}")
         logger.info(f"Claude response preview: {content[:500]}")
 

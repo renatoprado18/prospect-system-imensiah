@@ -1450,7 +1450,7 @@ async def _fetch_url(url: str, summarize: bool = False) -> str:
                 _rj = ai_resp.json()
                 llm_usage.record_response("worker.url_summarize",
                                           "claude-haiku-4-5-20251001", _rj)
-                summary = _rj["content"][0]["text"]
+                summary = llm_usage.require_text(_rj, "worker.resumo")
                 result = f"**{title}**\n\n{summary}\n\nFonte: {url}"
 
         return result
@@ -1713,7 +1713,7 @@ async def _save_article_direct(project_id: int, url: str) -> str:
             llm_usage.record_response("worker.article_save",
                                       "claude-haiku-4-5-20251001", _rj,
                                       metadata={"project_id": project_id})
-            summary = _rj["content"][0]["text"]
+            summary = llm_usage.require_text(_rj, "worker.resumo_fallback")
         else:
             summary = text[:300]
 
@@ -2615,7 +2615,7 @@ async def _transcribe_audio_inner(data: dict) -> dict:
                         _rj = sanity_resp.json()
                         llm_usage.record_response("worker.audio_sanity",
                                                   "claude-haiku-4-5-20251001", _rj)
-                        verdict = (_rj["content"][0]["text"] or "").strip().upper()
+                        verdict = llm_usage.require_text(_rj, "worker.verdict").strip().upper()
                         logger.info(f"Sanity check verdict: {verdict}")
                         if "ALUCINACAO" in verdict or "ALUCINAÇÃO" in verdict:
                             await _maybe_respond(

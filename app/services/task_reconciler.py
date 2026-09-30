@@ -658,7 +658,7 @@ def _judge(task, msgs, prompt=None, exibidas=None) -> dict:
             llm_usage.record_response("task_reconciler.judge", llm.FAST, msg.model_dump())
         except Exception:
             pass
-        raw = msg.content[0].text if msg.content else ""
+        raw = llm.require_text(msg, "task_reconciler._judge")
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if not m:
             return {"done": False, "confidence": 0.0, "reason": "parse falhou",
@@ -751,7 +751,7 @@ def _judge_group(tasks, msgs) -> dict:
             llm_usage.record_response("task_reconciler.judge_grupo", llm.FAST, msg.model_dump())
         except Exception:
             pass
-        raw = msg.content[0].text if msg.content else ""
+        raw = llm.require_text(msg, "task_reconciler._judge_group")
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if not m:
             return _falha("parse falhou (grupo)")

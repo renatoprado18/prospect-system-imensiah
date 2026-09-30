@@ -210,7 +210,7 @@ Máximo 300 palavras. Português. Direto."""
         if resp.status_code == 200:
             _llm_resp = resp.json()
             llm_usage.record_response("email_digest.summary", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-            summary = _llm_resp["content"][0]["text"]
+            summary = llm.require_text(_llm_resp, "email_digest._generate_ai_digest")
             total = len(emails)
             return f"📧 *Digest de Emails* ({total} recebidos)\n\n{summary}"
     except Exception as e:

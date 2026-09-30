@@ -369,7 +369,7 @@ Responda APENAS com a mensagem, sem explicacoes."""
                 if response.status_code == 200:
                     data = response.json()
                     llm_usage.record_response("message_suggestions.generate", CLAUDE_MODEL, data)  # F-E: custo por-funcao
-                    mensagem = data["content"][0]["text"].strip()
+                    mensagem = llm.require_text(data, "message_suggestions.suggest_message").strip()
 
                     return {
                         "contact_id": contact_id,

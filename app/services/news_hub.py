@@ -794,7 +794,7 @@ Resposta:"""
         except Exception:
             pass
 
-        result = response.content[0].text.strip()
+        result = llm.require_text(response, "news_hub.evaluate_article_relevance").strip()
 
         # Verificar se não há conexão
         if result.upper().startswith("NAO") or result.upper().startswith("NÃO") or result.upper() == "NAO" or result.upper() == "NÃO":
@@ -922,7 +922,7 @@ Responda de forma direta, sem rótulos. Formato:
         except Exception:
             pass
 
-        summary = response.content[0].text.strip()
+        summary = llm.require_text(response, "news_hub.generate_smart_summary").strip()
 
         # Salvar no banco
         with get_db() as conn:
@@ -1000,7 +1000,7 @@ Responda em português, de forma direta e prática. Formato:
         except Exception:
             pass
 
-        connection_text = response.content[0].text.strip()
+        connection_text = llm.require_text(response, "news_hub.generate_article_connection").strip()
 
         return {
             "news_id": news_id,
@@ -1122,7 +1122,7 @@ Priorize: noticias acionaveis, que o Renato pode comentar no LinkedIn, ou que af
 
         _llm_resp = resp.json()
         llm_usage.record_response("news_hub.relevance", llm.FAST, _llm_resp)  # F-E: custo por-funcao
-        text = _llm_resp["content"][0]["text"]
+        text = llm.require_text(_llm_resp, "news_hub.generate_daily_clipping")
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:

@@ -280,6 +280,10 @@ class _FakeAnthropic:
         texto = _FakeAnthropic.resposta
 
         class _B:
+            # `type` existe em TODO bloco do SDK. Sem ele o fake nao
+            # e o SDK: `first_text`/`require_text` filtram por tipo, e um fake
+            # frouxo aqui daria verde a um bug de producao (30/09).
+            type = "text"
             text = texto
 
         class _M:

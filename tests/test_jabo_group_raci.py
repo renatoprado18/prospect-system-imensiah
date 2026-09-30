@@ -64,7 +64,7 @@ class _FakeResp:
         self._p = payload
 
     def json(self):
-        return {"content": [{"text": self._p}], "usage": {}}
+        return {"content": [{"type": "text", "text": self._p}], "usage": {}}
 
 
 class TestValidacaoDoJulgamento:

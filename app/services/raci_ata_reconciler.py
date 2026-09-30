@@ -488,7 +488,7 @@ async def _call_llm(prompt: str) -> str:
         if r.status_code == 200:
             resp = r.json()
             llm_usage.record_response("raci.ata_reconcile", llm.BALANCED, resp)
-            return resp["content"][0]["text"]
+            return llm.require_text(resp, "raci_ata_reconciler._call_llm")
 
         ultimo = f"Anthropic API {r.status_code}: {r.text[:200]}"
         if r.status_code not in _RETRY_STATUS or tentativa == _RETRY_ATTEMPTS - 1:

@@ -32,6 +32,8 @@ os.environ['USE_LOCAL_DB'] = '1'
 # Adicionar diretorio app ao path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
 
+from services import llm  # require_text: ver furo #1000265
+
 from database import get_db, init_db
 from services.rodas_service import get_rodas_service, RODA_TYPES
 
@@ -148,7 +150,7 @@ OU se encontrar algo REALMENTE relevante:
 
             if response.status_code == 200:
                 data = response.json()
-                text = data["content"][0]["text"].strip()
+                text = llm.require_text(data, "backfill_rodas").strip()
 
                 # Limpar markdown
                 if text.startswith("```"):
