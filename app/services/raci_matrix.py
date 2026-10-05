@@ -67,6 +67,8 @@ matriz é só a do INTEL, e isso não é erro nem estado degradado.
 """
 import logging
 import os
+import re
+import unicodedata
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
@@ -214,10 +216,18 @@ def _fetch_conselhoos_status(empresa_uuid: str):
         conn = psycopg2.connect(url, connect_timeout=5)
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            # `intel_task_id AS task_id` (05/10/26) — o elo EXISTIA e era jogado
+            # fora aqui. O board registrava "o elo `intel_task_id` existe e está
+            # vazio"; medido hoje em prod ele está **32% preenchido** (39 de 122;
+            # 35 de 80 na Vallen). Vazio estava o lado INTEL (0 de 25 no projeto
+            # 24) — e esta query nem chegava a ler o lado cheio, então o elo não
+            # alcançava a matriz nem para ser medido. `_normalize` já lê
+            # `row.get("task_id")`: faltava a coluna vir.
             cur.execute("""
                 SELECT id, area, acao, responsavel_r, responsavel_a,
                        responsavel_c, responsavel_i, prazo, status, notas,
-                       concluido_em, concluido_em_fonte
+                       concluido_em, concluido_em_fonte,
+                       intel_task_id AS task_id
                   FROM raci_itens
                  WHERE empresa_id = %s
             """, (empresa_uuid,))
@@ -303,6 +313,72 @@ def _acumulado(itens: List[Dict]) -> Dict:
     }
 
 
+def _chave_dedup(acao: str) -> str:
+    """Texto da ação reduzido a uma chave comparável: minúsculas, sem acento,
+    sem pontuação, espaços colapsados.
+
+    Normalizar NÃO é similaridade. Duas ações só casam aqui se forem a MESMA
+    frase escrita com caixa/acento/pontuação diferentes — a distância entre
+    "Contrato da Dra. Camila — redigir" e "contrato da dra camila redigir" é
+    zero, e entre coisas diferentes é infinita. É o que permite detectar sem
+    risco de fundir.
+    """
+    s = unicodedata.normalize("NFKD", (acao or "").lower().strip())
+    s = s.encode("ascii", "ignore").decode()
+    return " ".join(re.sub(r"[^a-z0-9 ]", " ", s).split())
+
+
+def _detectar_duplicatas(itens: List[Dict]) -> List[Dict]:
+    """Pares (INTEL, ConselhoOS) que são o MESMO item nas duas fontes.
+
+    DETECTAR, NUNCA FUNDIR — e a assimetria é o argumento inteiro. Um falso
+    positivo aqui atrapalha um envio, que é recuperável com um clique; um falso
+    positivo numa FUSÃO apaga responsabilidade de cliente do painel, e ninguém
+    descobre. Por isso a detecção usa só a chave normalizada e os itens
+    continuam TODOS na lista, cada um marcado.
+
+    Por que não `SequenceMatcher`, que já existe em `raci_publicada.py`: medido
+    em 05/10 no próprio conjunto, "Regra de repasse da **Dra. Daniela**" ×
+    "Acordo de repasse da **Dra. Sayonê**" dá 0.58 — duas médicas diferentes,
+    com contratos diferentes. Qualquer corte que pegue os pares de vocabulário
+    divergente ("a Gestora" × "Jéssica") passa por cima desse 0.58 e funde
+    contrato de médica. Similaridade serve pra ORDENAR candidato a revisão
+    humana, não pra decidir identidade.
+
+    COBERTURA, DITA EM VOZ ALTA (medido em prod, 05/10): na Vallen a chave pega
+    **9 pares** de ~17 reais; na Alba, **10** de ~12. O resíduo são justamente
+    os de vocabulário divergente, que texto nenhum resolve — fecham por elo
+    (`task_id` dos dois lados) quando o lado INTEL for populado, e até lá ficam
+    visivelmente duplicados, que é o estado honesto.
+    """
+    por_chave: Dict[str, Dict[str, List[Dict]]] = {}
+    for it in itens:
+        chave = _chave_dedup(it.get("acao"))
+        if not chave:
+            continue
+        por_chave.setdefault(chave, {FONTE_INTEL: [], FONTE_CONSELHOOS: []})
+        por_chave[chave].setdefault(it["fonte"], []).append(it)
+
+    pares = []
+    for chave, lados in por_chave.items():
+        a, b = lados.get(FONTE_INTEL) or [], lados.get(FONTE_CONSELHOOS) or []
+        if not (a and b):
+            continue
+        for i in a:
+            for c in b:
+                pares.append({
+                    "motivo": "texto_identico",
+                    "acao": i["acao"],
+                    "intel_uid": i["uid"],
+                    "conselhoos_uid": c["uid"],
+                    # Divergência de estado entre as cópias é informação: diz que
+                    # alguém atualizou UM lado. Era o trabalho manual que a CoS
+                    # fez à mão em 05/10 pra não atualizar só metade de cada item.
+                    "status_divergente": i["status"] != c["status"],
+                })
+    return pares
+
+
 def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     """
     A matriz RACI de um projeto, unindo as fontes disponíveis.
@@ -346,9 +422,47 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     for it in itens:
         resumo[it["status_efetivo"]] = resumo.get(it["status_efetivo"], 0) + 1
 
+    # O RESUMO APAGAVA MOVIMENTO (05/10/26). `status_efetivo` converte todo item
+    # com prazo vencido em `atrasado` — inclusive os `em_andamento`. Como quase
+    # tudo no Vallen está com prazo vencido, a coluna "em andamento" do painel é
+    # ESTRUTURALMENTE zero e nunca informou nada: medido nos 39 abertos, o status
+    # bruto tem 17 `em_andamento` e o painel mostrava 0. Em 05/10 a CoS gravou
+    # movimento real em 12 itens a partir do grupo e nenhum apareceu na tela.
+    #
+    # Atrasado e em-andamento são dimensões diferentes — uma é sobre PRAZO, a
+    # outra sobre ATIVIDADE. Colapsar as duas perde exatamente o sinal de que a
+    # frente respira, que é o que sustenta a conversa com o cliente.
+    #
+    # `resumo` fica intacto (o template indexa `dados.resumo[status]`); a segunda
+    # dimensão vem ao lado, para que ninguém precise escolher entre as duas.
+    resumo_bruto = {}
+    for it in itens:
+        resumo_bruto[it["status"]] = resumo_bruto.get(it["status"], 0) + 1
+    atrasados_com_movimento = sum(
+        1 for it in itens
+        if it["status_efetivo"] == "atrasado" and it["status"] == "em_andamento"
+    )
+    movimento = {
+        "resumo_bruto": resumo_bruto,
+        "atrasados_com_movimento": atrasados_com_movimento,
+        # A frase pronta, para o painel e para o grupo não precisarem recalcular
+        # (e divergirem): "30 atrasados, dos quais 17 com movimento".
+        "rotulo": (
+            f"{resumo.get('atrasado', 0)} atrasados, dos quais "
+            f"{atrasados_com_movimento} com movimento"
+        ) if resumo.get("atrasado") else None,
+    }
+
     # Calculado ANTES do filtro, como o resumo: acumulado que encolhe quando se
     # olha "só os atrasados" esconderia justamente o que ele existe pra mostrar.
     acumulado = _acumulado(itens)
+
+    # Detecção ANTES do filtro também: duplicata que só aparece quando se olha
+    # "os atrasados" seria duplicata que a guarda do envio não vê.
+    duplicatas = _detectar_duplicatas(itens)
+    _uids_dup = {u for p in duplicatas for u in (p["intel_uid"], p["conselhoos_uid"])}
+    for it in itens:
+        it["duplicado"] = it["uid"] in _uids_dup
 
     if status:
         itens = [it for it in itens if it["status_efetivo"] == status]
@@ -366,7 +480,10 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
         "itens": itens,
         "total": len(itens),
         "resumo": resumo,
+        "movimento": movimento,
         "acumulado": acumulado,
+        "duplicatas": duplicatas,
+        "duplicatas_total": len(duplicatas),
         "fontes": fontes,
         "filtro_status": status,
         "gerado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),

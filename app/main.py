@@ -23821,6 +23821,52 @@ async def api_raci_send_to_group(project_id: int, request: Request):
     if not group_jid or not texto:
         raise HTTPException(status_code=400, detail="group_jid e text sao obrigatorios")
 
+    # GUARDA DE DUPLICATA (05/10/26) — o que impede o grupo do CLIENTE de receber
+    # a mesma linha duas vezes. A matriz une INTEL + ConselhoOS e hoje as duas
+    # bases guardam as mesmas acoes de reuniao: medido em prod, a Vallen devolve
+    # 39 registros para 23 itens reais (+70%) e a Alba tem inflacao maior ainda.
+    #
+    # Isto era uma instrucao VERBAL: em 05/10 a CoS disse ao Renato para nao
+    # apertar o botao. Instrucao verbal nao e guarda — depende de alguem lembrar,
+    # num botao que publica na governanca de um cliente. Aqui o 409 e o "nao" que
+    # nao esquece.
+    #
+    # Bloqueia, nao conserta: a deduplicacao de verdade depende do elo
+    # (`task_id` nos dois lados) e o lado INTEL esta 0% populado. Enquanto isso,
+    # recusar o envio e o comportamento certo — e o override existe porque pode
+    # haver o caso legitimo de mandar mesmo assim, desde que seja DECLARADO.
+    from services.raci_matrix import get_matrix as _get_matrix
+    _confirmado = bool(data.get("confirmar_duplicatas"))
+    try:
+        _m = _get_matrix(project_id)
+        _dups = _m.get("duplicatas") or []
+    except Exception as e:
+        # Falha na deteccao NAO libera o envio: nao poder checar nao e estar
+        # limpo ([[feedback_guarda_abstencao_vira_fabrica]]). O caminho do
+        # override segue disponivel para quem souber o que esta fazendo.
+        logger.warning(f"raci send-to-group: deteccao de duplicata falhou: {e}")
+        if not _confirmado:
+            raise HTTPException(
+                status_code=409,
+                detail="nao foi possivel verificar duplicatas desta matriz "
+                       f"({type(e).__name__}) — reenvie com confirmar_duplicatas=true "
+                       "se quiser mandar sem a checagem")
+    else:
+        if _dups and not _confirmado:
+            _divergentes = sum(1 for d in _dups if d.get("status_divergente"))
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"BLOQUEADO: {len(_dups)} item(ns) desta matriz aparecem nas DUAS "
+                    f"fontes (INTEL e ConselhoOS) e o grupo do cliente receberia a "
+                    f"mesma linha duas vezes"
+                    + (f"; em {_divergentes} deles as duas copias estao com status "
+                       f"DIFERENTE, ou seja, so uma foi atualizada" if _divergentes else "")
+                    + ". Veja `duplicatas` em GET /api/projects/"
+                    f"{project_id}/raci. Para mandar mesmo assim, reenvie com "
+                    "confirmar_duplicatas=true."
+                ))
+
     from services.raci_matrix import WHATSAPP_MAX_CHARS
     if len(texto) > WHATSAPP_MAX_CHARS:
         # A Evolution corta em silencio: metade do RACI chegaria no grupo sem
