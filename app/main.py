@@ -29384,10 +29384,13 @@ async def cron_wa_catchup(request: Request, hours: int = 2):
 async def cron_prune_telemetry(request: Request, dias: int = 30, dry_run: bool = False):
     """Retencao da telemetria: webhook_audit, cron_runs e cron_heartbeats.
 
-    ⚠️ 05/10/26 — O `@app.get` acima e o conserto de um job que NUNCA rodou. Este
-    endpoint nasceu POST-only em 31/07; o scheduler do worker chama todos os jobs
-    com `client.get(...)` (`_call_vercel_cron`), entao desde o primeiro dia a
-    chamada diaria voltava **405** e a poda nao acontecia uma unica vez.
+    ⚠️ 05/10/26 — O `@app.get` acima e o conserto de uma poda que NUNCA aconteceu.
+    Este endpoint nasceu POST-only em 31/07; o scheduler do worker chama todos os
+    jobs com `client.get(...)` (`_call_vercel_cron`), entao desde o primeiro dia a
+    chamada diaria das 4h40 voltava **405** e nenhuma linha foi podada.
+    (A unica linha de `cron_runs` deste path e de 01/08 e tem `dry_run: true` — a
+    validacao manual por POST, feita no dia seguinte. Funcionou, e foi exatamente
+    isso que mascarou: o verbo do teste nao era o verbo do agendamento.)
     O 405 e levantado pelo roteador do FastAPI ANTES do handler, logo antes do
     `@track_cron_run`: nao havia linha de erro em `cron_runs`, so ausencia de
     linha. O inventario de 30/09 viu "0 execucoes em 14 dias" e anotou

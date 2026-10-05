@@ -1,9 +1,17 @@
 """O JOB QUE NUNCA RODOU — todo cron do worker tem de aceitar GET (05/10/2026).
 
 O `prune-telemetry` foi declarado em 31/07/26 com `CronTrigger(hour=4, minute=40)`
-e nao rodou **uma unica vez** em mais de dois meses. O scheduler do worker chama
+e **nenhuma poda aconteceu** em mais de dois meses. O scheduler do worker chama
 todos os jobs por GET (`_call_vercel_cron` -> `client.get(url)`); o endpoint nascera
 `@app.post`-only. Resultado: 405 todo dia as 4h40.
+
+Precisao que custou uma conferida: `cron_runs` NAO esta vazia pra esse path — tem
+uma linha, de 01/08/26, `success`. Lendo o `result_json` dela: `"dry_run": true`,
+1.031 linhas contadas e nenhuma apagada. Era a validacao manual do autor, no dia
+seguinte ao de escrever a politica. Entao "0 execucoes em 14 dias" (o que o
+inventario mediu) e "a poda nunca rodou" (o que importa) sao ambos verdade, e
+"nunca houve linha" seria falso — a unica linha existente prova o oposto do que
+parece: alguem testou, viu funcionar por POST, e o agendamento nunca pegou.
 
 O que torna essa classe pior do que uma excecao e a ausencia de rastro: o 405 vem
 do roteador do FastAPI, ANTES do handler — portanto antes do `@track_cron_run`.
