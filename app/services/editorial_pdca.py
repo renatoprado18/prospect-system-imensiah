@@ -670,7 +670,19 @@ async def generate_monthly_review() -> Dict:
     previous = get_monthly_performance(month_offset=2)
 
     if current["n"] == 0:
-        return {"error": "Sem posts publicados nos ultimos 30 dias", "current": current}
+        # 05/10/26 — era `{"error": ...}`, e ausencia de insumo nao e falha.
+        # O custo nao era cosmetico: `_has_embedded_errors` (cron_telemetry) marca
+        # a run como `error` ao ver a chave `error`; o `/api/cron/catchup` retenta
+        # todo cron `failing` ate 2×/dia; e nenhuma retentativa pode suceder, porque
+        # o que falta e post publicado (o ultimo saiu em 16/07/26). Medido em prod:
+        # 8 execucoes `trigger_source='catch_up'` em 4 dias, todas `error`, de um
+        # job MENSAL. O retentador ficou girando contra uma condicao que o tempo nao
+        # muda. `skipped` sai verde na telemetria e nao entra na fila do catch-up.
+        return {
+            "status": "skipped",
+            "reason": "sem posts publicados nos ultimos 30 dias",
+            "current": current,
+        }
 
     # Build comparative summary
     cur_eng = current["summary"]["eng_pct_avg"]

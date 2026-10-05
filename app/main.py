@@ -29378,10 +29378,26 @@ async def cron_wa_catchup(request: Request, hours: int = 2):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/cron/prune-telemetry")
 @app.post("/api/cron/prune-telemetry")
 @track_cron_run
 async def cron_prune_telemetry(request: Request, dias: int = 30, dry_run: bool = False):
     """Retencao da telemetria: webhook_audit, cron_runs e cron_heartbeats.
+
+    ⚠️ 05/10/26 — O `@app.get` acima e o conserto de um job que NUNCA rodou. Este
+    endpoint nasceu POST-only em 31/07; o scheduler do worker chama todos os jobs
+    com `client.get(...)` (`_call_vercel_cron`), entao desde o primeiro dia a
+    chamada diaria voltava **405** e a poda nao acontecia uma unica vez.
+    O 405 e levantado pelo roteador do FastAPI ANTES do handler, logo antes do
+    `@track_cron_run`: nao havia linha de erro em `cron_runs`, so ausencia de
+    linha. O inventario de 30/09 viu "0 execucoes em 14 dias" e anotou
+    "investigar o disparo" — o disparo estava certo, o verbo e que nao batia.
+    Medido hoje, com `dry_run=true`: **187.331 linhas** e 70.534 payloads
+    esperando poda, e o banco em **719 MB** (eram 397 MB quando a politica foi
+    escrita), dos quais 380 MB sao as tres tabelas de telemetria — 53%.
+    Varredura dos 54 jobs ativos do worker: este era o unico POST-only.
+    O `@app.post` fica, pra nao quebrar quem ja chamava por POST (a medicao
+    manual acima inclusive).
 
     Why (medido 31/07/2026): o banco tinha 397 MB e 69% disso era telemetria —
     `webhook_audit` sozinha ocupava 218 MB (55% do banco), crescendo ~2.059

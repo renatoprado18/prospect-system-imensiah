@@ -156,7 +156,12 @@ async def _call_vercel_cron(path: str, job_id: str | None = None) -> None:
 # .github/workflows/cron-*.yml. Adicionar novos = appendar nesta lista.
 _SCHEDULER_JOBS = [
     ("classify-messages", "/api/cron/classify-messages", CronTrigger(minute=15)),
-    ("auto-collect-linkedin-metrics", "/api/cron/auto-collect-linkedin-metrics", CronTrigger(minute=0)),
+    # 05/10/26 CORTE — órfão do bloco editorial. 336 execuções em 14 dias com
+    # `coletadas=0`, e a razão não é falha: o último post com `status='published'`
+    # saiu em **16/07/26**. Coletar métrica de post que não existe não tem como
+    # produzir, e o número zero não distinguia "a coleta quebrou" de "não há o que
+    # coletar" — foi preciso contar os posts pra saber qual dos dois.
+    # ("auto-collect-linkedin-metrics", "/api/cron/auto-collect-linkedin-metrics", CronTrigger(minute=0)),
     ("proactive-check", "/api/cron/proactive-check", CronTrigger(minute="*/30")),
     ("run-whatsapp-sync", "/api/cron/run-whatsapp-sync", CronTrigger(minute=5)),
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
@@ -187,7 +192,11 @@ _SCHEDULER_JOBS = [
     # 9:45 UTC, entre o news-alertas e o briefing das 7h BRT que consome.
     ("cos-portao-alertas", "/api/cron/cos-portao-alertas",
      CronTrigger(hour=9, minute=45)),
-    ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
+    # 05/10/26 CORTE — 672 execuções em 14 dias para uma tabela com 2 linhas, ambas
+    # `completed`, a última de **14/06/26**. Procurei o produtor antes de cortar: no
+    # código `agent_intents` só aparece no DDL (database.py) e neste consumidor —
+    # ninguém escreve. Fila sem produtor não é fila parada, é fila abandonada.
+    # ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # 04/08/26 — heartbeat da ingestao WA. Em 03/08 o webhook ficou 3h calado e
     # nada avisou; 93 mensagens ficaram fora. Roda /10min porque o custo e uma
@@ -221,7 +230,27 @@ _SCHEDULER_JOBS = [
     # 13/06/2026: migrados de GH Actions apos frustracao com unreliability
     # (top-of-hour drift + Vercel Hobby cron limit). Railway scheduler in-process
     # = 100% reliable, custo $0 adicional (worker ja roda 24/7).
-    ("process-scheduled-actions", "/api/cron/process-scheduled-actions", CronTrigger(minute="*/5")),
+    # 05/10/26 — NÃO cortado, cadência reduzida de */5 para */15. O inventário de
+    # 30/09 o listou como o corte nº 1 por ser o campeão de execuções (4.032 em 14
+    # dias, `sent=0 processed=0`), e as duas metades disso estavam certas e levavam
+    # ao lugar errado:
+    #
+    # 1. Execução não é custo. As 4.032 rodadas somam **2 minutos** de compute em
+    #    14 dias — a tabela está vazia, então cada chamada é um SELECT que não volta
+    #    nada. Ordenar candidatos a corte por contagem de execução repete, na régua
+    #    do slot, o erro que o `rows_affected` cometeu na régua do efeito
+    #    (feedback_rows_affected_mede_instrumentacao): mede a instrumentação.
+    # 2. Zero aqui não é órfão. A fila tem produtor VIVO — `actuators._do_schedule_wa`
+    #    → `schedule_wa`, alcançável pelo endpoint de atuador que a tonIAH chama
+    #    (`created_by='tonia'`). Matar o processador com o produtor de pé significa
+    #    que o primeiro envio agendado some sem erro: a linha fica `pending` para
+    #    sempre e ninguém é avisado. É exatamente o incidente Marcos Tanaka (07/06/26)
+    #    que motivou este módulo, de volta pela porta da economia.
+    #
+    # Então a decisão é de LATÊNCIA, não de existência: um envio agendado passa a
+    # atrasar até 15 min em vez de 5, e as execuções caem de 288/dia para 96. Se a
+    # fila voltar a ter uso de verdade, voltar para */5 é uma linha.
+    ("process-scheduled-actions", "/api/cron/process-scheduled-actions", CronTrigger(minute="*/15")),
     ("hetzner-evolution-health", "/api/cron/hetzner-evolution-health", CronTrigger(minute="*/10")),
     ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
     ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
@@ -253,7 +282,15 @@ _SCHEDULER_JOBS = [
     # não. Movido de 10:00 para 12:30 UTC (09:30 BRT) porque às 07h BRT o
     # agente ainda não rodou a primeira vez (07:12) e o fallback dispararia
     # todo dia, gastando igual e provando nada.
-    ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=12, minute=30)),
+    # 05/10/26 CORTE — a rede de segurança descrita acima deixou de existir em
+    # 25/09, quando a camada assíncrona foi desligada por decisão: o endpoint
+    # responde `{"status":"disabled","custo_evitado":true}` e não chega a olhar se
+    # o agente local escreveu. Confirmado nas 14 últimas execuções em prod, todas
+    # `disabled`, inclusive nos 4 dias de viagem (01–04/10) em que o fallback seria
+    # o único portão. Não é fallback que não disparou — é casca que responde.
+    # ⚠️ Se a camada voltar, descomentar AQUI é só metade: o endpoint tem de voltar
+    # a avaliar `agente_local ja escreveu hoje` antes de produzir.
+    # ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=12, minute=30)),
     # 06/08/26 — LEDGER do check G. O check e session-bound: so roda quando o
     # Renato abre a /cos, com janela de 4 dias. Cinco dias sem abrir e o inbound
     # daqueles dias evapora sem nunca ter sido avaliado. Este job grava todo dia
@@ -380,7 +417,12 @@ _SCHEDULER_JOBS = [
     # 02:25 ele esvaziaria a fila ANTES do Mac acordar, e o job do Mac bateria
     # ponto todo dia sobre trabalho nenhum — parecendo saudável. Agora ele roda
     # DEPOIS e só assume se o batimento `enrich-agent-local` não apareceu hoje.
-    ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=12, minute=0)),
+    # 05/10/26 CORTE — mesma casca do `cos-daily-review`: o endpoint responde
+    # `{"status":"disabled"}` desde o corte de 25/09 ("enriquecimento assincrono
+    # cortado por decisao"). ⚠️ Não estava nos 8 do inventário de 30/09 e apareceu
+    # no bucket de efeito zero na medição de hoje — o inventário é um retrato, e
+    # cinco dias bastaram para o retrato mudar.
+    # ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=12, minute=0)),
     ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),
     # Write-back INTEL → Google Contacts (07/08/2026). Ficha criada aqui só
     # chega ao celular do Renato pelo Google — sem este job, o número segue
@@ -418,8 +460,20 @@ _SCHEDULER_JOBS = [
     # indice parcial que ja existe). Teria pego o stall de 95% meses atras.
     ("raci-unprocessed-monitor", "/api/cron/raci-unprocessed-monitor", CronTrigger(hour=13, minute=30)),
     ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
-    ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
-    ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
+    # 05/10/26 CORTE — 2 execuções em 14 dias, 2 falhas. Falhava a montante do
+    # próprio briefing: a seleção de posts da semana não tem de onde selecionar com
+    # a frente editorial parada desde 16/07. Mesma raiz do `auto-collect-linkedin-
+    # metrics` e do `auto-resolve-editorial` — um bloco morto com 5 crons de plantão.
+    # ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
+    # 05/10/26 CORTE — lê `bot_conversations`, cuja última linha é de **16/06/26**:
+    # a tonIAH passou a gravar a conversa em outro lugar e a síntese ficou lendo a
+    # tabela antiga. O payload dizia `"reason": "no conversations in window"` todos
+    # os dias, o que é verdade sobre a tabela e falso sobre o mundo — o Renato
+    # conversa com a tonIAH, e o WhatsApp está verde. Ler a fonte errada erra calado,
+    # porque a resposta vazia é indistinguível de um dia quieto
+    # (feedback_filtro_vocabulario_errado_falha_calado). ⚠️ Religar exige apontar
+    # para a tabela viva PRIMEIRO, não descomentar.
+    # ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
     # Reconciliador de estado WA×tasks (P1 action-blindness): 1×/dia 15h UTC (12h
     # BRT, pós-briefing). Fecha tasks pending resolvidas por conversa direta. SÓ
     # FECHA + LLM barra 0.85 + undo + kill-switch DB. Ver services/task_reconciler.py.
@@ -428,7 +482,9 @@ _SCHEDULER_JOBS = [
     # valor por capacidade). 01h40 UTC, depois do daily-synthesis; acumula a
     # serie point-in-time pra retro PDCA quinzenal. Idempotente por dia (UPSERT).
     ("capability-snapshot", "/api/cron/capability-snapshot", CronTrigger(hour=1, minute=40)),
-    ("auto-resolve-editorial", "/api/cron/auto-resolve-editorial", CronTrigger(hour=15, minute=30)),
+    # 05/10/26 CORTE — `checked=0 resolved=0` em 14 dias. Resolve pendência de
+    # métrica de post publicado, e não há post publicado desde 16/07.
+    # ("auto-resolve-editorial", "/api/cron/auto-resolve-editorial", CronTrigger(hour=15, minute=30)),
     # 13/07/26 — Passo 5 F-2: migracao final dos 7 crons Vercel-only restantes
     # (completa a leva de 17/06). Removidos do vercel.json no MESMO commit pra
     # evitar trigger duplicado. Horarios UTC identicos aos do vercel.json.
@@ -436,7 +492,11 @@ _SCHEDULER_JOBS = [
     # (day_of_week=0 seria SEGUNDA no APScheduler — nao usar).
     ("health-recalc", "/api/cron/health-recalc", CronTrigger(hour=18, minute=0)),
     ("cleanup", "/api/cron/cleanup", CronTrigger(day_of_week="sun", hour=4, minute=0)),
-    ("editorial-metrics-reminder-evening", "/api/cron/editorial-metrics-reminder-evening", CronTrigger(hour=23, minute=0)),
+    # 05/10/26 CORTE — o endpoint é inalcançável por dentro: `_editorial_metrics_
+    # reminder_impl` (main.py) tem um `return {"status":"disabled","reason":
+    # "a7_porta_voz_unico_kill"}` na segunda linha e TODO o corpo abaixo é código
+    # morto preservado. Chamava-se um lembrete que não lembra ninguém, 1×/dia.
+    # ("editorial-metrics-reminder-evening", "/api/cron/editorial-metrics-reminder-evening", CronTrigger(hour=23, minute=0)),
     ("group-digest", "/api/cron/group-digest", CronTrigger(hour=0, minute=0)),
     ("platform-costs-snapshot", "/api/cron/platform-costs-snapshot", CronTrigger(day=2, hour=12, minute=0)),
     ("circulos-recalc", "/api/cron/circulos-recalc", CronTrigger(hour=9, minute=0)),
