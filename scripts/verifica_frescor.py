@@ -281,8 +281,31 @@ def main() -> int:
         print(f"  🔴 {rotulo}: NÃO MEDIDO — {erro}")
         print("      ↳ não medir não é estar fresco; consertar a query antes de confiar na abertura")
 
+    # O FLAG ATRASA A RECUPERAÇÃO — descoberto 05/10, uma hora depois de armar
+    # isto. O saldo foi recarregado ~15h UTC e as chamadas voltaram no mesmo
+    # minuto (`task_reconciler.judge`, `worker.pdf_analyze`); mas o canário roda
+    # de hora em hora (:33) e só limpa o flag quando RODA, então por até 1h a
+    # abertura dizia "toda função LLM está caída" com o sistema já funcionando.
+    #
+    # É o caso em que ter DOIS detectores paga na direção oposta à prevista: eu
+    # os pus para que um cobrisse a falha do outro na QUEDA, e o que apareceu
+    # primeiro foi a divergência na VOLTA. Aqui o veredito é do frescor, não do
+    # flag — dado fresco é evidência de agora, flag é evidência de quando foi
+    # escrito. Um alarme que grita depois de resolvido é como se aprende a
+    # ignorar alarme ([[feedback_medidor_que_nao_mede_a_si_mesmo]]).
+    _llm_fresco = any(
+        (not estourou) and "Chamadas LLM" in rotulo
+        for estourou, rotulo, *_ in linhas
+    )
     for rotulo, desde, aceso, nota in acesos:
         idade = (agora - desde).total_seconds() / 3600
+        if _llm_fresco:
+            print(f"  🟡 CANÁRIO ACESO MAS PROVAVELMENTE OBSOLETO · {rotulo}")
+            print(f"      ↳ o flag está de pé desde {to_brt(desde):%d/%m %H:%M} BRT "
+                  f"({idade:.0f}h), MAS há chamada de LLM recente — ou seja, voltou.")
+            print("      ↳ o canário roda 1×/h (:33) e só limpa o flag quando roda; "
+                  "confirme na próxima rodada antes de avisar queda.")
+            continue
         print(f"  🔴 CANÁRIO ACESO · {rotulo}: {aceso}")
         print(f"      ↳ desde {to_brt(desde):%d/%m %H:%M} BRT ({idade:.0f}h) — {nota}")
     for rotulo, erro in canarios_nao_medidos:
@@ -301,7 +324,7 @@ def main() -> int:
     if any("CONTROLE POSITIVO" in r for r in estouros):
         print("  🔎 O CONTROLE POSITIVO também estourou ⇒ suspeite do ALVO ou do medidor,")
         print("     não de uma fonte só: é improvável que tudo caia junto por coincidência.")
-    if acesos:
+    if acesos and not _llm_fresco:
         # Canário aceso pede recado, não investigação: a causa já está nomeada e a
         # ação é de FORA do código. Em 04/10 o alerta de WhatsApp saiu e o Renato
         # foi avisado às 08:33 — mesmo assim passaram 30h, porque o aviso chegou

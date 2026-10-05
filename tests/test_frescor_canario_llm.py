@@ -114,18 +114,26 @@ def test_canario_da_anthropic_esta_declarado(vf):
 
 
 class _CursorFake:
-    """Responde cada SQL do script sem banco. `flag_aceso=False` devolve None para
-    a query do canário — o estado saudável."""
+    """Responde cada SQL do script sem banco.
 
-    def __init__(self, agora, flag_aceso):
-        self._agora, self._flag = agora, flag_aceso
+    `flag_aceso=False` devolve None na query do canário (estado saudável).
+    `llm_parado=True` envelhece SÓ a fonte de LLM — é o que separa queda real
+    (flag + silêncio) de flag obsoleto (flag + chamada recente).
+    """
+
+    def __init__(self, agora, flag_aceso, llm_parado):
+        self._agora, self._flag, self._llm_parado = agora, flag_aceso, llm_parado
         self._ultimo = None
 
     def execute(self, sql, *a):
         if "credit_canary" in sql:
             self._ultimo = {"max": datetime(2026, 10, 4, 8, 33) if self._flag else None}
+        elif "tonia_llm_usage" in sql:
+            quando = (datetime(2026, 10, 4, 5, 35) if self._llm_parado
+                      else self._agora.replace(tzinfo=None))
+            self._ultimo = {"max": quando}
         else:
-            # toda fonte de dado volta fresca: isola o canário como única variável
+            # as outras fontes voltam frescas: isolam o LLM como única variável
             self._ultimo = {"max": self._agora.replace(tzinfo=None)}
 
     def fetchone(self):
@@ -133,8 +141,8 @@ class _CursorFake:
 
 
 class _ConnFake:
-    def __init__(self, agora, flag_aceso):
-        self._c = _CursorFake(agora, flag_aceso)
+    def __init__(self, agora, flag_aceso, llm_parado):
+        self._c = _CursorFake(agora, flag_aceso, llm_parado)
 
     def cursor(self):
         return self._c
@@ -146,23 +154,54 @@ class _ConnFake:
         pass
 
 
-def _roda_main(vf, monkeypatch, capsys, *, flag_aceso):
+def _roda_main(vf, monkeypatch, capsys, *, flag_aceso, llm_parado=False):
     """Executa o `main()` DE VERDADE — é o código que a abertura roda."""
     agora = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
     monkeypatch.setenv("DB_TARGET", "prod")
-    monkeypatch.setattr(vf, "get_connection", lambda: _ConnFake(agora, flag_aceso))
+    monkeypatch.setattr(vf, "get_connection",
+                        lambda: _ConnFake(agora, flag_aceso, llm_parado))
     monkeypatch.setattr(vf, "now_utc", lambda: agora)
     monkeypatch.setattr(sys, "argv", ["verifica_frescor.py", "--quiet"])
     code = vf.main()
     return code, capsys.readouterr().out
 
 
-def test_canario_aceso_sai_1_e_aparece_no_quiet(vf, monkeypatch, capsys):
-    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=True)
+def test_queda_real_flag_mais_silencio_diz_SEM_SALDO(vf, monkeypatch, capsys):
+    """O cenário de 04/10: flag aceso E nenhuma chamada de LLM. Aqui o recado é
+    de queda, e é o que tem de chegar ao Renato."""
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=True, llm_parado=True)
     assert code == 1, "canário aceso tem de reprovar a abertura, não só imprimir"
-    assert "CANÁRIO ACESO" in saida
+    assert "CANÁRIO ACESO" in saida and "OBSOLETO" not in saida
     assert "SEM SALDO" in saida
     assert "04/10" in saida, "tem de dizer DESDE QUANDO, senão não se sabe se é novo"
+    assert "Chamadas LLM" in saida, "a fonte parada tem de aparecer junto"
+
+
+def test_flag_aceso_com_llm_fresco_diz_OBSOLETO_nao_queda(vf, monkeypatch, capsys):
+    """O caso real que apareceu UMA HORA depois de armar o detector.
+
+    O saldo foi recarregado ~15h UTC de 05/10 e as chamadas voltaram no mesmo
+    minuto; mas o canário roda 1×/h (:33) e só limpa o flag quando RODA — então
+    por até uma hora a abertura dizia "toda função LLM está caída" com o sistema
+    funcionando. Dois detectores pagaram na direção OPOSTA à prevista: foram
+    postos para cobrir a falha um do outro na QUEDA, e a primeira divergência
+    apareceu na VOLTA.
+
+    O veredito é do frescor, não do flag: dado fresco é evidência de AGORA, flag
+    é evidência de quando foi escrito. Alarme que grita depois de resolvido é
+    como se aprende a ignorar alarme.
+    """
+    # o _CursorFake devolve fontes frescas + flag presente = exatamente o caso
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=True)
+    assert "OBSOLETO" in saida
+    assert "voltou" in saida
+    assert "toda função LLM está caída" not in saida, (
+        "com chamada de LLM recente, afirmar queda é afirmação confiante e errada"
+    )
+    assert code == 1, (
+        "ainda sai 1: o flag de pé é divergência que alguém precisa confirmar, "
+        "não silêncio — só o veredito muda, não o fato de haver algo a ver"
+    )
 
 
 def test_canario_apagado_sai_0_e_fica_quieto(vf, monkeypatch, capsys):
