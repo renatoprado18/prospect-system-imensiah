@@ -204,3 +204,97 @@ def test_itens_continuam_todos_na_lista(monkeypatch):
     antes = len(itens)
     rm._detectar_duplicatas(itens)
     assert len(itens) == antes == 3
+
+
+# ===========================================================================
+# 5. A guarda na ORIGEM — dedup na leitura é band-aid enquanto o produtor vive
+# ===========================================================================
+
+def test_create_recusa_item_que_ja_existe_no_conselhoos(monkeypatch):
+    """O produtor foi medido: NÃO é cron. Os 25 itens do projeto 24 são todos
+    `origem='manual'`, em 5 datas; os da Alba vêm de `raci_grupo_04set` e
+    `ata_alba_07_08`. É sessão transcrevendo ata numa empresa cujas ações já
+    estão no ConselhoOS — então a guarda vai onde a cópia nasce."""
+    monkeypatch.setattr(rm, "_ja_existe_no_conselhoos", lambda pid, acao: "conselhoos:abc")
+    out = rm.create_item(24, {"acao": "Auditoria de processos — 30/09"})
+    assert "error" in out and "ConselhoOS" in out["error"]
+    assert out["duplicata_de"] == "conselhoos:abc"
+
+
+def test_create_com_override_nem_consulta_o_outro_banco(monkeypatch):
+    """O override existe porque pode haver item legitimamente distinto com a
+    mesma redação — mas tem de ser DECLARADO, não ser o default.
+
+    ⚠️ A primeira versão deste teste chamava `create_item` com o override e
+    deixava o fluxo seguir: ele INSERIU uma linha de verdade no banco local
+    (`#62 acao='x'`, projeto 24), que eu tive de apagar à mão. Teste que escreve
+    em banco compartilhado não é teste, é efeito colateral — e com
+    `TEST_DB_TARGET=prod` teria sujado a matriz de um CLIENTE. Agora o `get_db`
+    é interceptado e o INSERT nunca acontece: o que se verifica é a decisão
+    (passou da guarda sem consultar), não a escrita.
+    """
+    consultou = []
+    monkeypatch.setattr(rm, "_ja_existe_no_conselhoos",
+                        lambda pid, acao: consultou.append(pid) or "conselhoos:abc")
+
+    class _Barreira:
+        def cursor(self):
+            raise AssertionError("o teste não deve chegar ao banco")
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(rm, "get_db", lambda: _Barreira())
+
+    with pytest.raises(AssertionError, match="não deve chegar ao banco"):
+        rm.create_item(24, {"acao": "x", "permitir_duplicata": True})
+
+    assert consultou == [], (
+        "com `permitir_duplicata=True` a checagem é pulada por completo — "
+        "consultar o outro Neon para depois ignorar a resposta é custo puro"
+    )
+
+
+def test_checagem_na_criacao_ABSTEM_quando_o_outro_banco_cai(monkeypatch):
+    """Assimetria oposta à da guarda do envio, e é deliberada.
+
+    No ENVIO, não poder checar BLOQUEIA: o custo de publicar linha repetida no
+    grupo do cliente é alto e o envio pode esperar. Na CRIAÇÃO, não poder checar
+    LIBERA: barrar o trabalho do dia porque um banco que não é o nosso está fora
+    seria pior, e a duplicata que nasce ainda encontra duas redes depois dela — a
+    detecção na leitura e o bloqueio no envio.
+    """
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status",
+                        lambda uuid: ([], "ConselhoOS fora do ar"))
+
+    class _Cur:
+        def execute(self, *a): pass
+        def fetchone(self): return {"conselhoos_empresa_id": "uuid-qualquer"}
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(rm, "get_db", lambda: _Conn())
+    assert rm._ja_existe_no_conselhoos(24, "qualquer acao") is None
+
+
+def test_projeto_sem_vinculo_conselhoos_nao_e_checado(monkeypatch):
+    """A maioria dos projetos não tem fonte-conselho, e isso não é estado
+    degradado — o próprio módulo diz isso no topo. Checar ali seria custo por
+    nada e, pior, um erro a explicar."""
+    class _Cur:
+        def execute(self, *a): pass
+        def fetchone(self): return {"conselhoos_empresa_id": None}
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(rm, "get_db", lambda: _Conn())
+    chamou = []
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status",
+                        lambda uuid: chamou.append(uuid) or ([], None))
+    assert rm._ja_existe_no_conselhoos(99, "acao") is None
+    assert chamou == [], "não devia nem consultar o outro banco"

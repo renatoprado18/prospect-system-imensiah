@@ -649,14 +649,82 @@ def _validar_status(campos: Dict) -> Optional[str]:
     return None
 
 
+def _ja_existe_no_conselhoos(project_id: int, acao: str) -> Optional[str]:
+    """`uid` do item gêmeo no ConselhoOS, ou None.
+
+    Mesma chave normalizada da detecção — nunca similaridade, pelo motivo
+    registrado em `_detectar_duplicatas`.
+
+    ⚠️ Projeto sem vínculo ConselhoOS, env ausente ou outro Neon fora do ar
+    devolvem None e a criação SEGUE. Aqui a abstenção é a escolha certa, ao
+    contrário da guarda do envio: bloquear criação por indisponibilidade de um
+    banco que não é o nosso pararia o trabalho do dia por uma rede ruim, e o
+    custo do erro é assimétrico — duplicata que nasce ainda é detectada na
+    leitura e barrada no envio, que são as duas redes seguintes.
+    """
+    chave = _chave_dedup(acao)
+    if not chave:
+        return None
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT e.conselhoos_empresa_id
+                  FROM projects p
+                  LEFT JOIN empresas e ON e.id = p.empresa_id
+                 WHERE p.id = %s
+            """, (project_id,))
+            row = cursor.fetchone()
+        uuid = (dict(row).get("conselhoos_empresa_id") if row else None)
+        if not uuid:
+            return None
+        itens, erro = _fetch_conselhoos_status(str(uuid))
+        if erro:
+            logger.warning("raci create: ConselhoOS indisponível (%s) — sigo sem checar", erro)
+            return None
+        for it in itens:
+            if _chave_dedup(it.get("acao")) == chave:
+                return it["uid"]
+    except Exception as e:
+        logger.warning("raci create: checagem de duplicata falhou (%s) — sigo sem checar", e)
+    return None
+
+
 def create_item(project_id: int, data: Dict) -> Dict:
-    """Cria um item de RACI no lado INTEL. `acao` é o único obrigatório."""
+    """Cria um item de RACI no lado INTEL. `acao` é o único obrigatório.
+
+    GUARDA NA ORIGEM (05/10/26) — dedup na leitura é band-aid enquanto o produtor
+    vive. Medido em prod hoje, o produtor NÃO é um cron: os 25 itens do projeto 24
+    são todos `origem='manual'`, criados em 5 datas diferentes, e os 18 da Alba vêm
+    de `raci_grupo_04set` e `ata_alba_07_08`. Ou seja, é uma SESSÃO transcrevendo
+    ata/reunião para o INTEL numa empresa cujas mesmas ações já estão no
+    ConselhoOS. Nenhum código copia COS→INTEL (os 10 itens com `origem='cos'` são
+    do projeto 28, que não tem vínculo ConselhoOS — "cos" ali é outra coisa).
+
+    Então a guarda tem de ficar onde a cópia nasce. Mesma assimetria do envio:
+    recusar uma criação é recuperável com um flag; deixar nascer a duplicata custa
+    uma linha repetida no grupo do cliente e um item que alguém vai atualizar pela
+    metade. `permitir_duplicata=True` libera o caso legítimo, declarado.
+    """
     acao = (data.get("acao") or "").strip()
     if not acao:
         return {"error": "acao é obrigatória"}
     erro = _validar_status({"status": data.get("status") or "pendente"})
     if erro:
         return {"error": erro}
+
+    if not data.get("permitir_duplicata"):
+        gemeo = _ja_existe_no_conselhoos(project_id, acao)
+        if gemeo:
+            return {
+                "error": (
+                    "esta ação já existe no ConselhoOS desta empresa "
+                    f"(item {gemeo}) — criar aqui produziria a linha duplicada "
+                    "que o grupo do cliente receberia duas vezes. Se for mesmo um "
+                    "item distinto, reenvie com permitir_duplicata=true."
+                ),
+                "duplicata_de": gemeo,
+            }
 
     with get_db() as conn:
         cursor = conn.cursor()
