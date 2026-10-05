@@ -13,9 +13,37 @@ então um cron único no Vercel resolve os dois caminhos sem tocar o hot-path ne
 dar credencial Google ao worker. Provado E2E: getBase64FromMediaMessage com a
 key reconstruída devolve o binário.
 
-Escopo v1: DM (phone numérico). Grupos precisam de group-jid+participant na key;
-por ora falham no re-download e são pulados (best-effort, refinar depois).
 Só go-forward — a mídia da Evolution expira, daí a janela dos últimos dias.
+
+⚠️ CORRIGIDO 05/10/2026 — este bloco dizia: *"Escopo v1: DM (phone numérico).
+Grupos precisam de group-jid+participant na key; por ora falham no re-download e
+são pulados"*. **Os três pedaços são falsos**, e a frase custou uma investigação
+inteira antes de ser medida:
+
+  1. **Grupo não é pulado.** `wa_attachments.phone` guarda o telefone do REMETENTE,
+     não o JID do chat — então anexo de grupo casa `phone ~ '^[0-9]+$'` e entra na
+     fila como qualquer outro. Medido: dos 5.511 anexos, **3.220 são de grupo**
+     (cruzando `message_id` com `group_messages`, cuja chave é única: 65.960 linhas,
+     65.960 ids distintos).
+  2. **Grupo não falha no re-download.** **2.438 anexos de grupo estão arquivados
+     no Drive**, incluindo 4 documentos e 1 áudio de 05/10 com `drive_attempts=0`
+     — primeira tentativa. Um deles num grupo de JID legado
+     (`5511991772942-1417275169@g.us`). A Evolution resolve a mídia pelo `id` da
+     mensagem; o `remoteJid` de DM na key reconstruída basta.
+  3. **A key não precisa de participant** — ver (2).
+
+O que o filtro `phone ~ '^[0-9]+$'` de fato exclui são **371 linhas, 361 delas
+escritas pelo backfill de 29–30/09**, que gravou o JID do grupo no `phone` em vez
+do remetente (convenção divergente da do pipeline vivo). A mídia dessas 371 expirou
+— a mais nova é de 30/09 11:17 —, então mexer no filtro arquivaria ZERO arquivo.
+O filtro FICA. ⏭️ O conserto que paga é na convenção do `scripts/wa_media_backfill.py`,
+senão o próximo backfill reproduz as 371.
+
+Por que isto fica registrado em vez de só apagado: um comentário que descreve um
+escopo que o código não tem mais é pior que comentário nenhum — ele responde a
+pergunta de quem veio investigar, com confiança e errado
+([[feedback_mensagem_de_erro_confiante_e_errada]]). A medição acima é o que torna
+a próxima leitura barata.
 
 Teto de tentativas (28/07/2026, migration 055): a fila era definida só por
 `drive_file_id IS NULL` e nada marcava que uma tentativa já tinha falhado, então
@@ -194,8 +222,13 @@ async def archive_pending_attachments(limit: int = 25) -> Dict[str, Any]:
                 }
                 data, mt = await _redownload(evo_url, evo_key, instance, wa_key)
                 if not data:
-                    # provável grupo (key ≠ DM) ou mídia expirada na Evolution
-                    _fail(r, "redownload devolveu vazio (grupo ou midia expirada)")
+                    # 05/10/26 — a mensagem dizia "(grupo ou midia expirada)" e a
+                    # primeira metade nunca foi causa de nada: dos 275 itens que
+                    # esgotaram as 12 tentativas com este erro, 131 sao de grupo e
+                    # 144 de DM — ser de grupo nao discrimina falha (2.438 anexos de
+                    # grupo estao arquivados). Oferecer duas causas quando so uma
+                    # existe faz o leitor parar na errada; a que sobra e expiracao.
+                    _fail(r, "redownload devolveu vazio (midia expirada na Evolution)")
                     continue
 
                 clean_mt = (mt or r.get("mime_type") or "application/octet-stream").split(";")[0].strip()
