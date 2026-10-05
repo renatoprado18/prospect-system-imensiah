@@ -113,6 +113,56 @@ FONTES = [
         "uteis": False,
         "nota": "corridas, não úteis: registro nasce a qualquer hora",
     },
+    {
+        # 05/10/26 — a fonte que faltava, e o preço de não tê-la: a conta Anthropic
+        # ficou SEM SALDO em 04/10 ~08h UTC e o sistema passou ~30h com TODA função
+        # LLM parada (reconciler, triagem, visão, signal router, briefing). A
+        # abertura daquela manhã e a de hoje passaram verdes em modelo, boards e
+        # frescor — porque nenhuma das três olhava o subsistema mais caro. Eu só
+        # descobri por acidente, quando uma chamada minha de validação voltou 400.
+        #
+        # ⚠️ CORRIDAS, NÃO ÚTEIS — e esta é a decisão que importa aqui. Medida em
+        # horas úteis, a queda atual tem 3h (caiu num sábado) contra um máximo
+        # histórico de 4,25h: a régua de dia útil NÃO consegue vê-la, e só acusaria
+        # na segunda. Horas úteis existem porque conversa HUMANA pausa no fim de
+        # semana; consumo de LLM é de MÁQUINA e o cron roda 24/7 — o reconciler das
+        # 15h UTC foi perdido no sábado e no domingo igual. Aplicar a régua de gente
+        # a um canal de máquina é o mesmo erro de categoria que medir a tabela em vez
+        # do canal, uma camada acima.
+        #
+        # Limiar 12h, medido e não estimado: em 60 dias e 17.180 intervalos, o
+        # p99 é 1,58h e o MÁXIMO 7,17h (as caudas são a janela morta 00h–05h UTC
+        # entre crons). 12h fica acima do pior caso real com folga de 1,7× e teria
+        # disparado em 04/10 por volta das 18h UTC — 10h de queda em vez de 30.
+        "rotulo": "Chamadas LLM (o subsistema mais caro)",
+        "sql": "SELECT max(ts) FROM tonia_llm_usage",
+        "limiar": 12,
+        "uteis": False,
+        "nota": "silêncio aqui = reconciler, triagem, visão e briefing parados juntos",
+    },
+]
+
+# Canários de ESTADO — não respondem "há quanto tempo não chega dado?", e sim "há
+# um alarme ligado agora?". Ficam fora de FONTES de propósito: ali a lógica é
+# "antigo = ruim", e aqui é o inverso — a presença de um registro RECENTE é que é
+# a má notícia, então enfiá-los na mesma tabela inverteria o sinal.
+#
+# Por que DOIS detectores para a mesma queda, este e a fonte "Chamadas LLM" acima:
+# eles falham por motivos diferentes. O flag é direto e imediato (diz "sem saldo",
+# com a hora), mas depende do `anthropic-canary` estar de pé e do modo de falha
+# ser um que ele reconheça — chave rotacionada, rate limit ou worker fora não
+# levantam flag nenhum. O frescor é indireto e mais lento, e justamente por não
+# depender do canário é o que sobra quando o próprio canário quebra
+# ([[feedback_medidor_que_nao_mede_a_si_mesmo]]).
+CANARIOS = [
+    {
+        "rotulo": "Anthropic — saldo/chave",
+        "sql": """SELECT max(criado_em) FROM system_memories
+                   WHERE titulo = 'anthropic_credit_down' AND tipo = 'credit_canary'""",
+        "aceso": "SEM SALDO ou CHAVE INVÁLIDA — toda função LLM está caída",
+        "nota": ("o `anthropic-canary` alerta UMA vez e depois só repete "
+                 "`already_alerted` até recuperar; o flag é limpo na recuperação"),
+    },
 ]
 
 
@@ -199,9 +249,23 @@ def main() -> int:
         if estourou:
             estouros.append(f["rotulo"])
 
+    # Canários de estado. Mesma regra dos outros: não poder medir NÃO sai verde —
+    # um canário que abstém certifica saúde que nunca checou.
+    acesos, canarios_nao_medidos = [], []
+    for c in CANARIOS:
+        try:
+            cur.execute(c["sql"])
+            desde = _primeira_coluna(cur.fetchone())
+        except Exception as e:
+            conn.rollback()
+            canarios_nao_medidos.append((c["rotulo"], str(e).strip().splitlines()[0]))
+            continue
+        if desde is not None:
+            acesos.append((c["rotulo"], to_utc(desde), c["aceso"], c["nota"]))
+
     conn.close()
 
-    if a.quiet and not estouros and not nao_medidas:
+    if a.quiet and not estouros and not nao_medidas and not acesos and not canarios_nao_medidos:
         return 0
 
     print("╔═ FRESCOR DAS FONTES (o dado ainda está chegando?) ═╗")
@@ -217,17 +281,36 @@ def main() -> int:
         print(f"  🔴 {rotulo}: NÃO MEDIDO — {erro}")
         print("      ↳ não medir não é estar fresco; consertar a query antes de confiar na abertura")
 
-    if not estouros and not nao_medidas:
-        print("  🟢 todas as fontes dentro do limiar.")
+    for rotulo, desde, aceso, nota in acesos:
+        idade = (agora - desde).total_seconds() / 3600
+        print(f"  🔴 CANÁRIO ACESO · {rotulo}: {aceso}")
+        print(f"      ↳ desde {to_brt(desde):%d/%m %H:%M} BRT ({idade:.0f}h) — {nota}")
+    for rotulo, erro in canarios_nao_medidos:
+        print(f"  🔴 CANÁRIO NÃO MEDIDO · {rotulo} — {erro}")
+        print("      ↳ canário que não pôde ser lido não é canário apagado")
+
+    if not estouros and not nao_medidas and not acesos and not canarios_nao_medidos:
+        print("  🟢 todas as fontes dentro do limiar e nenhum canário aceso.")
         return 0
 
-    print("\n  ⚠️ FONTE PARADA É CEGUEIRA SEM RASTRO. Em 28/09/26 a entrada do WhatsApp")
-    print("  morreu às 17:47 BRT e a abertura do dia seguinte não disse nada: 38h de")
-    print("  decisão sobre retrato velho. ANTES de propor frente, descubra se é queda")
-    print("  (host fora, cron parado) ou desligamento deliberado que ninguém registrou.")
+    if estouros or nao_medidas:
+        print("\n  ⚠️ FONTE PARADA É CEGUEIRA SEM RASTRO. Em 28/09/26 a entrada do WhatsApp")
+        print("  morreu às 17:47 BRT e a abertura do dia seguinte não disse nada: 38h de")
+        print("  decisão sobre retrato velho. ANTES de propor frente, descubra se é queda")
+        print("  (host fora, cron parado) ou desligamento deliberado que ninguém registrou.")
     if any("CONTROLE POSITIVO" in r for r in estouros):
         print("  🔎 O CONTROLE POSITIVO também estourou ⇒ suspeite do ALVO ou do medidor,")
         print("     não de uma fonte só: é improvável que tudo caia junto por coincidência.")
+    if acesos:
+        # Canário aceso pede recado, não investigação: a causa já está nomeada e a
+        # ação é de FORA do código. Em 04/10 o alerta de WhatsApp saiu e o Renato
+        # foi avisado às 08:33 — mesmo assim passaram 30h, porque o aviso chegou
+        # uma vez, no meio de uma viagem, e nada mais o repetiu. A abertura é o
+        # lugar onde ele reaparece ([[feedback_superficie_nova_mata_o_aviso]]).
+        print("\n  ⚠️ CANÁRIO ACESO É ESTADO CONHECIDO, NÃO INVESTIGAÇÃO: a causa já está")
+        print("  nomeada e a ação é fora do código (recarregar saldo, trocar chave). Diga")
+        print("  ao Renato ANTES de propor frente — frente que dependa de LLM não sai do")
+        print("  chão enquanto isso, e estimar custo/prazo sobre ela é estimar no vazio.")
     return 1
 
 
