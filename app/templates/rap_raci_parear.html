@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parear RACI — INTEL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Montserrat:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+/* Mesma identidade da matriz RACI (charcoal + creme + dourado) — é a mesma
+   frente, e trocar de linguagem visual no meio do fluxo faria a tela parecer
+   de outro sistema. Esta NÃO vai pra fora, mas vive ao lado da que vai. */
+:root{
+  --charcoal:#262019; --creme:#f4efe7; --card:#faf7f1;
+  --gold:#c39553; --gold-deep:#a97f42; --frame:#d8c6a4;
+  --ink:#2a231d; --muted:#8a7d72; --border:#e6ded0;
+  --ok:#4a6b52; --alerta:#a13b2f; --exato:#4a6b52;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--creme);color:var(--ink);font-family:'Montserrat',system-ui,sans-serif;
+     font-size:14px;line-height:1.5;padding:28px 20px 80px}
+.sheet{max-width:min(1400px,96vw);margin:0 auto}
+.head{background:var(--charcoal);color:var(--creme);border-radius:10px;padding:24px 28px}
+.head h1{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;margin-bottom:6px}
+.head p{color:#cdbfae;font-size:13px;max-width:92ch}
+.head b{color:var(--gold)}
+.placar{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 8px}
+.pill{background:var(--card);border:1px solid var(--border);border-radius:8px;
+      padding:9px 14px;font-size:13px}
+.pill b{font-family:'JetBrains Mono',monospace;font-size:16px;color:var(--gold-deep)}
+.aviso{background:#fff8ea;border:1px solid var(--frame);border-left:4px solid var(--gold);
+       border-radius:8px;padding:12px 16px;margin:14px 0;font-size:13px}
+.item{background:var(--card);border:1px solid var(--border);border-radius:10px;
+      padding:16px 18px;margin-bottom:14px}
+.item.resolvido{opacity:.5}
+.intel{display:flex;gap:10px;align-items:flex-start;margin-bottom:12px}
+.tag{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);
+     border:1px solid var(--border);border-radius:5px;padding:2px 7px;white-space:nowrap}
+.acao{font-weight:600;font-size:14.5px}
+.meta{color:var(--muted);font-size:12px;margin-top:3px}
+.cands{border-top:1px dashed var(--border);padding-top:10px}
+.cand{display:flex;gap:10px;align-items:flex-start;padding:7px 9px;border-radius:7px;cursor:pointer}
+.cand:hover{background:#fff}
+.cand input{margin-top:3px;flex:none}
+.score{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted);
+       border:1px solid var(--border);border-radius:5px;padding:1px 6px;white-space:nowrap}
+.score.exato{color:#fff;background:var(--exato);border-color:var(--exato)}
+.cand-acao{font-size:13.5px}
+.semnada{color:var(--muted);font-style:italic;font-size:13px;padding:6px 9px}
+.btns{margin-top:10px;display:flex;gap:8px;align-items:center}
+button{font-family:inherit;font-size:13px;font-weight:600;border-radius:7px;
+       padding:8px 15px;border:1px solid var(--gold-deep);background:var(--gold-deep);
+       color:#fff;cursor:pointer}
+button.sec{background:transparent;color:var(--ink);border-color:var(--border)}
+button:disabled{opacity:.45;cursor:default}
+.feito{color:var(--ok);font-weight:600;font-size:13px}
+.erro{color:var(--alerta);font-weight:600;font-size:13px}
+.vazio{text-align:center;padding:40px;color:var(--muted)}
+a.volta{color:var(--gold-deep);font-size:13px;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="head">
+    <h1>Parear RACI — execução × ata</h1>
+    <p>Cada linha abaixo é um item de <b>execução</b> que já está no INTEL e ainda não
+    aponta para a <b>deliberação de ata</b> que o originou no ConselhoOS. Parear agora
+    evita que a importação crie uma segunda cópia de cada um.
+    <br><br>
+    Os marcados <b>exato</b> têm texto idêntico e podem ser confirmados em bloco. O
+    resto está ordenado por semelhança — <b>a ordem é só para ajudar a olhar, não é
+    palpite de resposta</b>: no mesmo conjunto, dois contratos de médicas diferentes
+    batem 0.58. <b>“Nunca passou por conselho” é resposta válida</b> e esperada.</p>
+  </div>
+
+  <div id="placar" class="placar"></div>
+  <div id="corpo"></div>
+  <p style="margin-top:20px"><a class="volta" href="/projetos/{{ project_id }}/raci">← voltar para a matriz</a></p>
+</div>
+
+<script>
+const PROJ = {{ project_id }};
+const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let dados = null;
+
+async function carregar(){
+  const r = await fetch(`/api/projects/${PROJ}/raci/pareamento`);
+  if(!r.ok){
+    const e = await r.json().catch(()=>({}));
+    document.getElementById('corpo').innerHTML =
+      `<div class="vazio">Não deu pra montar a proposta: <b>${esc(e.detail||r.status)}</b>.
+       <br><br>Se for o ConselhoOS fora do ar, <b>não pareie agora</b> — sobre lista vazia
+       tudo viraria “sem par”, e isso congelaria o erro no banco.</div>`;
+    return;
+  }
+  dados = await r.json();
+  render();
+}
+
+function render(){
+  document.getElementById('placar').innerHTML = `
+    <div class="pill"><b>${dados.total_pendentes}</b> a parear</div>
+    <div class="pill"><b>${dados.com_sugestao_exata}</b> com par exato</div>
+    <div class="pill"><b>${dados.ja_pareados}</b> já pareados</div>
+    <div class="pill"><b>${dados.conselhoos_livres}</b> linhas de ata livres</div>`;
+
+  if(!dados.total_pendentes){
+    document.getElementById('corpo').innerHTML =
+      `<div class="vazio">✅ Nada pendente neste projeto — pode rodar a importação.</div>`;
+    return;
+  }
+
+  const exatos = dados.pendentes.filter(p => p.sugestao_automatica);
+  let html = '';
+  if(exatos.length){
+    html += `<div class="aviso"><b>${exatos.length}</b> itens têm par de texto idêntico.
+      <button onclick="confirmarExatos()" id="btn-lote">Confirmar os ${exatos.length} de uma vez</button>
+      <span id="lote-msg"></span></div>`;
+  }
+
+  html += dados.pendentes.map(p => {
+    const cands = p.candidatos.map(c => `
+      <label class="cand">
+        <input type="radio" name="p${p.intel_id}" value="${c.id}" ${c.exato?'checked':''}>
+        <span class="score ${c.exato?'exato':''}">${c.exato?'exato':c.score}</span>
+        <span class="cand-acao">${esc(c.acao)}
+          <span class="meta">R: ${esc(c.r||'—')} · ${esc(c.prazo_br||'sem prazo')} · ${esc(c.status||'')}</span>
+        </span>
+      </label>`).join('');
+    return `
+    <div class="item" id="item-${p.intel_id}">
+      <div class="intel">
+        <span class="tag">INTEL #${p.intel_id}</span>
+        <div><div class="acao">${esc(p.acao)}</div>
+          <div class="meta">R: ${esc(p.r||'—')} · ${esc(p.prazo_br||'sem prazo')} · ${esc(p.status||'')}</div>
+        </div>
+      </div>
+      <div class="cands">
+        ${cands || '<div class="semnada">nenhuma linha de ata parecida — provavelmente nunca passou por conselho</div>'}
+        <label class="cand">
+          <input type="radio" name="p${p.intel_id}" value="__sem__" ${p.candidatos.length?'':'checked'}>
+          <span class="score">sem par</span>
+          <span class="cand-acao">Nunca passou por reunião de conselho</span>
+        </label>
+      </div>
+      <div class="btns">
+        <button onclick="salvar(${p.intel_id})">Confirmar</button>
+        <span id="msg-${p.intel_id}"></span>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('corpo').innerHTML = html;
+}
+
+async function gravar(intelId, valor){
+  const body = valor === '__sem__' ? {sem_par:true} : {conselhoos_raci_id: valor};
+  const r = await fetch(`/api/raci-itens/${intelId}/parear`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if(!r.ok){ const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.status); }
+  return r.json();
+}
+
+async function salvar(intelId){
+  const sel = document.querySelector(`input[name="p${intelId}"]:checked`);
+  const msg = document.getElementById(`msg-${intelId}`);
+  if(!sel){ msg.className='erro'; msg.textContent='escolha uma opção'; return; }
+  try{
+    await gravar(intelId, sel.value);
+    document.getElementById(`item-${intelId}`).classList.add('resolvido');
+    msg.className='feito';
+    msg.textContent = sel.value === '__sem__' ? '✓ marcado como sem par' : '✓ pareado';
+  }catch(err){ msg.className='erro'; msg.textContent = '✗ ' + err.message; }
+}
+
+async function confirmarExatos(){
+  const btn = document.getElementById('btn-lote'); btn.disabled = true;
+  const out = document.getElementById('lote-msg');
+  const exatos = dados.pendentes.filter(p => p.sugestao_automatica);
+  let ok=0, falhou=0;
+  for(const p of exatos){
+    const alvo = p.candidatos.find(c => c.exato);
+    try{ await gravar(p.intel_id, alvo.id);
+         document.getElementById(`item-${p.intel_id}`).classList.add('resolvido');
+         const m=document.getElementById(`msg-${p.intel_id}`); m.className='feito'; m.textContent='✓ pareado';
+         ok++; }
+    catch(err){ falhou++;
+         const m=document.getElementById(`msg-${p.intel_id}`); m.className='erro'; m.textContent='✗ '+err.message; }
+  }
+  out.innerHTML = ` <b>${ok} pareados</b>${falhou?`, <span class="erro">${falhou} falharam</span>`:''}.`;
+}
+
+carregar();
+</script>
+</body>
+</html>

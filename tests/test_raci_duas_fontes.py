@@ -279,6 +279,103 @@ def test_checagem_na_criacao_ABSTEM_quando_o_outro_banco_cai(monkeypatch):
     assert rm._ja_existe_no_conselhoos(24, "qualquer acao") is None
 
 
+# ===========================================================================
+# 6. O pareamento (passo 3) — PROPÕE, não decide
+# ===========================================================================
+
+def _fake_db(monkeypatch, proj_row, intel_rows):
+    class _Cur:
+        def __init__(self): self._r = None
+        def execute(self, sql, *a):
+            self._r = ("proj" if "FROM projects p" in sql else "intel")
+        def fetchone(self): return proj_row if self._r == "proj" else None
+        def fetchall(self): return intel_rows if self._r == "intel" else []
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(rm, "get_db", lambda: _Conn())
+
+
+def test_pareamento_marca_o_exato_e_ORDENA_o_resto(monkeypatch):
+    """O exato vem primeiro e marcado; o resto entra só ordenado por semelhança.
+
+    A ordem é para o olho, não é palpite de resposta — por isso `exato` é um
+    booleano separado do `score`, e não "score >= X".
+    """
+    _fake_db(monkeypatch,
+             {"id": 24, "nome": "Vallen", "conselhoos_empresa_id": "uuid"},
+             [{"id": 1, "acao": "Auditoria de processos — 30/09", "responsavel_r": "Amadeo",
+               "prazo": None, "status": "pendente", "conselhoos_raci_id": None}])
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status", lambda u: ([
+        _item(rm.FONTE_CONSELHOOS, "c1", "auditoria de processos 30 09"),
+        _item(rm.FONTE_CONSELHOOS, "c2", "Auditoria de processos da Dra. Camila"),
+        _item(rm.FONTE_CONSELHOOS, "c3", "Publicar o site"),
+    ], None))
+
+    out = rm.propor_pareamento(24)
+    assert out["total_pendentes"] == 1 and out["com_sugestao_exata"] == 1
+    cands = out["pendentes"][0]["candidatos"]
+    assert cands[0]["exato"] is True and cands[0]["id"] == "c1"
+    assert all(c["exato"] is False for c in cands[1:])
+    assert [c["id"] for c in cands] == sorted(
+        [c["id"] for c in cands], key=lambda i: -next(x["score"] for x in cands if x["id"] == i)
+    ), "os não-exatos têm de vir em ordem decrescente de semelhança"
+
+
+def test_pareamento_nao_oferece_linha_de_ata_ja_usada(monkeypatch):
+    """Duas execuções não podem apontar para a mesma deliberação. O índice único
+    da 084 barra no banco; aqui a lista nem oferece, pra não convidar ao erro."""
+    _fake_db(monkeypatch,
+             {"id": 24, "nome": "Vallen", "conselhoos_empresa_id": "uuid"},
+             [{"id": 1, "acao": "acao x", "responsavel_r": None, "prazo": None,
+               "status": "pendente", "conselhoos_raci_id": None},
+              {"id": 2, "acao": "acao x", "responsavel_r": None, "prazo": None,
+               "status": "pendente", "conselhoos_raci_id": "c1"}])
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status", lambda u: (
+        [_item(rm.FONTE_CONSELHOOS, "c1", "acao x")], None))
+
+    out = rm.propor_pareamento(24)
+    assert out["ja_pareados"] == 1
+    assert out["conselhoos_livres"] == 0
+    assert out["pendentes"][0]["candidatos"] == [], (
+        "c1 já está apontada pelo item 2 — oferecê-la de novo convidaria ao erro"
+    )
+
+
+def test_conselhoos_fora_do_ar_NAO_vira_lista_vazia(monkeypatch):
+    """O modo de falha que estragaria o banco de forma irreversível: sem o outro
+    lado, todo item ficaria "sem candidato" e o usuário marcaria tudo como "sem
+    par" — congelando o erro. Aqui devolve erro e a tela se recusa a parear."""
+    _fake_db(monkeypatch,
+             {"id": 24, "nome": "Vallen", "conselhoos_empresa_id": "uuid"},
+             [{"id": 1, "acao": "a", "responsavel_r": None, "prazo": None,
+               "status": "pendente", "conselhoos_raci_id": None}])
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status", lambda u: ([], "fora do ar"))
+    out = rm.propor_pareamento(24)
+    assert "error" in out and "indisponível" in out["error"]
+    assert "pendentes" not in out
+
+
+def test_projeto_sem_vinculo_nao_entra_no_pareamento(monkeypatch):
+    _fake_db(monkeypatch, {"id": 28, "nome": "Exportação", "conselhoos_empresa_id": None}, [])
+    out = rm.propor_pareamento(28)
+    assert out["error"] == "projeto sem vínculo ConselhoOS"
+
+
+def test_sem_par_e_resposta_valida_nao_lacuna():
+    """3 itens da Vallen (esteticista, Dra. Sayonê, Dra. Camila) são execução que
+    nunca passou por conselho. Uma tela que só permitisse casar empurraria o
+    usuário a inventar par pra fechar a lista — por isso `definir_par(id, None)`
+    é um caminho de primeira classe, e o endpoint exige `sem_par=true` explícito
+    em vez de aceitar corpo vazio."""
+    import inspect
+    src = inspect.getsource(rm.definir_par)
+    assert "None" in src and "sem par" in (rm.definir_par.__doc__ or "")
+
+
 def test_projeto_sem_vinculo_conselhoos_nao_e_checado(monkeypatch):
     """A maioria dos projetos não tem fonte-conselho, e isso não é estado
     degradado — o próprio módulo diz isso no topo. Checar ali seria custo por

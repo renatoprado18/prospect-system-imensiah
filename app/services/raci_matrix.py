@@ -649,6 +649,129 @@ def _validar_status(campos: Dict) -> Optional[str]:
     return None
 
 
+def propor_pareamento(project_id: int) -> Dict:
+    """Proposta de pareamento INTEL↔ConselhoOS para o passo 3 do plano.
+
+    PROPÕE, nunca decide — e a distinção é a razão de existir da tela. A chave
+    normalizada resolve sozinha os pares de texto idêntico (19 em prod: 9 na
+    Vallen, 10 na Alba); o resíduo é o de vocabulário divergente ("a Gestora" ×
+    "Jéssica"), e para ele a similaridade entra APENAS PARA ORDENAR os
+    candidatos na tela. Nunca para casar: medido em 05/10 no próprio conjunto,
+    "Regra de repasse da **Dra. Daniela**" × "Acordo de repasse da
+    **Dra. Sayonê**" dá 0.58 — duas médicas, dois contratos. Confirmar é do
+    Renato.
+
+    "Sem par" é resposta VÁLIDA e esperada, não lacuna: são os itens de execução
+    que nunca passaram por reunião (3 na Vallen — esteticista, Dra. Sayonê,
+    Dra. Camila). Uma tela que só permitisse casar empurraria o usuário a
+    inventar par para fechar a lista.
+    """
+    from difflib import SequenceMatcher
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.id, p.nome, e.conselhoos_empresa_id
+              FROM projects p LEFT JOIN empresas e ON e.id = p.empresa_id
+             WHERE p.id = %s
+        """, (project_id,))
+        proj = cursor.fetchone()
+        if not proj:
+            return {"error": "projeto não encontrado", "project_id": project_id}
+        proj = dict(proj)
+
+        cursor.execute("""
+            SELECT id, acao, responsavel_r, prazo, status, conselhoos_raci_id
+              FROM raci_itens WHERE project_id = %s ORDER BY id
+        """, (project_id,))
+        intel = [dict(r) for r in cursor.fetchall()]
+
+    uuid_cos = proj.get("conselhoos_empresa_id")
+    if not uuid_cos:
+        return {"error": "projeto sem vínculo ConselhoOS", "project_id": project_id}
+
+    cos_itens, erro = _fetch_conselhoos_status(str(uuid_cos))
+    if erro:
+        # Não poder ler o outro lado não é "não há par": parear sobre lista
+        # vazia marcaria tudo como "sem par" e congelaria o erro no banco.
+        return {"error": f"ConselhoOS indisponível: {erro}", "project_id": project_id}
+
+    ja_apontados = {str(i["conselhoos_raci_id"]) for i in intel if i["conselhoos_raci_id"]}
+    livres = [c for c in cos_itens if str(c["id"]) not in ja_apontados]
+
+    pendentes, ja_pareados = [], 0
+    for i in intel:
+        if i["conselhoos_raci_id"]:
+            ja_pareados += 1
+            continue
+        chave = _chave_dedup(i["acao"])
+        exato = next((c for c in livres if _chave_dedup(c["acao"]) == chave), None)
+        candidatos = []
+        if exato:
+            candidatos.append({"id": str(exato["id"]), "acao": exato["acao"],
+                               "r": exato.get("r"), "prazo_br": exato.get("prazo_br"),
+                               "status": exato.get("status"),
+                               "score": 1.0, "exato": True})
+        for c in livres:
+            if exato and c["id"] == exato["id"]:
+                continue
+            s = SequenceMatcher(None, chave, _chave_dedup(c["acao"])).ratio()
+            if s >= 0.45:
+                candidatos.append({"id": str(c["id"]), "acao": c["acao"],
+                                   "r": c.get("r"), "prazo_br": c.get("prazo_br"),
+                                   "status": c.get("status"),
+                                   "score": round(s, 2), "exato": False})
+        candidatos.sort(key=lambda x: -x["score"])
+        pendentes.append({
+            "intel_id": i["id"],
+            "acao": i["acao"],
+            "r": i.get("responsavel_r"),
+            "prazo_br": i["prazo"].strftime("%d/%m/%Y") if i.get("prazo") else None,
+            "status": i.get("status"),
+            "sugestao_automatica": exato is not None,
+            "candidatos": candidatos[:5],
+        })
+
+    return {
+        "project": {"id": proj["id"], "nome": proj["nome"]},
+        "pendentes": pendentes,
+        "total_pendentes": len(pendentes),
+        "com_sugestao_exata": sum(1 for p in pendentes if p["sugestao_automatica"]),
+        "ja_pareados": ja_pareados,
+        "conselhoos_livres": len(livres),
+    }
+
+
+def definir_par(intel_id: int, conselhoos_raci_id: Optional[str]) -> Dict:
+    """Grava (ou limpa) o ponteiro de um item INTEL. `None` = "sem par".
+
+    O índice único parcial da migration 084 é quem garante que dois itens do
+    INTEL não apontem para a mesma linha de ata — então um engano de clique
+    vira erro legível aqui, não duas execuções para a mesma deliberação.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE raci_itens SET conselhoos_raci_id = %s, atualizado_em = NOW()
+                 WHERE id = %s
+             RETURNING id, conselhoos_raci_id
+            """, (conselhoos_raci_id, intel_id))
+            row = cursor.fetchone()
+            if not row:
+                return {"error": f"item INTEL {intel_id} não encontrado"}
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            if "idx_raci_itens_conselhoos_raci_id" in str(e):
+                return {"error": "essa linha do ConselhoOS já está pareada com "
+                                 "outro item do INTEL — desfaça o outro antes"}
+            return {"error": f"{type(e).__name__}: {e}"}
+    r = dict(row)
+    return {"ok": True, "intel_id": r["id"],
+            "conselhoos_raci_id": str(r["conselhoos_raci_id"]) if r["conselhoos_raci_id"] else None}
+
+
 def _ja_existe_no_conselhoos(project_id: int, acao: str) -> Optional[str]:
     """`uid` do item gêmeo no ConselhoOS, ou None.
 

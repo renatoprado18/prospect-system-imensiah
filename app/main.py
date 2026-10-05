@@ -23912,6 +23912,58 @@ async def api_raci_send_to_group(project_id: int, request: Request):
     return {"ok": True, "group_name": group_name, "chars": len(texto)}
 
 
+@app.get("/api/projects/{project_id}/raci/pareamento")
+async def api_raci_pareamento(project_id: int, request: Request):
+    """Proposta de pareamento INTEL↔ConselhoOS (passo 3 do plano de fonte única).
+
+    PROPOE, nao decide: a chave normalizada resolve os pares de texto identico e
+    a similaridade so ORDENA o residuo na tela. Quem confirma e o Renato."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401, detail="nao autenticado")
+    from services.raci_matrix import propor_pareamento
+    out = propor_pareamento(project_id)
+    if out.get("error"):
+        raise HTTPException(status_code=409, detail=out["error"])
+    return out
+
+
+@app.post("/api/raci-itens/{intel_id}/parear")
+async def api_raci_parear(intel_id: int, request: Request):
+    """Grava o ponteiro de um item INTEL pra linha de ata do ConselhoOS.
+
+    Body: {"conselhoos_raci_id": "<uuid>"} ou {"sem_par": true}.
+    `sem_par` e resposta VALIDA — e o default do corpo vazio NAO e ela, pra que
+    "limpar o par" seja sempre um ato declarado."""
+    if not get_current_user(request):
+        raise HTTPException(status_code=401, detail="nao autenticado")
+    data = await request.json()
+    if data.get("sem_par"):
+        alvo = None
+    else:
+        alvo = (data.get("conselhoos_raci_id") or "").strip()
+        if not alvo:
+            raise HTTPException(
+                status_code=400,
+                detail="informe conselhoos_raci_id, ou sem_par=true pra declarar "
+                       "que este item nunca passou por reuniao de conselho")
+    from services.raci_matrix import definir_par
+    out = definir_par(intel_id, alvo)
+    if out.get("error"):
+        raise HTTPException(status_code=409, detail=out["error"])
+    return out
+
+
+@app.get("/projetos/{project_id}/raci/parear", response_class=HTMLResponse)
+async def projeto_raci_parear_page(request: Request, project_id: int):
+    """Tela do passo 3: parear a mao o que a chave de texto nao resolve."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_raci_parear.html", {
+        "request": request, "project_id": project_id, "user": user,
+    })
+
+
 @app.get("/projetos/{project_id}/raci", response_class=HTMLResponse)
 async def projeto_raci_page(request: Request, project_id: int):
     """Matriz RACI do projeto — pagina on-brand, imprimivel em PDF num clique."""

@@ -633,6 +633,178 @@ class ConselhoOSRaciSyncService:
             results["errors"].append(str(e))
         return results
 
+    # ==================== ATA (ConselhoOS) -> EXECUÇÃO (INTEL raci_itens) ====
+
+    def _projeto_da_empresa_cos(self, empresa_uuid: str) -> Optional[int]:
+        """Projeto INTEL da empresa do ConselhoOS, pelo ELO EXPLÍCITO.
+
+        Deliberadamente NÃO usa `_find_or_create_project`, que casa por NOME e
+        CRIA projeto quando não acha. As duas coisas são erradas aqui:
+
+          - casar por nome é a mesma classe de fuzzy que produziu o problema que
+            esta frente conserta (e em 05/10 medi "Dra. Daniela" × "Dra. Sayonê"
+            batendo 0.58 — parecido não é igual);
+          - criar projeto como efeito colateral de uma importação faria uma
+            empresa sem vínculo nascer com projeto fantasma, e ninguém procuraria
+            por ele.
+
+        O elo existe e é confiável: `empresas.conselhoos_empresa_id` ->
+        `projects.empresa_id`, medido 1:1 nas 4 empresas vinculadas (Vallen→24,
+        Alba→26, Despertar→25, AP Conselhos→36). Sem vínculo devolve None e o
+        chamador CONTA o item como pulado, em vez de inventar destino.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT p.id
+                  FROM empresas e
+                  JOIN projects p ON p.empresa_id = e.id
+                 WHERE e.conselhoos_empresa_id = %s::uuid
+                 ORDER BY p.id
+                 LIMIT 1
+            """, (empresa_uuid,))
+            row = cursor.fetchone()
+        return row["id"] if row else None
+
+    def sync_raci_to_intel_raci(self, dry_run: bool = True) -> Dict[str, Any]:
+        """Importa a linha de ATA do ConselhoOS como item de EXECUÇÃO no INTEL.
+
+        Passo 2 de `docs/RACI_FONTE_UNICA_PLANO.md`.
+
+        ⚠️ `dry_run=True` POR DEFAULT, e isso não é cerimônia. A importação só
+        pode rodar DEPOIS do pareamento manual (passo 3): as linhas que já foram
+        transcritas à mão não têm `conselhoos_raci_id`, então rodar antes cria uma
+        SEGUNDA cópia de cada um dos ~17 pares da Vallen e ~12 da Alba — o
+        conserto da duplicação viraria a sua maior fonte. O relatório traz
+        `ja_tem_par_sem_ponteiro`, que é exatamente quantos ainda faltam parear;
+        enquanto esse número não for ZERO, não rode com `dry_run=False`.
+
+        POR QUE AQUI NÃO VALE A GUARDA `skipped_not_renato` — e é a correção
+        central desta frente. `sync_raci_to_tasks` pula o item cujo R não é o
+        Renato (guarda de 07/06/26, `skipped_not_renato=535` medido hoje), e está
+        CERTA: task é a fila pessoal dele, e enchê-la com item da Sandra, do
+        Amadeo ou da Thalita foi um bug real. Mas RACI é a matriz da frente
+        INTEIRA — ela existe justamente para mostrar o que está com os outros.
+        Foi essa recusa que obrigou alguém a transcrever à mão o que o sync não
+        trazia, e é daí que veio a duplicação. Task filtra; RACI não.
+
+        Idempotente por `conselhoos_raci_id` (índice único parcial da migration
+        084): rodar duas vezes ATUALIZA, nunca duplica.
+
+        O que NÃO é sobrescrito no UPDATE: `status` e `notas` do lado INTEL. A
+        execução é viva e a ata é histórica — se o Renato mexeu no status aqui,
+        a importação não pode reverter para o que a reunião registrou há um mês.
+        """
+        resultado = {
+            "dry_run": dry_run,
+            "lidos_conselhoos": 0,
+            "criados": 0,
+            "atualizados": 0,
+            "sem_projeto": 0,
+            "ja_tem_par_sem_ponteiro": 0,
+            "empresas_sem_vinculo": [],
+            "pendentes_de_pareamento": [],
+        }
+        if not self.conselhoos_url:
+            resultado["error"] = "CONSELHOOS_DATABASE_URL não configurada"
+            return resultado
+
+        from services.raci_matrix import _chave_dedup
+
+        cos_conn = self._get_conselhoos_conn()
+        try:
+            cos_cur = cos_conn.cursor()
+            cos_cur.execute("""
+                SELECT r.id, r.empresa_id, r.area, r.acao, r.prazo, r.status,
+                       r.responsavel_r, r.responsavel_a, r.responsavel_c,
+                       r.responsavel_i, r.notas, e.nome AS empresa_nome
+                  FROM raci_itens r
+                  JOIN empresas e ON e.id = r.empresa_id
+            """)
+            linhas_cos = cos_cur.fetchall()
+        finally:
+            cos_conn.close()
+
+        resultado["lidos_conselhoos"] = len(linhas_cos)
+        projetos: Dict[str, Optional[int]] = {}
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            for r in linhas_cos:
+                emp = str(r["empresa_id"])
+                if emp not in projetos:
+                    projetos[emp] = self._projeto_da_empresa_cos(emp)
+                project_id = projetos[emp]
+                if not project_id:
+                    resultado["sem_projeto"] += 1
+                    nome = r.get("empresa_nome")
+                    if nome not in resultado["empresas_sem_vinculo"]:
+                        resultado["empresas_sem_vinculo"].append(nome)
+                    continue
+
+                # Já existe um gêmeo transcrito à mão, ainda sem ponteiro? Então
+                # este item PERTENCE ao passo 3 e importá-lo agora duplicaria.
+                cursor.execute("""
+                    SELECT id, acao FROM raci_itens
+                     WHERE project_id = %s AND conselhoos_raci_id IS NULL
+                """, (project_id,))
+                chave_cos = _chave_dedup(r["acao"])
+                gemeo = next(
+                    (x for x in cursor.fetchall()
+                     if _chave_dedup(x["acao"]) == chave_cos), None
+                )
+                if gemeo:
+                    resultado["ja_tem_par_sem_ponteiro"] += 1
+                    resultado["pendentes_de_pareamento"].append({
+                        "intel_id": gemeo["id"],
+                        "conselhoos_id": str(r["id"]),
+                        "acao": (r["acao"] or "")[:90],
+                    })
+                    continue
+
+                if dry_run:
+                    resultado["criados"] += 1
+                    continue
+
+                cursor.execute("""
+                    INSERT INTO raci_itens
+                        (project_id, area, acao, responsavel_r, responsavel_a,
+                         responsavel_c, responsavel_i, prazo, status, notas,
+                         origem, conselhoos_raci_id)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'conselhoos',%s)
+                    ON CONFLICT (conselhoos_raci_id) DO UPDATE
+                        SET area = EXCLUDED.area,
+                            acao = EXCLUDED.acao,
+                            responsavel_r = EXCLUDED.responsavel_r,
+                            responsavel_a = EXCLUDED.responsavel_a,
+                            responsavel_c = EXCLUDED.responsavel_c,
+                            responsavel_i = EXCLUDED.responsavel_i,
+                            prazo = EXCLUDED.prazo,
+                            atualizado_em = NOW()
+                    RETURNING (xmax = 0) AS inseriu
+                """, (
+                    project_id,
+                    (r.get("area") or "").strip() or None,
+                    (r.get("acao") or "").strip(),
+                    (r.get("responsavel_r") or "").strip() or None,
+                    (r.get("responsavel_a") or "").strip() or None,
+                    (r.get("responsavel_c") or "").strip() or None,
+                    (r.get("responsavel_i") or "").strip() or None,
+                    r.get("prazo"),
+                    (r.get("status") or "pendente"),
+                    (r.get("notas") or "").strip() or None,
+                    str(r["id"]),
+                ))
+                row = cursor.fetchone()
+                if row and row.get("inseriu"):
+                    resultado["criados"] += 1
+                else:
+                    resultado["atualizados"] += 1
+            if not dry_run:
+                conn.commit()
+
+        return resultado
+
     def full_sync(self) -> Dict[str, Any]:
         """
         Run full bidirectional sync.
