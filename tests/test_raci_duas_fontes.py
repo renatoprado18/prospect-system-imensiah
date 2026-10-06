@@ -28,6 +28,7 @@ Rodar:
 """
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -357,6 +358,36 @@ def test_conselhoos_fora_do_ar_NAO_vira_lista_vazia(monkeypatch):
     out = rm.propor_pareamento(24)
     assert "error" in out and "indisponível" in out["error"]
     assert "pendentes" not in out
+
+
+def test_item_declarado_sem_par_NAO_volta_a_ser_oferecido(monkeypatch):
+    """A decisão de "nunca passou por conselho" tem de SOBREVIVER à tela.
+
+    O defeito que a migration 085 conserta, achado em 06/10 logo depois de o
+    Renato terminar o passo 3: "sem par" gravava `conselhoos_raci_id = NULL` —
+    o MESMO valor de "ainda não decidi". Reabrir a tela mostrava os 12 itens
+    decididos como pendentes outra vez, e ninguém conseguia responder se o
+    pareamento tinha acabado, que é o gate da importação. Ausência não se
+    audita; afirmação datada, sim.
+    """
+    _fake_db(monkeypatch,
+             {"id": 24, "nome": "Vallen", "conselhoos_empresa_id": "uuid"},
+             [{"id": 1, "acao": "nunca passou por conselho", "responsavel_r": None,
+               "prazo": None, "status": "pendente", "conselhoos_raci_id": None,
+               "sem_par_declarado_em": datetime(2026, 10, 6, 17, 20)},
+              {"id": 2, "acao": "ainda não decidido", "responsavel_r": None,
+               "prazo": None, "status": "pendente", "conselhoos_raci_id": None,
+               "sem_par_declarado_em": None}])
+    monkeypatch.setattr(rm, "_fetch_conselhoos_status", lambda u: (
+        [_item(rm.FONTE_CONSELHOOS, "c9", "nunca passou por conselho")], None))
+
+    out = rm.propor_pareamento(24)
+    assert out["declarados_sem_par"] == 1
+    ids = [p["intel_id"] for p in out["pendentes"]]
+    assert ids == [2], (
+        "o item 1 já foi decidido — reofertá-lo é pedir de novo um trabalho feito, "
+        "mesmo havendo uma linha de ata de texto idêntico esperando"
+    )
 
 
 def test_projeto_sem_vinculo_nao_entra_no_pareamento(monkeypatch):

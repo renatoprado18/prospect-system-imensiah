@@ -23947,7 +23947,7 @@ async def api_raci_parear(intel_id: int, request: Request):
                 detail="informe conselhoos_raci_id, ou sem_par=true pra declarar "
                        "que este item nunca passou por reuniao de conselho")
     from services.raci_matrix import definir_par
-    out = definir_par(intel_id, alvo)
+    out = definir_par(intel_id, alvo, sem_par=bool(data.get("sem_par")))
     if out.get("error"):
         raise HTTPException(status_code=409, detail=out["error"])
     return out

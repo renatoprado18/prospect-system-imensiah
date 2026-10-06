@@ -681,7 +681,8 @@ def propor_pareamento(project_id: int) -> Dict:
         proj = dict(proj)
 
         cursor.execute("""
-            SELECT id, acao, responsavel_r, prazo, status, conselhoos_raci_id
+            SELECT id, acao, responsavel_r, prazo, status, conselhoos_raci_id,
+                   sem_par_declarado_em
               FROM raci_itens WHERE project_id = %s ORDER BY id
         """, (project_id,))
         intel = [dict(r) for r in cursor.fetchall()]
@@ -699,10 +700,16 @@ def propor_pareamento(project_id: int) -> Dict:
     ja_apontados = {str(i["conselhoos_raci_id"]) for i in intel if i["conselhoos_raci_id"]}
     livres = [c for c in cos_itens if str(c["id"]) not in ja_apontados]
 
-    pendentes, ja_pareados = [], 0
+    pendentes, ja_pareados, declarados_sem_par = [], 0, 0
     for i in intel:
         if i["conselhoos_raci_id"]:
             ja_pareados += 1
+            continue
+        if i.get("sem_par_declarado_em"):
+            # Já foi olhado e decidido: "nunca passou por conselho". Reofertar
+            # seria pedir de novo um trabalho já feito — e foi exatamente o que
+            # acontecia antes da 085, quando a decisão não tinha onde morar.
+            declarados_sem_par += 1
             continue
         chave = _chave_dedup(i["acao"])
         exato = next((c for c in livres if _chave_dedup(c["acao"]) == chave), None)
@@ -738,25 +745,42 @@ def propor_pareamento(project_id: int) -> Dict:
         "total_pendentes": len(pendentes),
         "com_sugestao_exata": sum(1 for p in pendentes if p["sugestao_automatica"]),
         "ja_pareados": ja_pareados,
+        "declarados_sem_par": declarados_sem_par,
         "conselhoos_livres": len(livres),
     }
 
 
-def definir_par(intel_id: int, conselhoos_raci_id: Optional[str]) -> Dict:
-    """Grava (ou limpa) o ponteiro de um item INTEL. `None` = "sem par".
+def definir_par(intel_id: int, conselhoos_raci_id: Optional[str],
+                sem_par: bool = False) -> Dict:
+    """Grava o ponteiro, DECLARA que não há par, ou desfaz a decisão.
 
-    O índice único parcial da migration 084 é quem garante que dois itens do
-    INTEL não apontem para a mesma linha de ata — então um engano de clique
-    vira erro legível aqui, não duas execuções para a mesma deliberação.
+    Três estados, e a distinção entre os dois últimos é o conserto da migration
+    085. Antes, "sem par" gravava NULL — o mesmo valor de "ainda não decidi" —
+    e a decisão de quem olhou item por item não ficava em lugar nenhum:
+    reabrir a tela mostrava tudo como pendente de novo, e não havia como
+    responder se o pareamento tinha terminado.
+
+      · `conselhoos_raci_id` preenchido → aponta para a linha de ata;
+      · `sem_par=True` → declara, COM DATA, que esta execução nunca passou por
+        reunião de conselho. Ausência vira afirmação, e afirmação se audita;
+      · ambos vazios → desfaz, devolvendo o item a "não decidido".
+
+    O índice único parcial da 084 garante que dois itens do INTEL não apontem
+    para a mesma linha de ata; o CHECK da 085 impede o estado contraditório de
+    apontar e declarar ao mesmo tempo. Nos dois casos quem recusa é o banco, não
+    a boa intenção de quem chama.
     """
     with get_db() as conn:
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                UPDATE raci_itens SET conselhoos_raci_id = %s, atualizado_em = NOW()
+                UPDATE raci_itens
+                   SET conselhoos_raci_id = %s,
+                       sem_par_declarado_em = CASE WHEN %s THEN NOW() ELSE NULL END,
+                       atualizado_em = NOW()
                  WHERE id = %s
-             RETURNING id, conselhoos_raci_id
-            """, (conselhoos_raci_id, intel_id))
+             RETURNING id, conselhoos_raci_id, sem_par_declarado_em
+            """, (conselhoos_raci_id, bool(sem_par), intel_id))
             row = cursor.fetchone()
             if not row:
                 return {"error": f"item INTEL {intel_id} não encontrado"}
@@ -769,7 +793,8 @@ def definir_par(intel_id: int, conselhoos_raci_id: Optional[str]) -> Dict:
             return {"error": f"{type(e).__name__}: {e}"}
     r = dict(row)
     return {"ok": True, "intel_id": r["id"],
-            "conselhoos_raci_id": str(r["conselhoos_raci_id"]) if r["conselhoos_raci_id"] else None}
+            "conselhoos_raci_id": str(r["conselhoos_raci_id"]) if r["conselhoos_raci_id"] else None,
+            "sem_par_declarado_em": r["sem_par_declarado_em"].isoformat() if r.get("sem_par_declarado_em") else None}
 
 
 def _ja_existe_no_conselhoos(project_id: int, acao: str) -> Optional[str]:

@@ -114,6 +114,7 @@ function render(){
     <div class="pill"><b>${dados.total_pendentes}</b> a parear</div>
     <div class="pill"><b>${dados.com_sugestao_exata}</b> com par exato</div>
     <div class="pill"><b>${dados.ja_pareados}</b> já pareados</div>
+    <div class="pill"><b>${dados.declarados_sem_par ?? 0}</b> declarados sem par</div>
     <div class="pill"><b>${dados.conselhoos_livres}</b> linhas de ata livres</div>`;
 
   if(!dados.total_pendentes){
