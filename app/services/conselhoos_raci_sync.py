@@ -763,7 +763,22 @@ class ConselhoOSRaciSyncService:
                     continue
 
                 if dry_run:
-                    resultado["criados"] += 1
+                    # Distinguir CRIAR de ATUALIZAR, e a distinção não é detalhe
+                    # de relatório. Depois do passo 3 há itens do INTEL que já
+                    # apontam para esta linha de ata: o `ON CONFLICT` vai
+                    # atualizá-los, não criar nada. Contar tudo como "criaria"
+                    # fazia o ensaio prever 107 linhas novas numa matriz de 63
+                    # — isto é, 170 itens — quando o resultado real é 139. Um
+                    # ensaio que superestima o efeito sobre RACI de cliente é
+                    # tão ruim quanto um que o subestima: nos dois casos a
+                    # decisão de rodar é tomada sobre um número falso.
+                    cursor.execute(
+                        "SELECT 1 FROM raci_itens WHERE conselhoos_raci_id = %s",
+                        (str(r["id"]),))
+                    if cursor.fetchone():
+                        resultado["atualizados"] += 1
+                    else:
+                        resultado["criados"] += 1
                     continue
 
                 cursor.execute("""
