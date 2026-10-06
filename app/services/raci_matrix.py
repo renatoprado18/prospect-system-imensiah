@@ -167,6 +167,13 @@ def _normalize(row: Dict, fonte: str) -> Dict:
         "status_label": STATUS_LABEL.get(status_efetivo, status_efetivo),
         "notas": (row.get("notas") or "").strip() or None,
         "task_id": row.get("task_id"),
+        # O ponteiro para a linha de ata que originou esta execução (084). Tem de
+        # sobreviver à normalização porque é ele que distingue "a mesma coisa
+        # declarada nos dois lugares" de "duplicata" — sem ele, a detecção acusa
+        # como duplicado todo item importado, que por construção tem o texto
+        # idêntico ao da sua própria ata.
+        "conselhoos_raci_id": (str(row["conselhoos_raci_id"])
+                               if row.get("conselhoos_raci_id") else None),
         # Editar vale nas duas fontes (write-through, 29/07). Remover, não:
         # `removivel` é o que separa mexer numa linha de destruí-la.
         "editavel": True,
@@ -182,7 +189,7 @@ def _fetch_intel(cursor, project_id: int) -> List[Dict]:
     cursor.execute("""
         SELECT id, area, acao, responsavel_r, responsavel_a, responsavel_c,
                responsavel_i, prazo, status, notas, task_id,
-               concluido_em, concluido_em_fonte
+               concluido_em, concluido_em_fonte, conselhoos_raci_id
           FROM raci_itens
          WHERE project_id = %s
     """, (project_id,))
@@ -366,6 +373,21 @@ def _detectar_duplicatas(itens: List[Dict]) -> List[Dict]:
             continue
         for i in a:
             for c in b:
+                # LIGADO POR PONTEIRO NÃO É DUPLICATA — é a MESMA coisa, dita
+                # duas vezes de propósito: a ata registra a deliberação, o INTEL
+                # registra a execução dela, e o `conselhoos_raci_id` declara que
+                # são a mesma. Sem esta linha, depois da importação de 06/10 a
+                # detecção acusava 80 "duplicatas" na Vallen e 27 na Alba —
+                # todas falsas, porque todo item importado tem, por construção,
+                # texto idêntico à ata que o originou. A guarda de 409 bloquearia
+                # 100% dos envios ao grupo do cliente, e uma guarda que grita
+                # sempre é uma guarda que ninguém lê.
+                #
+                # O que ela continua pegando é o que importa: a transcrição
+                # manual não pareada, que é a duplicação de verdade.
+                if i.get("conselhoos_raci_id") and \
+                        str(i["conselhoos_raci_id"]) == _split_uid(c["uid"])[1]:
+                    continue
                 pares.append({
                     "motivo": "texto_identico",
                     "acao": i["acao"],

@@ -787,7 +787,17 @@ class ConselhoOSRaciSyncService:
                          responsavel_c, responsavel_i, prazo, status, notas,
                          origem, conselhoos_raci_id)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'conselhoos',%s)
-                    ON CONFLICT (conselhoos_raci_id) DO UPDATE
+                    -- O predicado TEM de ser repetido aqui. O índice da 084 é
+                    -- PARCIAL (`WHERE conselhoos_raci_id IS NOT NULL`, porque
+                    -- execução que nunca passou por conselho precisa poder ficar
+                    -- NULL), e o Postgres só casa um índice parcial com um
+                    -- ON CONFLICT que declare o mesmo predicado. Sem isto:
+                    -- "there is no unique or exclusion constraint matching the
+                    -- ON CONFLICT specification" — e o dry-run NUNCA pegaria,
+                    -- porque ele não chega a executar o INSERT.
+                    ON CONFLICT (conselhoos_raci_id)
+                        WHERE conselhoos_raci_id IS NOT NULL
+                    DO UPDATE
                         SET area = EXCLUDED.area,
                             acao = EXCLUDED.acao,
                             responsavel_r = EXCLUDED.responsavel_r,

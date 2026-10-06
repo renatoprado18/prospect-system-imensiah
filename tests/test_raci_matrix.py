@@ -353,6 +353,34 @@ def test_projeto_de_conselho_LE_SO_O_INTEL_mas_ainda_confere_a_ata(matriz):
     assert r["duplicatas_checadas"] is True
 
 
+def test_ligado_por_ponteiro_NAO_e_duplicata(matriz):
+    """Depois da importação de 06/10, todo item do INTEL tem, POR CONSTRUÇÃO,
+    texto idêntico à ata que o originou — ele veio dela.
+
+    Sem distinguir, a detecção acusava 80 "duplicatas" na Vallen e 27 na Alba,
+    todas falsas, e a guarda de 409 bloquearia 100% dos envios ao grupo do
+    cliente. Guarda que grita sempre é guarda que ninguém lê.
+
+    O que ela CONTINUA pegando é a duplicação de verdade: a transcrição manual
+    que ninguém pareou — mesmo texto, sem ponteiro.
+    """
+    matriz(PROJ_CONSELHO,
+           [linha(id=1, acao="mesma ação", conselhoos_raci_id="abc-123"),
+            linha(id=2, acao="transcrita à mão")],
+           conselhoos=[linha(id="abc-123", acao="mesma ação"),
+                       linha(id="def-456", acao="transcrita à mão")])
+    r = get_matrix(24)
+
+    acoes = [d["acao"] for d in r["duplicatas"]]
+    assert "mesma ação" not in acoes, (
+        "o item 1 aponta para a ata 'abc-123': é a MESMA coisa declarada nos dois "
+        "lugares, não duas"
+    )
+    assert acoes == ["transcrita à mão"], (
+        "o item 2 tem gêmeo textual e nenhum ponteiro — essa é a duplicação real"
+    )
+
+
 def test_conselhoos_fora_do_ar_NAO_vira_duplicatas_zero(matriz):
     """Lista vazia por ignorância e lista vazia por conferência são iguais na
     tela e opostas no risco. Quem consome isto é a guarda que decide se o grupo
