@@ -58,6 +58,16 @@ button:disabled{opacity:.45;cursor:default}
 .erro{color:var(--alerta);font-weight:600;font-size:13px}
 .vazio{text-align:center;padding:40px;color:var(--muted)}
 a.volta{color:var(--gold-deep);font-size:13px;text-decoration:none}
+/* Barra fixa: com 15 itens, clicar "Confirmar" um a um é 15 idas ao rodapé de
+   cada cartão. Escolher tudo e gravar de uma vez é o fluxo real — mas o botão
+   diz SEPARADAMENTE quantos são pareamento e quantos são "sem par", porque as
+   duas coisas têm consequências diferentes e somá-las esconderia a segunda. */
+.barra{position:fixed;left:0;right:0;bottom:0;background:var(--charcoal);color:var(--creme);
+       padding:12px 20px;display:flex;gap:14px;align-items:center;justify-content:center;
+       box-shadow:0 -2px 14px rgba(0,0,0,.18);z-index:9}
+.barra .cont{font-size:13px;color:#cdbfae}
+.barra .cont b{color:var(--gold);font-family:'JetBrains Mono',monospace}
+.barra button{padding:9px 18px}
 </style>
 </head>
 <body>
@@ -75,7 +85,8 @@ a.volta{color:var(--gold-deep);font-size:13px;text-decoration:none}
   </div>
 
   <div id="placar" class="placar"></div>
-  <div id="corpo"></div>
+  <div id="corpo"><div class="vazio">Montando a proposta — a consulta vai ao ConselhoOS,
+    o que leva alguns segundos.</div></div>
   <p style="margin-top:20px"><a class="volta" href="/projetos/{{ project_id }}/raci">← voltar para a matriz</a></p>
 </div>
 
@@ -151,6 +162,77 @@ function render(){
     </div>`;
   }).join('');
   document.getElementById('corpo').innerHTML = html;
+  montarBarra();
+  document.getElementById('corpo').addEventListener('change', atualizarBarra);
+}
+
+function pendentesEscolhidos(){
+  // Só o que está selecionado E ainda não foi gravado.
+  const out = {pares: [], sem: []};
+  (dados.pendentes || []).forEach(p => {
+    const card = document.getElementById(`item-${p.intel_id}`);
+    if(!card || card.classList.contains('resolvido')) return;
+    const sel = document.querySelector(`input[name="p${p.intel_id}"]:checked`);
+    if(!sel) return;
+    (sel.value === '__sem__' ? out.sem : out.pares).push({id: p.intel_id, valor: sel.value});
+  });
+  return out;
+}
+
+function montarBarra(){
+  if(document.getElementById('barra')) { atualizarBarra(); return; }
+  const b = document.createElement('div');
+  b.className = 'barra'; b.id = 'barra';
+  b.innerHTML = `<span class="cont" id="barra-cont"></span>
+    <button id="barra-btn" onclick="confirmarEscolhidos()">Confirmar os escolhidos</button>
+    <span id="barra-msg" class="cont"></span>`;
+  document.body.appendChild(b);
+  atualizarBarra();
+}
+
+function atualizarBarra(){
+  const e = pendentesEscolhidos();
+  const falta = (dados.pendentes || []).filter(p => {
+    const c = document.getElementById(`item-${p.intel_id}`);
+    return c && !c.classList.contains('resolvido');
+  }).length;
+  const cont = document.getElementById('barra-cont');
+  const btn = document.getElementById('barra-btn');
+  if(!cont || !btn) return;
+  if(!falta){
+    cont.innerHTML = '✅ tudo resolvido neste projeto — pode fechar a aba';
+    btn.disabled = true; btn.textContent = 'Nada a confirmar';
+    return;
+  }
+  cont.innerHTML = `<b>${e.pares.length + e.sem.length}</b> escolhidos de <b>${falta}</b> que faltam`;
+  btn.disabled = !(e.pares.length + e.sem.length);
+  const partes = [];
+  if(e.pares.length) partes.push(`${e.pares.length} pareamento${e.pares.length>1?'s':''}`);
+  if(e.sem.length) partes.push(`${e.sem.length} “sem par”`);
+  btn.textContent = partes.length ? `Confirmar ${partes.join(' e ')}` : 'Confirmar os escolhidos';
+}
+
+async function confirmarEscolhidos(){
+  const btn = document.getElementById('barra-btn'); btn.disabled = true;
+  const msg = document.getElementById('barra-msg');
+  const e = pendentesEscolhidos();
+  const todos = [...e.pares, ...e.sem];
+  let ok = 0, falhou = 0;
+  for(const item of todos){
+    try{
+      await gravar(item.id, item.valor);
+      document.getElementById(`item-${item.id}`).classList.add('resolvido');
+      const m = document.getElementById(`msg-${item.id}`);
+      m.className='feito'; m.textContent = item.valor === '__sem__' ? '✓ marcado como sem par' : '✓ pareado';
+      ok++;
+    }catch(err){
+      falhou++;
+      const m = document.getElementById(`msg-${item.id}`);
+      m.className='erro'; m.textContent = '✗ ' + err.message;
+    }
+  }
+  msg.innerHTML = ` <b>${ok} gravados</b>${falhou?`, <span class="erro">${falhou} falharam</span>`:''}.`;
+  atualizarBarra();
 }
 
 async function gravar(intelId, valor){
@@ -170,6 +252,7 @@ async function salvar(intelId){
     document.getElementById(`item-${intelId}`).classList.add('resolvido');
     msg.className='feito';
     msg.textContent = sel.value === '__sem__' ? '✓ marcado como sem par' : '✓ pareado';
+    atualizarBarra();
   }catch(err){ msg.className='erro'; msg.textContent = '✗ ' + err.message; }
 }
 
