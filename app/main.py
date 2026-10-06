@@ -23852,6 +23852,19 @@ async def api_raci_send_to_group(project_id: int, request: Request):
                        f"({type(e).__name__}) — reenvie com confirmar_duplicatas=true "
                        "se quiser mandar sem a checagem")
     else:
+        # Buraco que existia desde sempre e que o passo 4 tornou crítico: quando
+        # o Neon do ConselhoOS está fora, `_fetch_conselhoos_status` devolve
+        # ([], erro) SEM levantar exceção — então `duplicatas` vinha vazio e o
+        # `except` acima nunca disparava. O envio ao grupo do cliente passava
+        # como "limpo" tendo checado NADA. Lista vazia por ignorância e lista
+        # vazia por conferência são a mesma coisa na tela e opostas no risco.
+        if not _m.get("duplicatas_checadas") and not _confirmado:
+            raise HTTPException(
+                status_code=409,
+                detail="nao foi possivel conferir duplicatas: o ConselhoOS nao "
+                       "respondeu, entao a matriz pode conter a mesma linha duas "
+                       "vezes sem que isso apareca aqui. Reenvie com "
+                       "confirmar_duplicatas=true se quiser mandar assim mesmo")
         if _dups and not _confirmado:
             _divergentes = sum(1 for d in _dups if d.get("status_divergente"))
             raise HTTPException(

@@ -328,13 +328,42 @@ PROJ_SIMPLES = {
 }
 
 
-def test_projeto_de_conselho_une_as_duas_fontes(matriz):
+def test_projeto_de_conselho_LE_SO_O_INTEL_mas_ainda_confere_a_ata(matriz):
+    """PASSO 4 (06/10/26) — a leitura virou fonte única, e este teste trocou de
+    lado de propósito: antes ele afirmava que a matriz UNIA as duas bases.
+
+    Unir era a causa da inflação (Vallen +70%, Alba +83%): cada deliberação que
+    existia dos dois lados aparecia duas vezes. Decisão do Renato em 26/09,
+    reafirmada em 05/10 — a execução mora no INTEL.
+
+    O que NÃO mudou, e é o motivo de o ConselhoOS continuar sendo consultado:
+    ele alimenta a CONFERÊNCIA de duplicata. Parar de consultá-lo faria
+    `duplicatas` devolver zero sem ter olhado, e a guarda de 409 do envio ao
+    grupo do cliente viraria um verificador que certifica o que não mediu.
+    """
     matriz(PROJ_CONSELHO, [linha(id=1, acao="do intel")],
            conselhoos=[linha(id=99, acao="do conselhoos")])
     r = get_matrix(24)
-    assert r["total"] == 2
-    assert {i["fonte"] for i in r["itens"]} == {FONTE_INTEL, FONTE_CONSELHOOS}
-    assert [f["fonte"] for f in r["fontes"]] == [FONTE_INTEL, FONTE_CONSELHOOS]
+    assert r["total"] == 1, "a lista é só INTEL — a linha de ata não entra"
+    assert {i["fonte"] for i in r["itens"]} == {FONTE_INTEL}
+
+    conselho = [f for f in r["fontes"] if f["fonte"] == FONTE_CONSELHOOS][0]
+    assert conselho["itens"] == 1, "foi consultado, e o relatório diz quantas viu"
+    assert conselho["exibida"] is False
+    assert r["duplicatas_checadas"] is True
+
+
+def test_conselhoos_fora_do_ar_NAO_vira_duplicatas_zero(matriz):
+    """Lista vazia por ignorância e lista vazia por conferência são iguais na
+    tela e opostas no risco. Quem consome isto é a guarda que decide se o grupo
+    do CLIENTE recebe a matriz — e ela precisa saber a diferença."""
+    matriz(PROJ_CONSELHO, [linha(id=1)],
+           conselhoos=[], erro_conselhoos="connection refused")
+    r = get_matrix(24)
+    assert r["duplicatas_total"] == 0
+    assert r["duplicatas_checadas"] is False, (
+        "não poder conferir não é estar limpo"
+    )
 
 
 def test_projeto_sem_empresa_nao_consulta_conselhoos(matriz):

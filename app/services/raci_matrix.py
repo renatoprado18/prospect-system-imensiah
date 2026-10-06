@@ -407,15 +407,33 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
 
     fontes = [{"fonte": FONTE_INTEL, "itens": len(itens), "erro": None}]
 
+    # PASSO 4 (06/10/26) — A LEITURA É SÓ-INTEL. Antes, a matriz concatenava as
+    # duas bases e cada deliberação que existia dos dois lados aparecia duas
+    # vezes (Vallen +70%, Alba +83%). Com os ponteiros da 084/085 no lugar, a
+    # execução mora num lugar só.
+    #
+    # ⚠️ MAS A BUSCA AO CONSELHOOS CONTINUA — e a distinção é o ponto. Ela não
+    # alimenta mais a LISTA; alimenta a CONFERÊNCIA. Se eu simplesmente parasse
+    # de consultar, `duplicatas` passaria a devolver zero sem ter olhado, e a
+    # guarda de 409 do envio ao grupo do cliente viraria um verificador que
+    # certifica o que não mediu — o modo de falha mais caro desta casa. Depois
+    # da importação, o esperado é zero DE VERDADE; se aparecer algo, é sinal de
+    # que a importação regrediu, e é exatamente isso que se quer saber.
+    conselho_itens, erro_cos = [], None
     empresa_uuid = projeto.get("conselhoos_empresa_id")
     if empresa_uuid:
-        conselho_itens, erro = _fetch_conselhoos_status(str(empresa_uuid))
-        itens.extend(conselho_itens)
+        conselho_itens, erro_cos = _fetch_conselhoos_status(str(empresa_uuid))
         fontes.append({
             "fonte": FONTE_CONSELHOOS,
             "empresa": projeto.get("empresa_nome"),
             "itens": len(conselho_itens),
-            "erro": erro,
+            "erro": erro_cos,
+            # O front usa `fontes` para decidir se mostra a legenda "itens
+            # marcados ConselhoOS gravam lá". Com a leitura unificada isso
+            # deixou de ser verdade, e legenda que sobrevive à mudança vira
+            # instrução errada numa tela que grava em banco de cliente.
+            "exibida": False,
+            "papel": "conferência de duplicata — não entra na lista",
         })
 
     resumo = {s: 0 for s in STATUS_ORDER}
@@ -459,10 +477,17 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
 
     # Detecção ANTES do filtro também: duplicata que só aparece quando se olha
     # "os atrasados" seria duplicata que a guarda do envio não vê.
-    duplicatas = _detectar_duplicatas(itens)
+    # A detecção recebe os dois lados DE PROPÓSITO, mesmo com a lista sendo só
+    # INTEL: ela compara execução com ata, e sem o segundo lado não compara nada.
+    duplicatas = _detectar_duplicatas(itens + conselho_itens)
     _uids_dup = {u for p in duplicatas for u in (p["intel_uid"], p["conselhoos_uid"])}
     for it in itens:
         it["duplicado"] = it["uid"] in _uids_dup
+
+    # Não poder checar NÃO é "não há duplicata". Quem consome isto (a guarda de
+    # 409 no envio ao grupo) precisa distinguir "conferi e está limpo" de "não
+    # consegui conferir", senão a abstenção vira carimbo de aprovação.
+    duplicatas_checadas = bool(empresa_uuid) and not erro_cos
 
     if status:
         itens = [it for it in itens if it["status_efetivo"] == status]
@@ -484,6 +509,7 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
         "acumulado": acumulado,
         "duplicatas": duplicatas,
         "duplicatas_total": len(duplicatas),
+        "duplicatas_checadas": duplicatas_checadas,
         "fontes": fontes,
         "filtro_status": status,
         "gerado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
