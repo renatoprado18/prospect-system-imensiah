@@ -509,7 +509,18 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
     # Não poder checar NÃO é "não há duplicata". Quem consome isto (a guarda de
     # 409 no envio ao grupo) precisa distinguir "conferi e está limpo" de "não
     # consegui conferir", senão a abstenção vira carimbo de aprovação.
-    duplicatas_checadas = bool(empresa_uuid) and not erro_cos
+    #
+    # ⚠️ MAS "não há o que conferir" é a TERCEIRA resposta, e esquecê-la custou
+    # caro: a primeira versão (06/10) usava `bool(empresa_uuid) and not erro_cos`,
+    # o que marcava como NÃO-CONFERIDO todo projeto sem vínculo ConselhoOS — isto
+    # é, a MAIORIA deles. A guarda passaria a recusar o envio de RACI desses
+    # projetos para sempre, alegando falha numa conferência que nunca teve o que
+    # conferir. Guarda que bloqueia o caso são é tão inútil quanto guarda que
+    # libera o caso podre; as duas acabam desligadas.
+    #
+    # Sem segunda fonte não existe duplicata ENTRE fontes: a conferência é
+    # vacuamente completa, e dizer `True` aqui é a verdade, não uma concessão.
+    duplicatas_checadas = (not empresa_uuid) or (not erro_cos)
 
     if status:
         itens = [it for it in itens if it["status_efetivo"] == status]

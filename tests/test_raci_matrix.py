@@ -381,6 +381,23 @@ def test_ligado_por_ponteiro_NAO_e_duplicata(matriz):
     )
 
 
+def test_projeto_SEM_conselho_conta_como_conferido(matriz):
+    """A terceira resposta, que a primeira versão esqueceu: "não há o que conferir".
+
+    A maioria dos projetos não tem fonte-conselho. Tratá-los como
+    NÃO-CONFERIDOS faria a guarda de 409 recusar o envio de RACI deles para
+    sempre, alegando falha numa conferência que nunca teve o que conferir —
+    e guarda que bloqueia o caso são acaba desligada como as outras.
+    """
+    matriz(PROJ_SIMPLES, [linha(id=1)])
+    r = get_matrix(47)
+    assert r["duplicatas_total"] == 0
+    assert r["duplicatas_checadas"] is True, (
+        "sem segunda fonte não existe duplicata entre fontes: a conferência é "
+        "vacuamente completa"
+    )
+
+
 def test_conselhoos_fora_do_ar_NAO_vira_duplicatas_zero(matriz):
     """Lista vazia por ignorância e lista vazia por conferência são iguais na
     tela e opostas no risco. Quem consome isto é a guarda que decide se o grupo
