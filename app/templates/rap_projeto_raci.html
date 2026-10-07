@@ -62,6 +62,9 @@ body{
 .stat.on{border-color:var(--gold);background:#fff;box-shadow:inset 0 0 0 1px var(--gold)}
 .stat .n{font-family:'Playfair Display',Georgia,serif;font-size:24px;font-weight:700;line-height:1}
 .stat .l{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-weight:600}
+/* "N com movimento" sob o card de atrasados: a segunda dimensão (atividade) ao
+   lado da primeira (prazo), sem competir com o número grande. */
+.stat .sub{font-size:9.5px;color:var(--andamento);margin-top:3px;font-weight:600}
 .stat[data-s="atrasado"]{border-left-color:var(--atrasado)}
 .stat[data-s="pendente"]{border-left-color:var(--pendente)}
 .stat[data-s="em_andamento"]{border-left-color:var(--andamento)}
@@ -451,12 +454,26 @@ function render(){
        O que está abaixo é só o restante.</div>`
     : '';
 
+  // O CARD "EM ANDAMENTO" É ESTRUTURALMENTE ZERO, e por isso informa nada.
+  // `status_efetivo` converte TODO item com prazo vencido em `atrasado` —
+  // inclusive os `em_andamento`. Como quase tudo aqui está vencido, a tela
+  // mostrava "17 atrasados / 0 em andamento" num dia em que DOZE deles tinham
+  // movimento, incluindo os quatro contratos que a Lara enviou anteontem.
+  // Atrasado é sobre PRAZO; em-andamento é sobre ATIVIDADE — colapsar as duas
+  // apaga o sinal de que a frente respira, que é o que sustenta a conversa com
+  // o cliente. O `movimento` vem pronto de `get_matrix`; aqui era descartado.
+  const mov = (dados.movimento || {}).atrasados_com_movimento || 0;
   document.getElementById('resumo').innerHTML =
-    ['atrasado','pendente','em_andamento','concluido'].map(s => `
+    ['atrasado','pendente','em_andamento','concluido'].map(s => {
+      const sub = (s === 'atrasado' && mov)
+        ? `<div class="sub">${mov} com movimento</div>` : '';
+      return `
       <div class="stat ${filtro === s ? 'on' : ''}" data-s="${s}" onclick="filtrar('${s}')">
         <div class="n">${dados.resumo[s] || 0}</div>
         <div class="l">${LABELS[s]}</div>
-      </div>`).join('');
+        ${sub}
+      </div>`;
+    }).join('');
 
   // O ACUMULADO. Os statcards dizem o que está ABERTO — e em 10/08 essa foto
   // parcial custou caro: a tela mostrava "10 abertos, 5 atrasados" e o Renato
@@ -493,7 +510,15 @@ function render(){
   // Onde a edição vai parar não pode ser adivinhado: numa matriz de conselho
   // clicar numa célula grava no banco de OUTRO produto. Dizer isso uma vez no
   // topo evita a surpresa e a pergunta "isso salvou onde?".
-  const temConselho = dados.fontes.some(f => f.fonte === 'conselhoos' && f.itens);
+  // `exibida !== false` é o que importa, não `itens > 0` (07/10/26). Depois do
+  // passo 4 a fonte ConselhoOS CONTINUA sendo consultada — para conferir
+  // duplicata — mas não entra mais na lista. Ela segue em `fontes` com 80 itens
+  // e `exibida: false`, então a regra antiga mantinha no ar a legenda
+  // "itens marcados ConselhoOS gravam LÁ, não aqui". Isso virou instrução
+  // ERRADA numa tela que grava em banco de cliente: hoje toda linha visível é
+  // do INTEL e grava aqui mesmo.
+  const temConselho = dados.fontes.some(
+    f => f.fonte === 'conselhoos' && f.itens && f.exibida !== false);
   document.getElementById('legenda-edicao').innerHTML = temConselho
     ? `Clique em qualquer célula pra editar. Itens marcados <b>ConselhoOS</b>
        gravam <b>no ConselhoOS</b> (não aqui) e lá o prazo é obrigatório —
