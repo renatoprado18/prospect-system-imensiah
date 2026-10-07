@@ -34,23 +34,27 @@ psycopg2 = pytest.importorskip("psycopg2")
 import psycopg2.extras  # noqa: E402
 
 
-def _conn():
-    """Conexão com o banco LOCAL de desenvolvimento.
-
-    Nunca prod: este teste ESCREVE (e desfaz). Apontar para o Neon sujaria a
-    matriz de um cliente mesmo com rollback no caminho feliz.
-    """
-    url = os.environ.get("TEST_DATABASE_URL", "postgresql://localhost:5432/intel")
-    return psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
-
-
 @pytest.fixture
 def cur():
-    try:
-        conn = _conn()
-    except psycopg2.OperationalError as e:
-        pytest.skip(f"Postgres local fora do ar ({e.__class__.__name__}) — "
-                    "suba com ./dev.sh; este teste precisa de banco real")
+    """Conexão pelo helper do projeto, NUNCA `psycopg2.connect(DSN)` na mão.
+
+    🔴 07/10: a primeira versão conectava direto em
+    `postgresql://localhost:5432/intel`. Passava SOZINHA e era PULADA na suíte
+    inteira — o `.env` define `PGUSER=neondb_owner` (Neon), algum teste anterior
+    roda `load_dotenv`, e um DSN local sem usuário faz o libpq usar esse PGUSER
+    contra o Postgres local: `role "neondb_owner" does not exist`.
+
+    O pior não foi o erro — foi o DIAGNÓSTICO. Meu `except OperationalError`
+    chamava isso de "Postgres local fora do ar, suba com ./dev.sh", com o banco
+    de pé e aceitando conexões. Skip que mente sobre a causa é skip que ninguém
+    investiga: os 5 testes desta frente estavam fora da suíte e eu quase relatei
+    "1697 passed" sem notar que não haviam rodado.
+
+    O repo já conhecia a armadilha (`test_merge_fk_lista_completa`,
+    `test_merge_preserva_veto`) e já tinha a saída: o helper do projeto.
+    """
+    from database import get_connection
+    conn = get_connection()
     try:
         c = conn.cursor()
         yield c
