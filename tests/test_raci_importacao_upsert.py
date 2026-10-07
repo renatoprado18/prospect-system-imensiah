@@ -126,6 +126,60 @@ def test_o_indice_e_parcial_e_por_isso_varios_NULL_convivem(cur):
     assert cur.fetchone()["n"] == 3
 
 
+def test_conclusao_RETROATIVA_mantem_a_data_do_fato(cur):
+    """Migration 086. Conclusão quase nunca é registrada no instante em que
+    acontece — chega por relato no grupo, por ata lida depois, por sessão que
+    varre a semana.
+
+    O trigger datava pela ESCRITA no caminho de UPDATE (respeitava data explícita
+    só no INSERT). Em 07/10 isso carimbou 07/10 num item que o Renato concluiu em
+    05/10, com registro no grupo do cliente. É a mesma classe do check G da /cos
+    (ordenar conversa pela INGESTÃO em vez do ENVIO) — e aqui contamina
+    `concluido_no_prazo`: item entregue no prazo e registrado uma semana depois
+    aparece como fora do prazo, contra o cliente.
+    """
+    pid = _projeto_temporario(cur)
+    cur.execute("""
+        INSERT INTO raci_itens (project_id, acao, status, origem, prazo)
+        VALUES (%s, 'entregue no prazo, registrado tarde', 'pendente', 'manual', DATE '2026-09-10')
+     RETURNING id
+    """, (pid,))
+    item = cur.fetchone()["id"]
+
+    cur.execute("""
+        UPDATE raci_itens
+           SET status='concluido',
+               concluido_em = TIMESTAMP '2026-09-05 15:02',
+               concluido_em_fonte = 'whatsapp_grupo'
+         WHERE id = %s
+     RETURNING concluido_em, concluido_em_fonte
+    """, (item,))
+    r = cur.fetchone()
+    assert r["concluido_em"].date().isoformat() == "2026-09-05", (
+        "a data informada é a do FATO e tem de sobreviver — quem informa, manda"
+    )
+    assert r["concluido_em_fonte"] == "whatsapp_grupo"
+
+
+def test_conclusao_SEM_data_informada_segue_carimbando_agora(cur):
+    """A outra metade da 086: o caso comum não mudou. Sem data informada, o
+    trigger carimba `now()` e marca 'gatilho' — e é isso que permite distinguir
+    depois o que foi carimbado no ato do que foi reconstruído por relato."""
+    pid = _projeto_temporario(cur)
+    cur.execute("""
+        INSERT INTO raci_itens (project_id, acao, status, origem)
+        VALUES (%s, 'concluído agora', 'pendente', 'manual') RETURNING id
+    """, (pid,))
+    item = cur.fetchone()["id"]
+
+    cur.execute(
+        "UPDATE raci_itens SET status='concluido' WHERE id=%s "
+        "RETURNING concluido_em, concluido_em_fonte", (item,))
+    r = cur.fetchone()
+    assert r["concluido_em"] is not None
+    assert r["concluido_em_fonte"] == "gatilho"
+
+
 def test_nao_se_pode_apontar_para_a_ata_E_declarar_que_nunca_passou(cur):
     """O CHECK da migration 085. Os dois estados juntos são contraditórios, e
     quem recusa é o banco — não a boa intenção de quem chama."""
