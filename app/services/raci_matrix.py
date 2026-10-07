@@ -602,11 +602,34 @@ def format_for_whatsapp(matrix: Dict, incluir_concluidos: bool = False) -> str:
         do_bucket = [i for i in itens if i["status_efetivo"] == bucket]
         if not do_bucket:
             continue
+
+        # MOVIMENTO, dentro do bucket de atrasados (07/10/26). `status_efetivo`
+        # converte TODO item com prazo vencido em `atrasado` — inclusive os que
+        # estão `em_andamento` de verdade. Como quase tudo na Vallen está com
+        # prazo vencido, o bucket "em andamento" fica estruturalmente vazio e o
+        # grupo do cliente recebia 18 linhas indistinguíveis, com os contratos
+        # que a Lara enviou anteontem parecendo tão parados quanto um item que
+        # ninguém tocou desde agosto.
+        #
+        # Atrasado é sobre PRAZO; em-andamento é sobre ATIVIDADE. Colapsar as
+        # duas perde exatamente o sinal que sustenta a conversa com o cliente —
+        # e a RACI que o Renato mandou à mão em 05/10 dizia "11 em andamento,
+        # 11 com prazo vencido", ou seja, ele já fazia isso manualmente.
+        #
+        # O `get_matrix` já calcula `movimento`; aqui só se deixa de jogar fora.
+        com_mov = [i for i in do_bucket if i.get("status") == "em_andamento"]
+        sufixo = ""
+        if bucket == "atrasado" and com_mov:
+            sufixo = f" — _{len(com_mov)} com movimento_"
         linhas.append(f"{_EMOJI_STATUS[bucket]} *{_TITULO_BUCKET[bucket]} "
-                      f"({len(do_bucket)}):*")
-        for it in do_bucket:
+                      f"({len(do_bucket)}):*{sufixo}")
+        # Os que andam primeiro: quem lê rola a lista de cima para baixo e
+        # desiste no meio; enterrar o que se mexeu embaixo do que não se mexeu
+        # entrega a pior leitura possível da frente.
+        for it in sorted(do_bucket, key=lambda x: x.get("status") != "em_andamento"):
             prazo = f" ({it['prazo_br']})" if it.get("prazo_br") else ""
-            linhas.append(f"• {_cortar(it['acao'])} — *{_primeiro_nome(it.get('r'))}*{prazo}")
+            marca = "🔄 " if (bucket == "atrasado" and it.get("status") == "em_andamento") else ""
+            linhas.append(f"• {marca}{_cortar(it['acao'])} — *{_primeiro_nome(it.get('r'))}*{prazo}")
         linhas.append("")
 
     concluidos = [i for i in itens if i["status_efetivo"] == "concluido"]

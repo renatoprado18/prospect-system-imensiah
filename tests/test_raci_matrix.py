@@ -638,6 +638,43 @@ def test_agrupa_por_status_efetivo():
     assert txt.index("Atrasados") < txt.index("Pendentes")
 
 
+def test_atrasado_COM_movimento_se_distingue_do_parado():
+    """07/10/26 — o que o grupo do cliente recebia não dizia o que se mexeu.
+
+    `status_efetivo` converte TODO item com prazo vencido em `atrasado`,
+    inclusive os `em_andamento`. Como quase tudo na Vallen está vencido, o
+    bucket "em andamento" fica estruturalmente vazio e o grupo recebia 18 linhas
+    indistinguíveis: os contratos que a Lara enviou anteontem pareciam tão
+    parados quanto um item que ninguém toca desde agosto.
+
+    Atrasado é sobre PRAZO; em-andamento é sobre ATIVIDADE. O Renato já fazia
+    essa distinção À MÃO — a RACI que ele mandou em 05/10 dizia "11 em
+    andamento, 11 com prazo vencido".
+    """
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Parado desde agosto", status="pendente", prazo=ONTEM),
+        linha(id=2, acao="Contrato enviado ontem", status="em_andamento", prazo=ONTEM),
+    ]))
+    assert "Atrasados (2)" in txt
+    assert "com movimento" in txt, "o cabeçalho tem de dizer quantos se mexeram"
+    assert "🔄 Contrato enviado ontem" in txt
+    assert "🔄 Parado desde agosto" not in txt, "só marca o que REALMENTE anda"
+    assert txt.index("Contrato enviado ontem") < txt.index("Parado desde agosto"), (
+        "quem anda vem primeiro: a lista é lida de cima para baixo e abandonada "
+        "no meio"
+    )
+
+
+def test_sem_movimento_nenhum_o_cabecalho_nao_mente():
+    """Se nada anda, não se anuncia movimento — senão o rótulo vira enfeite e
+    deixa de informar quando houver."""
+    txt = format_for_whatsapp(_matriz([
+        linha(id=1, acao="Parado", status="pendente", prazo=ONTEM),
+    ]))
+    assert "Atrasados (1)" in txt
+    assert "com movimento" not in txt
+
+
 def test_concluidos_sao_contagem_por_padrao():
     """Quem lê o RACI no grupo quer saber o que FALTA."""
     txt = format_for_whatsapp(_matriz([
