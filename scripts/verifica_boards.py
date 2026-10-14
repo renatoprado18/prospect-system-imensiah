@@ -17,10 +17,16 @@ Medido em 07/08, quando este script nasceu: `session_locks.md` com 17,1 KB e
 `project_cos_status.md` com 12,1 KB — os dois quase no dobro do teto, lidos
 naquela mesma manhã sem que a sessão soubesse.
 
-O teto é 9 KB e não 8 pelo mesmo motivo do hook: o endpoint de sync devolve o
+O teto base é 9 KB e não 8 pelo mesmo motivo do hook: o endpoint de sync devolve o
 `.md` com frontmatter enriquecido (`originSessionId` + `modified`), o que engorda
 algumas centenas de bytes a cada escrita. Cobrar 8 KB exatos faria o autor cortar
 prosa boa por causa de metadado que ele não escreveu.
+
+Os tetos não são iguais entre os quatro arquivos e cada exceção está justificada
+no comentário do dicionário `BOARDS`, com o dano que a motivou: o `MEMORY.md` tem
+12 KB porque é índice e cortar índice é esquecer (14/08), e o
+`project_cos_status.md` subiu para 12 KB em 13/10 porque 9 KB passaram a obrigar
+o corte de informação viva, não de prosa envelhecida.
 
 `*_historico.md` é isento POR DESENHO: é arquivo morto, append-only, nunca lido
 na abertura. O teto existe justamente para empurrar conteúdo para dentro dele.
@@ -79,11 +85,34 @@ MEM = os.path.expanduser("~/.claude/projects/-Users-rap-prospect-system/memory")
 # — que é exatamente quando a regra "memória nova nasce no nível 2" está sendo
 # furada. O `MEMORY_NIVEL2.md` NÃO entra aqui: não é lido na abertura, e teto de
 # leitura sobre arquivo que ninguém carrega é alarme sem dano — o erro de 07/08.
+# 13/10/26 — `project_cos_status.md` SOBE PARA 12 KB, por decisão do Renato no
+# fecho da sessão. O motivo é o mesmo que justificou os 12 KB do MEMORY.md: o
+# alarme passou a pedir a coisa errada. Medido naquele dia, com duas frentes
+# simultâneas (as 4 premissas da irrigação + o conselho da Vallen com DMR,
+# relatório de marketing e o conflito do gate da Aptus), o board bateu 108% na
+# abertura e precisou de SETE rodadas de corte para fechar — 116%, 113%, 110%,
+# 107%, 104%, 103%, 102% —, e o que saiu em cada uma foi PROSA, não estado:
+# derivação que já morava na nota do projeto, nomes sem gate, adjetivo. A sétima
+# rodada já descia a seção de Monitoramento inteira, que não havia envelhecido.
+#
+# Teto que obriga a cortar informação viva inverte o próprio propósito: ele
+# existe para garantir que a abertura leia TUDO, e passou a garantir que houvesse
+# menos a ler. 9 KB calibravam um board de uma frente por dia; a carteira cresceu.
+#
+# O freio NÃO foi removido — mudou de lugar, e é por isso que subir é seguro:
+#   · a seção "## ✅ Fechado" segue em 3 KB com validade de 14 dias (SECOES abaixo),
+#     que é o dreno que de fato esvazia o board;
+#   · o `project_cos_status_historico.md` é append-only e nunca lido na abertura,
+#     então descer não apaga nada — mesmo argumento da partição do índice em 2 níveis;
+#   · 12 KB continua MUITO abaixo do limite prático de leitura da ferramenta
+#     (~25 KB, medido em 30/07 quando ela recusou abrir este mesmo arquivo).
+# Se voltar a oscilar colado em 12 KB, o conserto não é subir de novo: é partir o
+# board por frente. Subir duas vezes é como o aviso do hook virou paisagem.
 BOARDS = {
     "MEMORY.md":               (12288, "índice nível 1, lido em TODA sessão — acima disto, triar pro nível 2"),
     "session_locks.md":         (9216, "canal CoS⇄Dev"),
     "project_dev_backlog.md":   (9216, "roadmap dev"),
-    "project_cos_status.md":    (9216, "board executivo"),
+    "project_cos_status.md":   (12288, "board executivo"),
 }
 VERDE, AMARELO, VERMELHO = "🟢", "🟡", "🔴"
 
