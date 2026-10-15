@@ -13399,9 +13399,28 @@ async def admin_gmail_proxy(request: Request):
 
     Body:
         account: 'personal' | 'professional' | <email> | <account_id>
-        action: search_threads | get_thread | list_labels | label_thread |
-                unlabel_thread | archive_thread | create_draft | send_message
+        action: as 14 abaixo
         params: dict action-specific
+
+    ⚠️ ESTA LISTA ESTAVA INCOMPLETA E ISSO É CEGUEIRA DE CAPACIDADE, nao
+    detalhe de documentacao. Ela anunciava 8 acoes e omitia 6 — entre elas o
+    `get_attachment`. Em 10/10/2026 a CoS leu a lista, concluiu que nao dava
+    pra baixar anexo de e-mail e disse isso ao Renato; foi ele quem corrigiu.
+    Capacidade que existe e nao esta escrita e, na pratica, capacidade que nao
+    existe. **Ao somar acao aqui, somar na lista.**
+
+    Threads e mensagens:
+        search_threads · get_thread · trash_thread · trash_message
+        archive_thread · label_thread · unlabel_thread · list_labels
+        get_attachment   ← baixa anexo; devolve conteudo em base64URL
+    Escrita:
+        create_draft · send_message
+    Filtros:
+        list_filters · create_filter · delete_filter
+
+    `create_draft` aceita: to, subject, body, thread_id, cc, bcc,
+    attachments=[{filename, content_b64, mimetype?}], source, contact_id.
+    `to`/`cc`/`bcc` aceitam string "a@x, b@y" ou lista.
     """
     import base64 as _b64
 
@@ -13528,11 +13547,18 @@ async def admin_gmail_proxy(request: Request):
             return r.json()
 
         if action == "create_draft":
-            import email.mime.text as mime_text
-            msg = mime_text.MIMEText(params.get("body", ""))
-            msg["To"] = params.get("to", "")
-            msg["Subject"] = params.get("subject", "")
-            raw = _b64.urlsafe_b64encode(msg.as_bytes()).decode()
+            # A montagem vive em `services.gmail_mime` — pura e testável — e
+            # não aqui. Inline, ela só podia ser exercitada com conta Google,
+            # token e rede, e o teste que se escreveu no lugar era um espelho
+            # da lógica que passava verde com este arquivo revertido.
+            #
+            # O que ela conserta (10/10/2026): era um `MIMEText` com só `To` e
+            # `Subject`, e o `cc` em `params` era jogado fora SEM erro — o
+            # e-mail à Fernanda saiu sem o Orestes em cópia, com o corpo
+            # pedindo "Pai, consegue mandar para ela?" a quem não recebeu.
+            from services.gmail_mime import monta_raw
+
+            raw = monta_raw(params)
             payload = {"message": {"raw": raw}}
             if params.get("thread_id"):
                 payload["message"]["threadId"] = params["thread_id"]

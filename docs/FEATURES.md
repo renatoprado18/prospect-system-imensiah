@@ -663,6 +663,40 @@ mensagem enviada e **ignorava o `threadId`**.
 **⚠️ O message id MUDA no envio** (o rascunho tem um, o Gmail cria outro ao
 despachar). `thread_id` é a única âncora estável entre rascunho e enviado.
 
+🔴 **O `create_draft` DESCARTAVA `cc` EM SILÊNCIO até 15/10/26.** Ele montava um
+`MIMEText`, que só tem `To` e `Subject`: o `cc` passado em `params` era jogado
+fora **sem erro**. Medido em 10/10 — o e-mail à Fernanda saiu sem o Orestes em
+cópia, e o corpo terminava com *"Pai, consegue mandar para ela?"*, dirigido a
+quem não recebeu; teve de ser reenviado à mão. Parâmetro aceito e descartado em
+silêncio é pior que parâmetro recusado: quem chama não tem como saber que não
+funcionou. ✅ A montagem virou **`services/gmail_mime.py`** (`monta_mensagem` /
+`monta_raw`, puras): `EmailMessage` com **`Cc`, `Bcc` e `attachments`**
+(`[{filename, content_b64, mimetype?}]`); `to`/`cc`/`bcc` aceitam `"a@x, b@y"`
+**ou lista** (lista crua no cabeçalho viraria `['a@x']` e o Gmail silenciaria o
+endereço — o mesmo modo de falha uma camada acima); `content_b64` aceita
+base64URL **sem padding**, que é o que o `get_attachment` deste mesmo proxy
+devolve, para que baixar de uma thread e reanexar noutra não exija passar por
+fora; anexo incompleto é ignorado **com log**, nunca exceção (perder o anexo é
+ruim, perder o rascunho com o texto já escrito é pior). **Extraído do endpoint
+de propósito:** inline, só era exercitável com conta Google, token e rede, e o
+teste que se escreveu no lugar era um espelho da lógica que passava verde com o
+`main.py` revertido — 8 de 10 ([[feedback_fake_frouxo_da_verde_a_bug_real]]).
+Testes: `tests/test_gmail_proxy_create_draft.py` (12), **8 vermelhos contra um
+mutante** que reintroduz o `MIMEText`. ⚠️ As guardas de classe são por **AST**,
+não substring: três falsos positivos num dia vieram de casar a palavra dentro do
+comentário que explica o defeito — a frase que descreve a guarda quebrava a
+guarda.
+
+⚠️ **E a docstring do proxy anunciava 8 ações omitindo 6** — entre elas o
+`get_attachment`. Em 10/10 a CoS leu a lista, concluiu que não dava para baixar
+anexo e disse isso ao Renato; foi ele quem corrigiu. **Capacidade que existe e
+não está escrita é, na prática, capacidade que não existe.** São **14**:
+`search_threads · get_thread · trash_thread · trash_message · archive_thread ·
+label_thread · unlabel_thread · list_labels · get_attachment · create_draft ·
+send_message · list_filters · create_filter · delete_filter`. Há teste que
+descobre as ações pelo código — inclusive as declaradas como `action in (...)`,
+que um grep por `action ==` não enxerga — e exige cada uma na docstring.
+
 - **Tabela `email_drafts`** (migration `061_email_drafts_loop.sql`): draft_id
   (UNIQUE), thread_id, draft_message_id, account_email, to_emails, subject,
   contact_id, source, status (`pending`|`sent`|`discarded`), sent_at,
