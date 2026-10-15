@@ -71,24 +71,52 @@ HORA_INICIO, HORA_FIM = 8, 20
 # impede que uma tabela vazia/antiga transforme a abertura em loop.
 CAP_HORAS = 24 * 45
 
+# A instância do Renato — a única cuja morte significa "o INTEL ficou cego".
+# A do bot (`intel-bot-v2`) é canal de SAÍDA e segue viva mesmo com a entrada
+# arrancada; foi ela que, em 15/10/26, manteve esta tela verde por 15,8h.
+INSTANCIA_WA = (os.getenv("EVOLUTION_INSTANCE") or "rap-whatsapp").strip()
+
 # Cada fonte é (rótulo, SQL devolvendo 1 timestamp, limiar, régua, nota).
 # `uteis=True` conta só horas de dia útil; False conta horas corridas.
 FONTES = [
     {
+        # 🔴 O FILTRO POR INSTÂNCIA É O VEREDITO, não um detalhe (15/10/26).
+        # `max(received_at)` sem ele mede a instância mais falante, não a que
+        # importa. Em 14/10 18h59 a `rap-whatsapp` (o número do Renato) caiu com
+        # `state=close`/403 — ele re-registrou o número no WhatsApp comum e isso
+        # invalida todo dispositivo vinculado. O `intel-bot-v2` (outro número, o
+        # do bot) seguiu vivo e gravou evento às 07h00; esta fonte passou 🟢 na
+        # abertura de 15/10 com a entrada do Renato morta há 15,8h. Uma instância
+        # viva atestando o frescor de uma morta é a mesma classe de erro que medir
+        # a tabela em vez do canal — uma camada abaixo.
         "rotulo": "WA · webhooks (ingestão bruta)",
-        "sql": "SELECT max(received_at) FROM webhook_audit",
+        "sql": """SELECT max(received_at) FROM webhook_audit
+                   WHERE instance = %(instancia)s""",
+        # ⚠️ `params` só existe nesta fonte, e o loop passa params SÓ quando a
+        # chave está lá. Não é preciosismo: com params, o psycopg2 trata `%`
+        # como marcador, e os `ILIKE '%whats%'` das outras fontes virariam erro
+        # de formatação — que o `except` do loop converteria em "não medido",
+        # trocando uma fonte medida por um silêncio educado.
+        "params": {"instancia": INSTANCIA_WA},
         "limiar": 3,
         "uteis": True,
-        "nota": "a porta de entrada da Evolution; para aqui, para tudo de WhatsApp",
+        "nota": "da instância do Renato; o bot vivo já atestou frescor de instância morta",
     },
     {
-        "rotulo": "WA · DMs",
+        # 🔴 E AQUI O PIOR DOS TRÊS: sem `direcao='incoming'` este medidor é
+        # satisfeito pelo PRÓPRIO SISTEMA. As notificações que o INTEL manda ao
+        # Renato entram em `messages` como `outgoing` no canal whatsapp — então
+        # "as mensagens estão chegando?" ficava verde porque a máquina mandava
+        # mensagem para si mesma ([[feedback_maquina_ouve_o_proprio_eco]]). Em
+        # 15/10: `incoming` parado desde 14/10 18h50, `outgoing` às 07h00, fonte
+        # 🟢. Um medidor que o alvo pode satisfazer sozinho nunca acusa queda.
+        "rotulo": "WA · DMs recebidas",
         "sql": """SELECT max(m.criado_em) FROM messages m
                     JOIN conversations c ON c.id = m.conversation_id
-                   WHERE c.canal ILIKE '%whats%'""",
+                   WHERE c.canal ILIKE '%whats%' AND m.direcao = 'incoming'""",
         "limiar": 3,
         "uteis": True,
-        "nota": "pelo CANAL, não pela tabela — `messages` fica fresca de e-mail com o WA mudo",
+        "nota": "só `incoming`: `outgoing` é o próprio INTEL notificando, não entrada",
     },
     {
         "rotulo": "WA · grupos",
@@ -225,7 +253,10 @@ def main() -> int:
     cur = conn.cursor()
     for f in FONTES:
         try:
-            cur.execute(f["sql"])
+            if f.get("params"):
+                cur.execute(f["sql"], f["params"])
+            else:
+                cur.execute(f["sql"])
             ultimo = _primeira_coluna(cur.fetchone())
         except Exception as e:
             conn.rollback()
