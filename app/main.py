@@ -29500,7 +29500,7 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
 @app.get("/api/cron/wa-catchup")
 @app.post("/api/cron/wa-catchup")
 @track_cron_run
-async def cron_wa_catchup(request: Request, hours: int = 2):
+async def cron_wa_catchup(request: Request, hours: int = 2, max_contacts: int = 50):
     """Catchup WhatsApp DMs perdidos pelo webhook.
 
     Itera contatos prioritarios, fetch ultimas msgs via Evolution
@@ -29509,6 +29509,20 @@ async def cron_wa_catchup(request: Request, hours: int = 2):
 
     Why: caso Felipe Orioli (11/jun/26) — msg some entre Evolution e webhook.
     Catchup garante recuperacao e cobertura de telemetria.
+
+    ⚠️ `max_contacts` passou a ser exposto em 15/10/26, e o motivo é um teto
+    que nao se podia levantar. `_list_priority_contacts` lista ate 200, a
+    funcao processava 50 e o endpoint nao aceitava o parametro -- numa queda
+    longa, quem falou e nao estava entre os 50 mais recentes ficava fora SEM
+    que nada dissesse que ficou. Na queda de 14-15/10 foi preciso chamar a
+    funcao a mao da maquina local pra cobrir os 200, e aquela passada viu
+    1.430 mensagens na Evolution contra as 414 dos 50 contatos.
+
+    ⚠️ E o que a mesma passada revelou: 258 mensagens que a Evolution tem e o
+    INTEL nao, TODAS anteriores a janela pedida (`skipped_out_of_window`).
+    Com o default de 2h do cron elas sao inalcancaveis por construcao -- um
+    backlog historico que nenhuma run jamais vai tocar. Nao e bug deste
+    endpoint; e um buraco que so aparece quando se pede janela larga.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -29516,7 +29530,7 @@ async def cron_wa_catchup(request: Request, hours: int = 2):
     from services.wa_catchup import catchup_recent_dms
 
     try:
-        result = await catchup_recent_dms(hours=hours)
+        result = await catchup_recent_dms(hours=hours, max_contacts=max_contacts)
         return {"job": "wa-catchup", **result}
     except Exception as e:
         logging.error(f"wa-catchup failed: {e}", exc_info=True)
