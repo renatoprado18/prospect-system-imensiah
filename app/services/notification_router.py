@@ -362,7 +362,30 @@ def _sunday_silence_enqueue(
 
 
 async def _send_now(message: str) -> bool:
-    """Envia direto via Evolution. Retorna sucesso."""
+    """Envia direto via Evolution. Retorna sucesso REAL, nao "nao explodiu".
+
+    🔴 ATE 15/10/2026 ISTO MENTIA, E O RENATO NAO RECEBEU O AVISO QUE IMPORTAVA.
+    O corpo era `await client.send_text(...)` seguido de `return True`
+    incondicional, com um `except Exception` em volta. O problema: o
+    `_request` do `evolution_api` **nao levanta** em erro HTTP -- ele devolve
+    `{"error": ..., "status_code": ...}` (ver evolution_api.py ~192). Logo o
+    `except` nunca disparava e o `return True` era alcancado mesmo quando a
+    Evolution RECUSAVA o envio. Guarda que nao pode disparar e guarda
+    decorativa ([[feedback_guarda_abstencao_vira_fabrica]]).
+
+    O preco, medido: em 14/10 18h59 a instancia `rap-whatsapp` caiu
+    (`close`/403) e o INTEL ficou 16,3h cego. Em 15/10 11h06 o heartbeat
+    consertado detectou e disparou o alerta "WhatsApp DESCONECTADO do INTEL",
+    urgencia 9. O router mandou para `canal=whatsapp` e gravou
+    `sent_ok=True` -- pela instancia que estava CAIDA. O Renato confirmou:
+    **nao recebeu**. Detectar sem alcancar e pior que nao detectar, porque
+    deixa a tela verde do lado de quem deveria agir.
+
+    E o conserto desbloqueia o resto sozinho: o chamador ja trata `False`
+    rebaixando para pill (ledger duravel + badge + proximo digest, "melhor
+    chegar tarde que sumir"). Essa escada existia e era anulada pelo falso
+    sucesso -- nunca houve falha de WhatsApp aos olhos dela.
+    """
     phone = (os.getenv(RENATO_PHONE_ENV) or RENATO_PHONE_FALLBACK).strip()
     if not phone:
         logger.error(f"router: {RENATO_PHONE_ENV} ausente e sem fallback — nao consigo enviar")
@@ -370,11 +393,26 @@ async def _send_now(message: str) -> bool:
     try:
         from integrations.evolution_api import get_evolution_client
         client = get_evolution_client()
-        await client.send_text(phone=phone, message=message)
-        return True
+        resposta = await client.send_text(phone=phone, message=message)
     except Exception as e:
         logger.warning(f"router send_now falhou: {e}")
         return False
+
+    # Conservador de proposito: so reprova com SINAL EXPLICITO de erro. A
+    # Evolution devolve shapes variados em sucesso (`{key, status:PENDING}`,
+    # as vezes nada util), e tratar "resposta que eu nao reconheco" como falha
+    # rebaixaria envio bom para pill -- trocaria um alarme mudo por um alarme
+    # atrasado.
+    if isinstance(resposta, dict):
+        erro = resposta.get("error")
+        codigo = resposta.get("status_code")
+        if erro or (isinstance(codigo, int) and codigo >= 400):
+            logger.error(
+                f"router send_now RECUSADO pela Evolution "
+                f"(status={codigo}, erro={str(erro)[:200]}) — rebaixando"
+            )
+            return False
+    return True
 
 
 # ============================================================================
