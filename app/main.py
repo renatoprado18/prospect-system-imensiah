@@ -29428,7 +29428,14 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
     if not veredito.get("alerta"):
         return resultado
 
-    if recuperar:
+    desconectado = veredito.get("status") == "desconectado"
+
+    # Instancia caida NAO tem o que recuperar: a Evolution parou de receber
+    # junto, entao o catchup varreria 200 contatos pra achar zero. Quando o
+    # Renato religar pelo QR, a Evolution volta a ter mensagem mais nova que o
+    # INTEL, o veredito vira `parado` e a recuperacao dispara aqui com a janela
+    # inteira -- que e o que o filtro por instancia passou a calcular certo.
+    if recuperar and not desconectado:
         # Recupera ANTES de notificar: se o buraco fechar sozinho, o aviso ja
         # sai dizendo que fechou, em vez de mandar o Renato agir a toa.
         janela = janela_perdida(veredito)
@@ -29443,18 +29450,45 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
         from services.notification_router import notify
         recuperadas = (resultado.get("recuperacao") or {}).get("recovered")
         extra = f" · {recuperadas} recuperadas no catchup" if recuperadas else ""
+
+        # ⚠️ Os dois ramos existem porque o veredito `desconectado` NAO carrega
+        # `atraso_min` (nao ha com que comparar: a fonte parou junto). O texto
+        # antigo o lia direto; um KeyError aqui cairia no `except` abaixo, que
+        # so loga warning -- o alarme falharia calado, que e exatamente o
+        # defeito de 14-15/10/26 que esta frente conserta.
+        if desconectado:
+            titulo = "WhatsApp DESCONECTADO do INTEL"
+            acao = (
+                " Religar exige escanear o QR no aparelho"
+                if veredito.get("exige_qr")
+                else " Religando -- se persistir, exige QR"
+            )
+            corpo = (
+                f"A instancia {veredito.get('instancia')} esta "
+                f"'{veredito.get('estado_instancia')}' e nada entra ha "
+                f"{veredito['quieto_min']:.0f}min. Nenhuma mensagem esta sendo "
+                f"recebida nem gravada.{acao}.{extra}"
+            )
+        else:
+            titulo = "Ingestao do WhatsApp parada"
+            corpo = (
+                f"O WhatsApp nao entra no INTEL ha {veredito['quieto_min']:.0f}min "
+                f"(a Evolution tem mensagem {veredito['atraso_min']:.0f}min mais nova "
+                f"que o ultimo evento gravado){extra}."
+            )
+
         await notify(
             "wa_ingest_parada",
-            "Ingestao do WhatsApp parada",
-            f"O WhatsApp nao entra no INTEL ha {veredito['quieto_min']:.0f}min "
-            f"(a Evolution tem mensagem {veredito['atraso_min']:.0f}min mais nova "
-            f"que o ultimo evento gravado){extra}.",
+            titulo,
+            corpo,
             9,
             msg_type="wa_ingest_alert",
             # Dedup pela hora do ultimo evento: enquanto o cano seguir parado no
             # mesmo ponto e a mesma noticia. Se voltar e parar de novo, o ponto
             # muda e volta a avisar — a intermitencia PRECISA aparecer.
-            dedup=f"wa_ingest:{veredito.get('ultimo_evento')}",
+            # O estado entra na chave pra que `connecting` que degrada pra
+            # `close` (o caso que exige acao fisica) avise de novo.
+            dedup=f"wa_ingest:{veredito.get('ultimo_evento')}:{veredito.get('status')}",
         )
         resultado["notificado"] = True
     except Exception as e:

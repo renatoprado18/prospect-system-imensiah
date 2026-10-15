@@ -20,6 +20,34 @@ o ritmo do Renato.
 Custo: 1 chamada a Evolution por execucao, e SO quando o banco ja esta quieto ha
 mais que o limiar -- no caminho normal (mensagem entrou agora) nem chega a
 perguntar.
+
+🔴 O QUE O COMPARATIVO NAO COBRE, e custou 15,8h em 14-15/10/2026. O WhatsApp
+Business do Renato deu problema no aparelho e ele re-registrou o numero no
+WhatsApp comum. Isso invalida TODOS os dispositivos vinculados de uma vez: a
+instancia `rap-whatsapp` caiu as 18h59 com `state=close` / `reason=403`. Este
+heartbeat rodou **96 vezes** durante a queda e devolveu `alerta: false,
+status: mundo_quieto` em todas. Nao foi azar -- foi consequencia de dois
+defeitos que se somaram, e o segundo INVERTEU o sinal:
+
+1. `_ultimo_evento_no_banco` lia `MAX(received_at)` de `webhook_audit` **sem
+   filtrar instancia**. A instancia `intel-bot-v2` (outro numero, o do bot)
+   estava viva e gravou evento as 07h00 -- entao o silencio de 15,8h apareceu
+   como 3,8h. Uma instancia viva atestando o frescor de uma morta e a classe de
+   [[feedback_medir_o_consumidor_certo]].
+2. Pior que encurtar: esse `ultimo` contaminado ficou **mais novo** que a ultima
+   mensagem que a Evolution conhecia (14/10 19h00), logo `atraso_seg` deu
+   **negativo** e nunca passou da tolerancia. O veredito "mundo_quieto" nao foi
+   uma leitura infeliz -- era o unico resultado aritmeticamente possivel.
+
+E o comparativo, por desenho, so enxerga webhook caido com a Evolution VIVA.
+Quando a propria instancia cai, a Evolution tambem para de receber: os dois
+lados ficam igualmente vazios, nao existe gap para achar, e o cenario mais grave
+le-se como o mais tranquilo ([[feedback_guarda_abstencao_vira_fabrica]]).
+
+Por isso, antes de comparar, pergunta-se o que distingue os dois casos com UMA
+chamada: **a instancia esta conectada?** `state=close` e determinista, nao
+precisa de comparacao e nao da falso positivo -- instancia desconectada e
+sempre problema, as 3h ou as 15h, e nao se resolve sozinha (exige QR novo).
 """
 from __future__ import annotations
 
@@ -46,13 +74,55 @@ TOLERANCIA_SEG = int((os.getenv("WA_HEARTBEAT_TOLERANCIA_SEG") or "120").strip()
 
 INSTANCIA = (os.getenv("EVOLUTION_INSTANCE") or "rap-whatsapp").strip()
 
+# Silencio que autoriza alertar quando a instancia esta `connecting`. Separado
+# do limiar geral de proposito: `connecting` e transitorio (religamento normal)
+# e gritar nele seria a fabrica de falso positivo que este modulo existe pra
+# evitar. Ja `close` nao espera limiar nenhum -- e terminal.
+CONNECTING_MIN = int((os.getenv("WA_HEARTBEAT_CONNECTING_MIN") or "60").strip())
+
 
 def _ultimo_evento_no_banco():
+    """Ultimo evento DESTA instancia -- o filtro nao e detalhe, e o veredito.
+
+    Sem `WHERE instance`, o `MAX` pega o evento mais novo de QUALQUER instancia:
+    em 15/10/26 o `intel-bot-v2` encurtou um silencio de 15,8h para 3,8h e, ao
+    deixar o `ultimo` mais novo que a fonte, zerou o alarme. Ver o cabecalho.
+    """
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT MAX(received_at) AS ultimo FROM webhook_audit")
+        cur.execute(
+            "SELECT MAX(received_at) AS ultimo FROM webhook_audit WHERE instance = %s",
+            (INSTANCIA,),
+        )
         row = cur.fetchone()
         return row["ultimo"] if row else None
+
+
+def _estado_da_conexao() -> str:
+    """`open` | `connecting` | `close` | "" quando nao se sabe.
+
+    String vazia e "nao sei" (rede, chave, Evolution fora) e NUNCA vira alerta
+    por si -- quem chama cai no comparativo, que era o comportamento antigo.
+    Instabilidade da Evolution nao pode virar alarme de ingestao parada.
+    """
+    base = (os.getenv("EVOLUTION_API_URL") or "").strip().strip('"').rstrip("/")
+    key = (os.getenv("EVOLUTION_API_KEY") or "").strip().strip('"')
+    if not base or not key:
+        return ""
+    req = urllib.request.Request(
+        f"{base}/instance/connectionState/{INSTANCIA}",
+        headers={"apikey": key},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read())
+    except Exception as e:
+        logger.warning(f"wa-heartbeat: connectionState nao respondeu ({e})")
+        return ""
+    instancia = payload.get("instance")
+    if not isinstance(instancia, dict):
+        return ""
+    return (instancia.get("state") or "").strip()
 
 
 def _ultima_mensagem_na_evolution() -> int:
@@ -108,7 +178,29 @@ def checar_ingestao() -> Dict:
                 "quieto_min": round(quieto_min, 1),
                 "ultimo_evento": ultimo.isoformat()}
 
-    # Banco quieto. Isso ainda nao diz nada -- pergunta pra fonte.
+    # Banco quieto. ANTES de comparar, a pergunta que o comparativo nao sabe
+    # fazer: o cano esta LIGADO? Se a instancia caiu, a Evolution tambem parou
+    # de receber, os dois lados ficam vazios e o comparativo diz "mundo quieto"
+    # justamente no pior caso (14-15/10/26, 15,8h).
+    estado = _estado_da_conexao()
+    if estado and estado != "open":
+        # `close` e terminal: exige re-pareamento por QR, nao volta sozinho.
+        # `connecting` ganha carencia -- religamento normal passa por ele.
+        if estado == "close" or quieto_min >= CONNECTING_MIN:
+            return {
+                "status": "desconectado",
+                "alerta": True,
+                "estado_instancia": estado,
+                "instancia": INSTANCIA,
+                "quieto_min": round(quieto_min, 1),
+                "ultimo_evento": ultimo.isoformat(),
+                # Sem par na Evolution: ela nao tem mensagem mais nova porque
+                # tambem nao esta recebendo. Quem formata o aviso NAO pode
+                # supor `atraso_min` -- ver o ramo em main.py.
+                "exige_qr": estado == "close",
+            }
+
+    # Instancia de pe (ou estado desconhecido): vale o comparativo historico.
     epoch_evolution = _ultima_mensagem_na_evolution()
     if not epoch_evolution:
         return {"status": "indeterminado", "alerta": False,
