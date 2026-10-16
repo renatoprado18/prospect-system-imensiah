@@ -148,6 +148,58 @@ def varre_evolution(ini: int, fim: int):
     return achadas, truncou
 
 
+# Tipos de nó que NUNCA viram linha em `messages`/`group_messages`, por
+# natureza — não são perda e não se recuperam. Medido em 16/10/26 numa janela
+# de 5 dias: **725 de 2.574 mensagens de grupo (28%)** eram destes tipos, com
+# `reactionMessage` sozinho em 596. Contá-los como faltando foi o que fez um
+# "258 perdidas" virar "1.116" e depois "690": três números, todos inflados
+# pelo mesmo erro de denominador em camadas diferentes (escopo de grupo, tipo
+# de nó). Perda só é perda contra o que geraria linha.
+TIPOS_SEM_LINHA = {
+    "reactionMessage",
+    "pollUpdateMessage",
+    "pollCreationMessageV3",
+    "protocolMessage",
+    "senderKeyDistributionMessage",
+    "messageContextInfo",
+    "secretEncryptedMessage",
+}
+
+
+def _tipo_de_no(registro) -> str:
+    msg = registro.get("message") or {}
+    for chave in msg.keys():
+        if chave != "messageContextInfo":
+            return chave
+    return next(iter(msg.keys()), "(vazio)") if msg else "(vazio)"
+
+
+def gera_linha(registro) -> bool:
+    return _tipo_de_no(registro) not in TIPOS_SEM_LINHA and bool(registro.get("message"))
+
+
+def grupos_sincronizados() -> set:
+    """JIDs de grupo que o INTEL REALMENTE ingere.
+
+    🔴 SEM ISTO O "FALTANDO" É FICÇÃO (medido 16/10/26). Uma varredura de
+    09→14/10 acusou **1.116 faltando, 1.081 de grupo** — e a maior parte não
+    era perda: `persist_group_message_realtime` só grava grupo com
+    `social_groups_cache.sync_enabled = TRUE`, e são **49 de 127**. Os outros
+    78 estão fora por DECISÃO. Replayar aquilo geraria 1.081 linhas de ruído
+    em `webhook_audit` e zero gravação — o handler descartaria tudo.
+
+    "Faltando" só quer dizer algo contra o que DEVERIA estar lá. Contar o que
+    nunca foi para ser ingerido infla a perda e manda recuperar o que ninguém
+    pediu — o furo do denominador na direção oposta à de sempre.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT group_jid FROM social_groups_cache WHERE sync_enabled IS TRUE"
+        )
+        return {r["group_jid"] for r in cur.fetchall() if r["group_jid"]}
+
+
 def ja_no_intel(ids):
     """IDs já presentes no INTEL — nas DUAS tabelas, conforme o destino.
 
@@ -217,11 +269,48 @@ async def main() -> int:
     def _tipo(m):
         return "grupo" if ((m.get("key") or {}).get("remoteJid") or "").endswith("@g.us") else "DM"
 
+    # Separa PERDIDO de FORA DE ESCOPO: grupo sem `sync_enabled` nunca foi
+    # para ser ingerido, e contá-lo como perda manda recuperar o que ninguém
+    # pediu (ver `grupos_sincronizados`).
+    sincronizados = grupos_sincronizados()
+
+    def _no_escopo(m):
+        jid = (m.get("key") or {}).get("remoteJid") or ""
+        if not str(jid).endswith("@g.us"):
+            return True                      # DM: sempre no escopo
+        return str(jid) in sincronizados
+
+    fora = {k: v for k, v in faltando.items() if not _no_escopo(v)}
+    faltando = {k: v for k, v in faltando.items() if _no_escopo(v)}
+
+    # 2ª camada do mesmo erro: reação, enquete e nó vazio não viram linha.
+    sem_linha_por_tipo = {k: v for k, v in faltando.items() if not gera_linha(v)}
+    faltando = {k: v for k, v in faltando.items() if gera_linha(v)}
+
+    # 🔴 3ª camada: GRUPO NÃO GRAVA EM REPLAY. Medido em 16/10 — 145 replays
+    # de grupo saíram todos `skipped | group_message`: o handler trata grupo
+    # como decisão TERMINAL no caminho de replay. Grupo entra ao vivo
+    # (`persist_group_message_realtime`) ou pelo pull `run-group-messages`, e
+    # por mais nenhum. Deixar esses registros na fila de replay produziria
+    # "162 processadas, 0 linhas" — número que parece falha e é desenho.
+    grupo_so_por_pull = {k: v for k, v in faltando.items()
+                         if str((v.get("key") or {}).get("remoteJid") or "").endswith("@g.us")}
+    faltando = {k: v for k, v in faltando.items() if k not in grupo_so_por_pull}
+
     n_dm = sum(1 for m in faltando.values() if _tipo(m) == "DM")
     n_gr = len(faltando) - n_dm
     print(f"  na janela, a Evolution tem : {len(por_id)}")
     print(f"  o INTEL já tem             : {len(existentes)}")
-    print(f"  FALTANDO                   : {len(faltando)}  (DM {n_dm} · grupo {n_gr})")
+    if fora:
+        print(f"  fora de escopo (grupo s/ sync): {len(fora)}  ← não é perda, é decisão")
+    if sem_linha_por_tipo:
+        print(f"  tipo que não vira linha        : {len(sem_linha_por_tipo)}"
+              f"  ← reação/enquete/vazio, não é perda")
+    if grupo_so_por_pull:
+        print(f"  grupo (só o PULL recupera)     : {len(grupo_so_por_pull)}"
+              f"  ← replay não grava grupo")
+        print("     ⏭️ rode: .venv/bin/python3 scripts/_grupo_ciclo.py")
+    print(f"  FALTANDO recuperável AQUI  : {len(faltando)}  (DM {n_dm} · grupo {n_gr})")
 
     if not faltando:
         print("  🟢 nada a recuperar — a janela já está coberta")
