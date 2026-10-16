@@ -227,6 +227,37 @@ async def main() -> int:
         print("  🟢 nada a recuperar — a janela já está coberta")
         return 0
 
+    # 🔴 RESOLVE O LID AQUI, ANTES do ramo dry-run — e isso é de propósito.
+    # O `findMessages` devolve `<N>@lid` com `remoteJidAlt` VAZIO (ao vivo a
+    # Evolution já resolve; na leitura do banco dela, não), e sem telefone o
+    # handler descarta com `unresolvable_jid` — foi o que deu 0 linhas em 33
+    # DMs nas duas quedas. O resolvedor cruza `message_id` com o que já entrou
+    # ao vivo, onde o JID é o telefone, e preenche o campo que o handler já
+    # sabe preferir ([[reference_whatsapp_lid_migration]]).
+    #
+    # ⚠️ Fica FORA do ramo `--executar` porque é read-only (findMessages +
+    # SELECT) e porque, dentro dele, o dry-run deixava de informar exatamente
+    # o que hoje decide a recuperação: quantas DMs têm dono. Dry-run que não
+    # exercita o passo decisivo mede outra coisa — a classe de erro que já
+    # custou uma frente inteira em 07/10.
+    from services.wa_lid_resolver import injeta_alt
+
+    lid_resolvidos = lid_sem_saida = 0
+    with get_db() as _conn:
+        for m in faltando.values():
+            if "@lid" not in str((m.get("key") or {}).get("remoteJid") or ""):
+                continue
+            if injeta_alt(m, _conn):
+                lid_resolvidos += 1
+            else:
+                lid_sem_saida += 1
+
+    if lid_resolvidos or lid_sem_saida:
+        print(f"\n  LID com dono resolvido: {lid_resolvidos} · sem saída: {lid_sem_saida}")
+        if lid_sem_saida:
+            print("     (sem saída = nenhuma mensagem daquele chat entrou ao vivo,")
+            print("      ou o cruzamento ficou ambíguo. NÃO chuto o dono.)")
+
     if not args.executar:
         print("\n  Amostra do que entraria:")
         for m in list(faltando.values())[:8]:
@@ -244,6 +275,7 @@ async def main() -> int:
 
     _, _, inst = _evolution()
     ok = erro = sem_linha = 0
+
     for mid, m in faltando.items():
         try:
             r = await _replay_through_webhook(m, inst)
