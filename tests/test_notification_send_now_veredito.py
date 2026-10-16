@@ -149,44 +149,157 @@ def test_sem_telefone_nao_tenta(monkeypatch):
 
 # --------------------------------------------------------- guarda de classe --
 
-def test_send_now_examina_o_retorno():
-    """Guarda do defeito estrutural: `return True` logo após o `await`.
-
-    Procura a FORMA, não a palavra (prosa sobre o código vive no mesmo
-    arquivo — ver `feedback_guarda_de_classe_por_ast_nao_substring`): o corpo
-    tem de ligar o retorno do `send_text` a uma variável e consultá-la.
-    """
+def _funcao(nome):
     import ast
 
     caminho = os.path.join(_ROOT, "app", "services", "notification_router.py")
     with open(caminho, encoding="utf-8") as fh:
         arvore = ast.parse(fh.read())
-
     fn = next(
         (n for n in ast.walk(arvore)
-         if isinstance(n, ast.AsyncFunctionDef) and n.name == "_send_now"),
+         if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef)) and n.name == nome),
         None,
     )
-    assert fn is not None, "_send_now desapareceu"
+    assert fn is not None, f"{nome} desapareceu"
+    return ast, fn
 
-    # O await do send_text tem de estar ATRIBUÍDO (não descartado).
+
+def test_quem_envia_examina_o_retorno():
+    """Guarda do defeito estrutural: `return True` logo após o `await`.
+
+    Procura a FORMA, não a palavra (prosa sobre o código vive no mesmo
+    arquivo — ver `feedback_guarda_de_classe_por_ast_nao_substring`): o corpo
+    tem de ligar o retorno do `send_text` a uma variável e consultá-la.
+
+    ⚠️ Esta guarda já reprovou uma refatoração legítima — quando o envio saiu
+    de `_send_now` para `_tenta_envio` — e isso é ela funcionando: avisou que a
+    estrutura mudou. Guarda de classe amarrada a um NOME é frágil por desenho;
+    o que importa é que *quem faz o envio* leia o retorno.
+    """
+    ast, fn = _funcao("_tenta_envio")
+
     atribui_envio = any(
-        isinstance(no, ast.Assign)
-        and isinstance(no.value, ast.Await)
+        isinstance(no, ast.Assign) and isinstance(no.value, ast.Await)
         for no in ast.walk(fn)
     )
     assert atribui_envio, "o retorno do send_text está sendo descartado outra vez"
 
-    # E tem de existir mais de um `return False` alcançável: o da exceção e o
-    # do erro por retorno. Com um só, provavelmente o veredito voltou a ser
-    # "não explodiu".
     falsos = [
         no for no in ast.walk(fn)
         if isinstance(no, ast.Return)
         and isinstance(no.value, ast.Constant)
         and no.value.value is False
     ]
-    assert len(falsos) >= 3, (
-        f"só {len(falsos)} `return False` — sem telefone, exceção e recusa "
-        "da Evolution são três caminhos distintos de falha"
+    assert len(falsos) >= 2, (
+        f"só {len(falsos)} `return False` — exceção e recusa por retorno são "
+        "dois caminhos distintos de falha"
     )
+
+
+def test_send_now_tem_a_escada_de_duas_instancias():
+    """O alarme não pode depender só do canal que ele monitora.
+
+    `_send_now` tem de tentar a instância padrão e, falhando, a do bot — que
+    foi a única de WhatsApp a sobreviver às duas quedas.
+    """
+    ast, fn = _funcao("_send_now")
+
+    tentativas = [
+        no for no in ast.walk(fn)
+        if isinstance(no, ast.Call)
+        and isinstance(no.func, ast.Name)
+        and no.func.id == "_tenta_envio"
+    ]
+    assert len(tentativas) >= 2, (
+        f"só {len(tentativas)} tentativa(s) — sem a 2ª instância, a queda do "
+        "número do Renato leva o aviso embora junto"
+    )
+
+    nomes = {
+        n.id for no in ast.walk(fn) for n in ast.walk(no) if isinstance(n, ast.Name)
+    }
+    assert "INTEL_BOT_INSTANCE" in nomes, "a 2ª instância deixou de ser a do bot"
+
+
+# ------------------------- a 2ª instância: o canal que sobreviveu às quedas --
+#
+# O alarme mais importante do sistema ("o WhatsApp parou de entrar") saía pela
+# instância `rap-whatsapp`, que é o número do próprio Renato — o alvo do
+# alarme. Nas quedas de 14/10 e 15/10 ele confirmou não ter recebido nada. O
+# `intel-bot-v2` é outro número e ficou `open` nas DUAS.
+
+
+class _ClientePorInstancia:
+    """Devolve resposta diferente por instância, e registra a ordem."""
+
+    def __init__(self, por_instancia, padrao):
+        self.por_instancia = por_instancia
+        self.padrao = padrao
+        self.ordem = []
+
+    def _resp(self, instancia):
+        return self.por_instancia.get(instancia, self.padrao)
+
+    async def send_text(self, phone, message, instance_name=None):
+        self.ordem.append(instance_name)
+        r = self._resp(instance_name)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+@pytest.fixture
+def _instancias(monkeypatch):
+    import integrations.evolution_api as ev
+    from services import intel_bot
+
+    estado = {}
+
+    def _arma(por_instancia, padrao):
+        c = _ClientePorInstancia(por_instancia, padrao)
+        estado["cliente"] = c
+        monkeypatch.setattr(ev, "get_evolution_client", lambda: c)
+        monkeypatch.setattr(ev, "EvolutionAPIClient", lambda instance_name=None: c)
+        monkeypatch.setattr(intel_bot, "INTEL_BOT_INSTANCE", "intel-bot-v2")
+        return c
+
+    return _arma
+
+
+def test_principal_falha_e_o_BOT_entrega(_instancias):
+    """O caso das duas quedas: principal em `close`, bot de pé."""
+    cliente = _instancias(
+        {"intel-bot-v2": {"key": {"id": "OK"}, "status": "PENDING"}},
+        {"error": 'Bad Request: "Connection Closed"', "status_code": 400},
+    )
+
+    assert asyncio.run(nr._send_now("alarme")) is True
+    assert cliente.ordem == [None, "intel-bot-v2"], (
+        "tem de tentar a padrão ANTES do bot, e só uma vez cada"
+    )
+
+
+def test_principal_de_pe_NAO_usa_o_bot(_instancias):
+    """Sem isto, todo urgente sairia duplicado — dois remetentes."""
+    cliente = _instancias({}, {"key": {"id": "OK"}, "status": "PENDING"})
+
+    assert asyncio.run(nr._send_now("rotina")) is True
+    assert cliente.ordem == [None], "mandou pelo bot com a principal funcionando"
+
+
+def test_as_duas_falham_rebaixa_para_pill(_instancias):
+    """Com os dois canais fora, `False` manda o chamador enfileirar o pill."""
+    cliente = _instancias({}, {"error": "boom", "status_code": 500})
+
+    assert asyncio.run(nr._send_now("alarme")) is False
+    assert cliente.ordem == [None, "intel-bot-v2"]
+
+
+def test_excecao_na_principal_ainda_tenta_o_bot(_instancias):
+    cliente = _instancias(
+        {"intel-bot-v2": {"key": {"id": "OK"}}},
+        RuntimeError("socket morreu"),
+    )
+
+    assert asyncio.run(nr._send_now("alarme")) is True
+    assert "intel-bot-v2" in cliente.ordem

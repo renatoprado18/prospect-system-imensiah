@@ -390,26 +390,67 @@ async def _send_now(message: str) -> bool:
     if not phone:
         logger.error(f"router: {RENATO_PHONE_ENV} ausente e sem fallback — nao consigo enviar")
         return False
+
+    if await _tenta_envio(message, phone, instancia=None):
+        return True
+
+    # 🔴 SEGUNDA INSTANCIA, E ELA EXISTE POR UM CASO MEDIDO DUAS VEZES.
+    #
+    # A instancia padrao e `rap-whatsapp` -- o numero do PROPRIO Renato. Quando
+    # ela cai, o alarme mais importante que o sistema tem ("o WhatsApp parou de
+    # entrar") tenta avisar pelo exato canal que caiu. Aconteceu em 14/10 e de
+    # novo em 15/10, e nas duas o Renato confirmou que nao recebeu nada.
+    #
+    # O `intel-bot-v2` e outro numero (o do bot) e ficou `open` nas DUAS
+    # quedas: e o unico caminho de WhatsApp que sobrevive a queda do principal.
+    # Nao substitui o primario -- mensagem vinda do bot tem remetente diferente
+    # e o Renato reconhece o canal dele --, entra como degrau antes do pill,
+    # que e duravel mas PASSIVO (ele tem de ir olhar).
+    #
+    # Vale para todo urgente, nao so para o alarme de ingestao: se o numero
+    # dele esta fora do ar, nenhum urgente sairia, e a notificacao e justamente
+    # o que nao pode depender do canal que ela monitora.
+    from services.intel_bot import INTEL_BOT_INSTANCE
+
+    if INTEL_BOT_INSTANCE and await _tenta_envio(message, phone, instancia=INTEL_BOT_INSTANCE):
+        logger.warning(
+            f"router: WA principal falhou; entregue pela instancia {INTEL_BOT_INSTANCE}"
+        )
+        return True
+    return False
+
+
+async def _tenta_envio(message: str, phone: str, instancia: Optional[str]) -> bool:
+    """Um envio por uma instancia. `None` = a padrao (`EVOLUTION_INSTANCE`).
+
+    O veredito e CONSERVADOR de proposito: so reprova com SINAL EXPLICITO de
+    erro. A Evolution devolve shapes variados em sucesso (`{key, status:
+    PENDING}`, as vezes nada util), e tratar "resposta que eu nao reconheco"
+    como falha rebaixaria envio bom -- trocaria um alarme mudo por um alarme
+    atrasado, ou pior, por uma segunda copia pela outra instancia.
+    """
     try:
-        from integrations.evolution_api import get_evolution_client
-        client = get_evolution_client()
-        resposta = await client.send_text(phone=phone, message=message)
+        from integrations.evolution_api import EvolutionAPIClient, get_evolution_client
+
+        if instancia:
+            client = EvolutionAPIClient(instance_name=instancia)
+            resposta = await client.send_text(
+                phone=phone, message=message, instance_name=instancia
+            )
+        else:
+            client = get_evolution_client()
+            resposta = await client.send_text(phone=phone, message=message)
     except Exception as e:
-        logger.warning(f"router send_now falhou: {e}")
+        logger.warning(f"router send_now falhou (instancia={instancia or 'padrao'}): {e}")
         return False
 
-    # Conservador de proposito: so reprova com SINAL EXPLICITO de erro. A
-    # Evolution devolve shapes variados em sucesso (`{key, status:PENDING}`,
-    # as vezes nada util), e tratar "resposta que eu nao reconheco" como falha
-    # rebaixaria envio bom para pill -- trocaria um alarme mudo por um alarme
-    # atrasado.
     if isinstance(resposta, dict):
         erro = resposta.get("error")
         codigo = resposta.get("status_code")
         if erro or (isinstance(codigo, int) and codigo >= 400):
             logger.error(
-                f"router send_now RECUSADO pela Evolution "
-                f"(status={codigo}, erro={str(erro)[:200]}) — rebaixando"
+                f"router send_now RECUSADO (instancia={instancia or 'padrao'}, "
+                f"status={codigo}, erro={str(erro)[:200]})"
             )
             return False
     return True
