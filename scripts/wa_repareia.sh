@@ -45,26 +45,53 @@ estado() {
 echo "── instância: $INST"
 E=$(estado); echo "   estado atual: ${E:-'(não respondeu)'}"
 
-# 🔴 A JANELA SE MEDE AGORA, ANTES DE RELIGAR — e isto é o conserto de um
-# defeito real da 1ª execução (15/10/26). A janela saía de
-# `max(received_at)`, e RELIGAR GRAVA EVENTOS (`connection.update`,
-# `qrcode.updated`): no instante em que o cano volta, o buraco desaparece da
-# medida sem que uma única mensagem tenha sido recuperada. O script pediu
-# `hours=3` para uma queda de 16,5h e cobriu um quinto dela.
-# Dois cintos: mede-se antes do QR, e só se contam eventos de MENSAGEM
-# (`messages.upsert`), que o religamento não produz. É a mesma lição que o
-# `8dcfb13` aprendeu uma camada acima — o medidor não pode se mover junto
-# com o que ele mede.
-HORAS=$(DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 .venv/bin/python3 -c "
-import os, psycopg2
-c=psycopg2.connect(os.environ['DATABASE_URL'],keepalives=1); cur=c.cursor()
-cur.execute('''SELECT ceil(extract(epoch from (now()-max(received_at)))/3600.0)+2
-               FROM webhook_audit
-               WHERE instance=%s AND event_type='messages.upsert''',
-            (os.environ.get('EVOLUTION_INSTANCE') or 'rap-whatsapp',))
-r=cur.fetchone()[0]; print(int(r) if r else 20)
-" 2>/dev/null) || HORAS=20
-echo "   janela a recuperar: ${HORAS}h (medida ANTES de religar)"
+# 🔴 A JANELA SE MEDE AGORA, ANTES DE RELIGAR, e a ORDEM é a proteção
+# real. Religar grava eventos (`connection.update`, `qrcode.updated`) e,
+# pior, o tráfego novo que volta a entrar também é `messages.upsert`: medida
+# depois, a janela some no instante em que o cano volta, sem que uma única
+# mensagem tenha sido recuperada. Em 15/10 o script pediu `hours=3` para uma
+# queda de 16,5h e cobriu um quinto dela. O filtro de `event_type` (em
+# `scripts/_janela_wa.py`) é o cinto secundário; o primário é medir ANTES.
+# ⚠️ TRÊS CAMADAS DE SILÊNCIO, e o cálculo NUNCA rodou (descoberto 16/10/26).
+# A 1ª versão era `HORAS=$(python3 -c "..." 2>/dev/null) || HORAS=20`, e o SQL
+# inline terminava com o literal `messages.upsert` entre apóstrofos encostado
+# na tripla-aspa que fechava a string Python. O apóstrofo de fechamento do SQL
+# se fundiu com a tripla-aspa, o Python cortou a string ali, e o Postgres
+# recebeu aspa não terminada:
+#     psycopg2.errors.SyntaxError: unterminated quoted string
+# O `2>/dev/null` engolia o traceback, o `|| HORAS=20` entregava um número
+# plausível, e a linha impressa ainda dizia "medida ANTES de religar". Em
+# 15/10 anunciou 3h; em 16/10, 20h — NENHUMA das duas foi medida, as duas
+# eram o default. Default que parece resultado é pior que erro: o erro para a
+# frente, o default a deixa seguir com um número inventado.
+#
+# Conserto em três pontos, um por camada de silêncio:
+#   1. o literal vai como PARÂMETRO (%s), nunca inline — não há apóstrofo para
+#      colidir com o quoting do Python nem com o do bash;
+#   2. o número sai com MARCADOR (JANELA_HORAS=), porque o módulo `database`
+#      escreve `[DB] neondb @ ...` em stdout e captura crua misturaria os dois;
+#   3. stderr vai para arquivo e é EXIBIDO quando falha. O fallback continua
+#      (melhor recuperar demais que travar o religamento), mas se ANUNCIA como
+#      fallback, e a mensagem deixa de alegar medição.
+JANELA_ERR=$(mktemp)
+SAIDA=$(DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 .venv/bin/python3 \
+  scripts/_janela_wa.py 2>"$JANELA_ERR")
+
+HORAS=$(printf '%s' "$SAIDA" | sed -n 's/^JANELA_HORAS=\([0-9]\{1,\}\)$/\1/p' | head -1)
+if [ -n "$HORAS" ]; then
+  echo "   janela a recuperar: ${HORAS}h — MEDIDA agora (último messages.upsert + 2h de folga)"
+else
+  HORAS=20
+  echo "   🔴 NÃO consegui medir a janela — usando o fallback de ${HORAS}h."
+  echo "      Isto NÃO é medição: confira o tamanho real da queda antes de confiar."
+  if [ -s "$JANELA_ERR" ]; then
+    echo "      motivo:"
+    sed 's/^/        /' "$JANELA_ERR" | tail -6
+  else
+    echo "      (stderr vazio — consulta sem resultado? nenhum evento desta instância?)"
+  fi
+fi
+rm -f "$JANELA_ERR"
 
 if [ "$E" = "open" ]; then
   echo "✅ já conectada — nenhum QR será gerado (gerar QR com a sessão de pé a derruba)."
