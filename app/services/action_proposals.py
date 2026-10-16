@@ -12,6 +12,27 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
+# Os ÚNICOS tipos que uma resposta do Renato encerra. Ver
+# `ActionProposalsService.dismiss_stale_on_reply` para o incidente que obrigou
+# esta lista a existir — até 16/10/2026 o auto-resolve não filtrava tipo e
+# matava proposta de AÇÃO antes de executar (487 de 499 `resolved` com
+# `executed_at` NULO; `update_contact_email` com 30 propostas e 0 execuções).
+#
+# O critério é estreito: entra só o que SIGNIFICA "estou esperando o Renato
+# falar com essa pessoa", onde a resposta dele é o desfecho. É ALLOWLIST para
+# que tipo novo fique de fora por default — foi por omissão de denylist que
+# `update_contact_email` e `camada_cadastro`, criados depois, caíram aqui.
+#
+# ⚠️ Antes de acrescentar um tipo, pergunte: "responder a essa pessoa no
+# WhatsApp cumpre o que esta proposta pedia?" Se a resposta for "não, alguém
+# ainda tem de FAZER algo", o lugar dele não é aqui — é a execução ou o
+# `expires_at` que encerra.
+AUTO_RESOLVE_ON_REPLY = (
+    "pending_response",
+    "follow_up_alert",
+    "follow_up",
+)
+
 
 def is_proposals_frozen() -> bool:
     """
@@ -777,23 +798,68 @@ class ActionProposalsService:
 
     def dismiss_stale_on_reply(self, contact_id: int, reply_time: datetime = None) -> int:
         """
-        Dismissa propostas pendentes de resposta/follow-up para um contato quando
-        o usuario ja respondeu. Chamada quando uma mensagem outbound (de Renato) e salva.
+        Resolve propostas de AGUARDAR RESPOSTA quando o Renato ja respondeu.
+        Chamada quando uma mensagem outbound (de Renato) e salva.
+
+        🔴 ATE 16/10/2026 ISTO MATAVA PROPOSTA DE ACAO ANTES DE EXECUTAR.
+        O comentario que ficava aqui dizia, literalmente, "Dismissa apenas
+        tipos relacionados a aguardar resposta / Exclui tipos que requerem
+        acao especifica (reschedule, cancel, etc)" -- e o SQL **nao tinha
+        filtro de tipo nenhum**. Resolvia TODA proposta `pending` daquele
+        contato. O filtro que o comentario prometia nunca foi escrito, e o
+        comentario garantiu que ninguem fosse olhar
+        ([[feedback_prompt_nao_le_comentario]], na forma mais caustica: a
+        documentacao cobrindo a ausencia do codigo).
+
+        O caso que denunciou (achado pela CoS): proposta **#1235**
+        (`update_contact_email`, "Email detectado:
+        vanessa.schrot@allergan.com", contato 26857) nasceu em 14/10 19h16 e
+        foi marcada `resolved` as **19h20 -- 4 minutos depois**, com
+        `executed_at` NULO. O Renato apenas respondeu ao contato no WhatsApp.
+        O e-mail nunca entrou no cadastro e o contato seguiu "Desconhecido
+        +55..." por dois dias, corrigido a mao.
+
+        E o denominador mostra que nao foi um caso isolado: de **499**
+        propostas `resolved`, **487 tem `executed_at` NULO**. O sinal mais
+        forte e o `update_contact_email`: **30 propostas, ZERO execucoes** em
+        toda a historia da tabela -- um tipo de acao que nunca agiu uma vez.
+        Tambem morreram assim 53 `create_meeting`, 24 `meeting_request`,
+        10 `introduction_request`, 7 `camada_cadastro`, 7 `cancel_event`,
+        5 `reschedule_event` e 4 `update_contact_phone`.
+
+        ALLOWLIST, NAO DENYLIST. Uma denylist ("todos menos cancel e
+        reschedule") deixa todo tipo NOVO entrar no auto-resolve por omissao
+        -- e foi assim que `update_contact_email` e `camada_cadastro`, criados
+        depois, cairam aqui sem ninguem decidir. Com allowlist, tipo novo fica
+        de fora por default e so entra quando alguem escrever o nome dele.
+
+        O criterio da lista e estreito de proposito: entra so o que SIGNIFICA
+        "estou esperando o Renato falar com essa pessoa", onde a resposta dele
+        e de fato o desfecho. Alerta e proposta de acao nao se resolvem por
+        resposta no WhatsApp -- quem os encerra e a execucao ou o `expires_at`
+        (ha 256 `expired`, o dreno funciona).
 
         Args:
             contact_id: ID do contato
             reply_time: Timestamp da mensagem de resposta (default: now)
 
         Returns:
-            Numero de propostas dismissadas
+            Numero de propostas resolvidas
         """
+        # ⚠️ `now_utc()`, nunca `datetime.now()` — e isto é um SEGUNDO defeito,
+        # que só apareceu porque o teste roda fora de UTC. `criado_em` está em
+        # UTC e `datetime.now()` é naive na timezone do SERVIDOR: em BRT a
+        # comparação `criado_em < reply_time` virava UTC contra UTC-3, e
+        # NENHUMA proposta criada nas últimas 3h era resolvida. Em produção
+        # passava por acidente, porque o Railway roda em UTC — ou seja, o
+        # auto-resolve dependia silenciosamente do fuso do container. É o que o
+        # CLAUDE.md proíbe explicitamente.
         if reply_time is None:
-            reply_time = datetime.now()
+            from services.tz import now_utc
+            reply_time = now_utc()
 
         with get_db() as conn:
             cursor = conn.cursor()
-            # Dismissa apenas tipos relacionados a aguardar resposta
-            # Exclui tipos que requerem acao especifica (reschedule, cancel, etc)
             cursor.execute("""
                 UPDATE action_proposals
                 SET status = 'resolved',
@@ -802,7 +868,8 @@ class ActionProposalsService:
                 WHERE contact_id = %s
                   AND status = 'pending'
                   AND criado_em < %s
-            """, (contact_id, reply_time))
+                  AND action_type = ANY(%s)
+            """, (contact_id, reply_time, list(AUTO_RESOLVE_ON_REPLY)))
             count = cursor.rowcount
             conn.commit()
             return count
