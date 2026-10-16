@@ -159,16 +159,24 @@ curl -s --max-time 580 -H "Authorization: Bearer $SECRET" \
 # nunca é avisado; quem acha é o pull por `findMessages` de cada grupo.
 # É PAGINADO: uma passada cobre ~9-13 dos 49 grupos, então roda-se o ciclo.
 echo
-echo "── polling de GRUPO, ciclo completo (o catchup não cobre grupo)"
-for i in $(seq 1 8); do
-  R=$(curl -s --max-time 580 -H "Authorization: Bearer $SECRET" \
-        "https://intel.almeida-prado.com/api/cron/run-group-messages")
-  echo "   [$i] $(printf '%s' "$R" | python3 -c 'import sys,json
-d=json.load(sys.stdin); r=d.get("result") or {}
-print("offset", d.get("offset_used"), "->", d.get("next_offset"),
-      "| grupos", r.get("groups_synced"), "| salvas", r.get("messages_saved"))' 2>/dev/null)"
-  printf '%s' "$R" | grep -q '"next_offset":0' && [ "$i" -gt 1 ] && break
-done
+echo "── polling de GRUPO até SECAR (o catchup não cobre grupo)"
+# ⚠️ O ciclo vive em `scripts/_grupo_ciclo.py` e o critério é SECAR, não
+# "o cursor voltou a zero". A 1ª versão era um `for` em bash cuja condição de
+# parada era `next_offset==0 && i>1`, com o parser num `python3 -c` aninhado
+# que lia os campos por `.get()`: resposta de shape inesperado imprimia
+# `grupos None | salvas None` e o loop seguia como se fosse passada vazia. Em
+# 16/10, **3 de 7 passadas** saíram assim; o ciclo "fechou" deixando grupos sem
+# varrer, relatou 19 mensagens, e uma rodada manual achou MAIS 16 — contra uma
+# média noturna de 30,8, os 19 passavam por noite fraca. Falha que se disfarça
+# de "nada novo" é pior que erro: fecha a conta no número errado.
+# Exit != 0 quando algo ficou sem varrer — não leia "terminou" como "cobriu".
+if DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 .venv/bin/python3 scripts/_grupo_ciclo.py; then
+  GRUPO_OK=1
+else
+  GRUPO_OK=0
+  echo "   ⚠️ o ciclo de grupo NÃO fechou limpo (veja acima) — a janela de grupo"
+  echo "      pode estar incompleta. Rode: .venv/bin/python3 scripts/_grupo_ciclo.py"
+fi
 
 echo
 echo "── e o veredito do heartbeat, que deve voltar a 'ok':"
@@ -178,4 +186,13 @@ echo
 echo
 echo "⏭️  Depois: medir o EFEITO, não o 200 —"
 echo "    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 .venv/bin/python3 scripts/verifica_frescor.py"
-echo "    As três fontes de WA têm de voltar a 🟢. Grupo pode NÃO voltar: não há catchup de grupo."
+echo "    As três fontes de WA têm de voltar a 🟢."
+echo
+if [ "${GRUPO_OK:-0}" = "1" ]; then
+  echo "✅ Grupo: ciclo fechou limpo (secou sem falhas)."
+else
+  echo "🔴 Grupo: o ciclo NÃO fechou limpo — NÃO dê a janela de grupo por coberta."
+fi
+echo '⚠️  DM em formato LID não volta por replay: remoteJidAlt vem vazio no'
+echo '    findMessages, e o handler descarta com unresolvable_jid.'
+echo '    Se havia DM na janela, confira no aparelho.'
