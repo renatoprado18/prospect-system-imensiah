@@ -56,6 +56,7 @@ from services.contact_identity import (
     names_match,
     phone_kind,
 )
+from services.wa_lid_map import telefone_de_lid
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,9 @@ LID_MIN_DIGITOS = 14
 ATRIBUIDA = "atribuida"
 ATRIBUIDA_NOME_DIVERGE = "atribuida_celular_nome_diverge"
 ATRIBUIDA_FICHA_PLACEHOLDER = "atribuida_ficha_placeholder"
-PULADA_LID = "pulada_lid"
+ATRIBUIDA_VIA_LID = "atribuida_via_lid"
+PULADA_LID = "pulada_lid_sem_mapa"
+PULADA_LID_SEM_FICHA = "pulada_lid_resolvido_sem_ficha"
 PULADA_SEM_FICHA = "pulada_sem_ficha"
 PULADA_FIXO_NOME_DIVERGE = "pulada_fixo_nome_diverge"
 
@@ -106,12 +109,26 @@ def resolver_remetente(cursor, sender_phone: Any,
     os dois pra saber o que aconteceu.
     """
     digitos = _digitos(sender_phone)
-    if not digitos or len(digitos) >= LID_MIN_DIGITOS:
+    if not digitos:
         return None, PULADA_LID
+
+    via_lid = False
+    if len(digitos) >= LID_MIN_DIGITOS:
+        # LID: nao e telefone e nunca casaria direto. Desde 17/10 ha mapa
+        # (`wa_lid_map`, colhido de /group/findGroupInfos) — mas so para quem
+        # participa de algum grupo em comum. Sem par no mapa, segue insolúvel, e
+        # sai DECLARADO como "sem mapa", nao como "sem ficha": sao causas
+        # diferentes e somá-las esconderia uma na outra.
+        fone_real = telefone_de_lid(cursor, digitos)
+        if not fone_real:
+            return None, PULADA_LID
+        sender_phone, digitos, via_lid = fone_real, fone_real, True
 
     ficha = find_contact_by_phone(cursor, sender_phone, columns="id, nome")
     if not ficha:
-        return None, PULADA_SEM_FICHA
+        # LID que o mapa resolveu mas cujo telefone nao tem ficha e um resultado
+        # diferente de LID opaco: aqui JA SE SABE quem e o numero, falta cadastro.
+        return None, PULADA_LID_SEM_FICHA if via_lid else PULADA_SEM_FICHA
 
     nome_ficha = ficha.get("nome") or ""
     # Ficha placeholder ("Desconhecido +5511...") e dona legitima do numero: a
@@ -119,13 +136,25 @@ def resolver_remetente(cursor, sender_phone: Any,
     # depois ([[feedback_passive_labeling_over_manual]]). Checar ANTES do
     # names_match, que nao tem o que comparar contra um placeholder.
     if ficha_sem_nome_identificador(nome_ficha):
-        return ficha["id"], ATRIBUIDA_FICHA_PLACEHOLDER
+        return ficha["id"], (ATRIBUIDA_VIA_LID if via_lid
+                             else ATRIBUIDA_FICHA_PLACEHOLDER)
 
     kind = phone_kind(normalize_phone(sender_phone) or digitos)
     bate = names_match(str(sender_name or ""), nome_ficha, kind=kind)
 
+    # A guarda do fixo vale IGUAL para LID resolvido: o mapa diz de que numero a
+    # mensagem veio, nao quem a digitou, e numero fixo continua compartilhado.
     if kind == "landline" and not bate:
         return None, PULADA_FIXO_NOME_DIVERGE
+    if via_lid:
+        # Um unico balde para tudo que entrou pelo mapa — e o que permite medir
+        # o ganho DESTA frente separado do resto. O sub-caso (placeholder, nome
+        # divergente) vai pro log, nao para a contagem: balde que se subdivide
+        # por duas dimensoes ao mesmo tempo para de fechar.
+        if not bate:
+            logger.info("LID resolvido com nome divergente: %r vs ficha #%s %r",
+                        sender_name, ficha["id"], nome_ficha)
+        return ficha["id"], ATRIBUIDA_VIA_LID
     if not bate:
         return ficha["id"], ATRIBUIDA_NOME_DIVERGE
     return ficha["id"], ATRIBUIDA

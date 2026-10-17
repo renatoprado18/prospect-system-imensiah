@@ -29,8 +29,10 @@ from services.group_msg_attribution import (  # noqa: E402
     ATRIBUIDA,
     ATRIBUIDA_FICHA_PLACEHOLDER,
     ATRIBUIDA_NOME_DIVERGE,
+    ATRIBUIDA_VIA_LID,
     PULADA_FIXO_NOME_DIVERGE,
     PULADA_LID,
+    PULADA_LID_SEM_FICHA,
     PULADA_SEM_FICHA,
     atribuir_orfas,
     orfandade,
@@ -41,10 +43,18 @@ ROTULO = {
     ATRIBUIDA: "✅ celular/fixo + nome bate",
     ATRIBUIDA_NOME_DIVERGE: "⚠️ celular, nome divergente (atribui)",
     ATRIBUIDA_FICHA_PLACEHOLDER: "🟡 ficha placeholder (atribui)",
-    PULADA_LID: "🚫 LID, nao e telefone",
+    ATRIBUIDA_VIA_LID: "🆔 LID resolvido pelo mapa (atribui)",
+    PULADA_LID: "🚫 LID fora do mapa (sem grupo em comum)",
+    PULADA_LID_SEM_FICHA: "⬜ LID resolvido, telefone SEM ficha",
     PULADA_SEM_FICHA: "⬜ telefone valido sem ficha",
     PULADA_FIXO_NOME_DIVERGE: "🚫 fixo, nome divergente (linha compartilhada)",
 }
+# Rotulo faltando sairia como a chave crua — e foi o que aconteceu na 1a rodada
+# com os baldes novos do LID. Falha barata, mas o relatorio e o que o Renato le.
+assert set(ROTULO) >= {ATRIBUIDA, ATRIBUIDA_NOME_DIVERGE,
+                       ATRIBUIDA_FICHA_PLACEHOLDER, ATRIBUIDA_VIA_LID,
+                       PULADA_LID, PULADA_LID_SEM_FICHA, PULADA_SEM_FICHA,
+                       PULADA_FIXO_NOME_DIVERGE}, "balde sem rotulo"
 
 
 def _conn():

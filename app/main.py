@@ -11739,8 +11739,10 @@ async def cron_run_group_messages(request: Request):
         # e cada remetente e uma ida ao banco. O limite ordena por volume, entao
         # o pedaco de cada rodada e sempre o que mais rende.
         atribuicao = None
+        lid_colheita = None
         try:
             from services.group_msg_attribution import atribuir_orfas
+            from services.wa_lid_map import colher_pendentes
             # `get_pg_db`, nao o `get_db` local: o `get_db` deste modulo
             # (main.py:358) devolve `get_connection()` — conexao CRUA que o
             # chamador tem de fechar. `with` nela gerencia a transacao e nao
@@ -11749,6 +11751,17 @@ async def cron_run_group_messages(request: Request):
             # context manager de verdade.
             with get_pg_db() as _conn:
                 _cur = _conn.cursor()
+                # COLHEITA DO MAPA LID ANTES DA ATRIBUICAO, nesta ordem de
+                # proposito: a atribuicao consulta `wa_lid_map`, entao par
+                # colhido agora ja rende nesta mesma rodada em vez de esperar a
+                # proxima. Participante novo em grupo traz LID novo todo mes.
+                lid_colheita = await colher_pendentes(
+                    _cur,
+                    limite_grupos=int(os.getenv("LID_COLHEITA_BATCH", "3")),
+                    commit_cb=_conn.commit,
+                    budget_s=float(os.getenv("LID_COLHEITA_BUDGET_S", "45")),
+                )
+                _conn.commit()
                 atribuicao = atribuir_orfas(
                     _cur,
                     limite_remetentes=int(os.getenv("GROUP_ATTRIB_BATCH", "60")),
@@ -11772,6 +11785,7 @@ async def cron_run_group_messages(request: Request):
             "parcial": result.get("parcial", False),
             "result": result,
             "atribuicao": atribuicao,
+            "lid_colheita": lid_colheita,
         }
     except _aio.TimeoutError:
         # Nao deveria acontecer: o budget corta antes. Se cair aqui, um unico
