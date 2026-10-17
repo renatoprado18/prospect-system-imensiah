@@ -11726,6 +11726,43 @@ async def cron_run_group_messages(request: Request):
         next_offset = int(result.get("next_offset", 0))
         total = int(result.get("total_groups", 0))
         _write_cron_cursor("group_messages", next_offset, total)
+
+        # ATRIBUICAO das orfas, na mesma rodada e nao num cron novo.
+        #
+        # Por que e continuo e nao so um backfill: a resolucao acontece uma vez,
+        # no INSERT, e o `ON CONFLICT DO NOTHING` nunca reavalia — entao toda
+        # ficha criada DEPOIS da mensagem deixa a mensagem orfa pra sempre. Como
+        # contato novo entra todo dia, a fila se reabastece sozinha; rodar isso
+        # uma vez consertaria o passado e voltaria a acumular.
+        #
+        # Levar um PEDACO por rodada (nao a fila toda): o job tem budget de 200s
+        # e cada remetente e uma ida ao banco. O limite ordena por volume, entao
+        # o pedaco de cada rodada e sempre o que mais rende.
+        atribuicao = None
+        try:
+            from services.group_msg_attribution import atribuir_orfas
+            # `get_pg_db`, nao o `get_db` local: o `get_db` deste modulo
+            # (main.py:358) devolve `get_connection()` — conexao CRUA que o
+            # chamador tem de fechar. `with` nela gerencia a transacao e nao
+            # fecha nada, entao cada rodada do cron (horaria) deixaria uma
+            # conexao aberta pra tras. `get_pg_db` e o `database.get_db`, que e
+            # context manager de verdade.
+            with get_pg_db() as _conn:
+                _cur = _conn.cursor()
+                atribuicao = atribuir_orfas(
+                    _cur,
+                    limite_remetentes=int(os.getenv("GROUP_ATTRIB_BATCH", "60")),
+                    commit_cb=_conn.commit,
+                )
+                _conn.commit()
+        except Exception as e:
+            # Nao derruba o job: a ingestao (o que nao da pra refazer) ja
+            # terminou e foi commitada. Mas tambem NAO passa calado — atribuicao
+            # que falha em silencio reproduz exatamente o defeito que ela veio
+            # corrigir, e o cron sairia 'ok' com a fila intacta.
+            logger.exception("cron_run_group_messages: atribuicao de orfas falhou")
+            atribuicao = {"erro": f"{type(e).__name__}: {e}"}
+
         return {
             "status": "ok",
             "job": "run-group-messages",
@@ -11734,6 +11771,7 @@ async def cron_run_group_messages(request: Request):
             "more_pages": result.get("more_pages", False),
             "parcial": result.get("parcial", False),
             "result": result,
+            "atribuicao": atribuicao,
         }
     except _aio.TimeoutError:
         # Nao deveria acontecer: o budget corta antes. Se cair aqui, um unico

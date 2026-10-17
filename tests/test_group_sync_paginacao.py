@@ -74,7 +74,12 @@ def sem_banco(monkeypatch):
         def __exit__(self, *a): return False
 
     monkeypatch.setattr(gms, "get_db", lambda: _Conn())
-    monkeypatch.setattr(gms, "_find_contact_by_phone", lambda c, p: None)
+    # A resolucao remetente->ficha e `resolver_remetente` (ponto unico dos tres
+    # gravadores desde 17/10). O patch anterior era em `_find_contact_by_phone`,
+    # que os gravadores deixaram de chamar: ficou sem efeito e os testes
+    # passavam por causa do `_Cur` fake, nao do patch — isolamento que parece
+    # declarado e nao esta aplicado ([[feedback_teste_com_ambiente_declarado_nao_aplicado]]).
+    monkeypatch.setattr(gms, "resolver_remetente", lambda c, p, n=None: (None, "pulada_sem_ficha"))
     return gms
 
 

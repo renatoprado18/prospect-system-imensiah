@@ -14,7 +14,7 @@ from typing import Dict, List
 import httpx
 
 from database import get_db
-from services.contact_identity import find_contact_by_phone
+from services.group_msg_attribution import resolver_remetente
 from services.tz import UTC
 
 logger = logging.getLogger(__name__)
@@ -305,7 +305,17 @@ async def _sync_single_group(
                 continue
 
             # Cross sender_phone with contacts
-            contact_id = _find_contact_by_phone(cursor, sender_phone) if sender_phone and len(sender_phone) > 8 else None
+            #
+            # Mesma regua do backfill (`group_msg_attribution`), de proposito: a
+            # resolucao aqui acontece UMA vez por mensagem e o `ON CONFLICT
+            # DO NOTHING` abaixo nunca reavalia, entao a ingestao e o backfill
+            # precisam concordar — duas reguas divergindo fariam a atribuicao
+            # depender de qual caminho gravou a linha primeiro.
+            #
+            # O `len > 8` anterior deixava passar LID: `@lid` e removido acima,
+            # entao um identificador de 15 digitos ia pro casamento por telefone
+            # e nunca acertava, sem falhar de forma visivel.
+            contact_id, _motivo = resolver_remetente(cursor, sender_phone, sender_name)
 
             # Insert with dedup by message_id
             try:
@@ -335,17 +345,12 @@ async def _sync_single_group(
     return saved
 
 
-def _find_contact_by_phone(cursor, phone: str):
-    """
-    Find contact_id by phone number.
-
-    Compara so digitos dos dois lados (`find_contact_by_phone`): o remetente
-    chega cru do WhatsApp e na base o numero pode estar formatado pelo Google.
-    O LIKE anterior sobre `telefones::text` nao via nenhum numero formatado, o
-    que e boa parte do `contact_id` NULL em `group_messages`.
-    """
-    row = find_contact_by_phone(cursor, phone, columns="id")
-    return row["id"] if row else None
+# `_find_contact_by_phone` foi REMOVIDA em 17/10/26. Ela casava so por telefone,
+# sem a guarda do fixo compartilhado e sem reconhecer LID, e era chamada pelos
+# dois gravadores — deixa-la de pe sem consumidor convidaria o proximo a usar a
+# regua antiga e reintroduzir a divergencia que `resolver_remetente` existe pra
+# fechar ([[feedback_consumidor_morto_wiring]]). Quem precisa de telefone->ficha
+# puro continua com `contact_identity.find_contact_by_phone`.
 
 
 def get_group_messages(group_jid: str, limit: int = 50, since: datetime = None) -> List[Dict]:

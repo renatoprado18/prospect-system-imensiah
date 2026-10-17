@@ -773,7 +773,7 @@ def persist_group_message_realtime(data: Dict, key: Dict, remote_jid: str,
         return False
     try:
         from database import get_db
-        from services.group_message_sync import _find_contact_by_phone
+        from services.group_msg_attribution import resolver_remetente
 
         message_obj = data.get("message") or {}
         content, msg_type = _extract_group_message_content(message_obj)
@@ -808,8 +808,12 @@ def persist_group_message_realtime(data: Dict, key: Dict, remote_jid: str,
             if not cursor.fetchone():
                 return False
 
-            contact_id = (_find_contact_by_phone(cursor, sender_phone)
-                          if sender_phone and len(sender_phone) > 8 else None)
+            # Mesma regua dos outros dois caminhos (pull e backfill): este e o
+            # SEGUNDO gravador de `group_messages`, e com `ON CONFLICT DO
+            # NOTHING` quem grava primeiro decide a atribuicao pra sempre — se
+            # as reguas divergirem, o contato de uma mensagem passa a depender
+            # de o webhook ou o pull ter chegado antes.
+            contact_id, _motivo = resolver_remetente(cursor, sender_phone, sender_name)
 
             cursor.execute("""
                 INSERT INTO group_messages (group_jid, message_id, sender_phone, sender_name,
