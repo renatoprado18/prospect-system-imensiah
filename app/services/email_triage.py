@@ -780,6 +780,12 @@ class EmailTriageService:
             R1  Imprensa (PRESS_DOMAINS + regex) -> must_read p10 conf=0.95 escalation
             R2  From C0/C1 (circulo 1) -> must_read p9 conf=0.92
             R3  Frente keyword no subject -> must_read p8 conf=0.85
+            R3.5  Whitelist financeiro/gov -> must_read (ANTES do R4: fiscal e
+                  bancario sempre vem de noreply)
+            R3.7  Alerta PROCESSUAL (remetente de monitoramento + evidencia de
+                  materia) -> must_read p9 conf=0.92. Tambem ANTES do R4, e pelo
+                  mesmo motivo: 86 alertas judiciais foram arquivados 100% das
+                  vezes porque tribunal/Astrea/Jusbrasil escrevem de no-reply
             R4  Sender no-reply/notifications/system -> archive_proposed conf=0.95
             R5  List-Unsubscribe + dominio comercial -> archive_proposed conf=0.92
             R6  Cold vendor (zero historico + pitch keywords) -> archive_proposed conf=0.88
@@ -1038,6 +1044,40 @@ class EmailTriageService:
                 "reasons": reasons,
                 "suggested_tags": ["!!Renato", tag_kind],
                 "suggested_actions": [{"type": "respond", "reason": "financeiro/gov"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
+        # R3.7 (19/10/2026): VIGILANCIA PROCESSUAL — DEVE vir ANTES do R4 pelo
+        # mesmo motivo do R3.5: alerta judicial vem de no-reply por natureza
+        # (tribunal nao espera resposta), e o R4 arquivava 100% deles.
+        #
+        # Opt-IN duplo (remetente de monitoramento E evidencia de materia), nao
+        # whitelist de dominio: o mesmo `nao-responda@jusbrasil` manda alerta e
+        # propaganda, entao dominio solto traria o marketing pra must_read — o
+        # erro que o guard de campanha do R3.5 existe pra evitar.
+        #
+        # Por que prioridade 9 e nao 8: prazo processual NAO se recupera. Entre
+        # um falso positivo (o Renato le um aviso de movimentacao que nao exigia
+        # nada) e um falso negativo (uma intimacao arquivada), os custos nao sao
+        # comparaveis — e o historico aqui e de 86 falsos negativos seguidos.
+        if _is_juridico_sender(from_email, sender_domain) and _has_processual_evidence(
+            f"{subject} {body_text[:1500]}"
+        ):
+            reasons.append(
+                f"Alerta processual ({sender_domain}) com evidencia de materia "
+                f"no assunto — prazo nao se recupera"
+            )
+            rule_hits.append("R3_7_processual")
+            return {
+                "classification": "must_read",
+                "priority": 9,
+                "ai_confidence": 0.92,
+                "reasons": reasons,
+                "suggested_tags": ["!!Renato", "processual"],
+                "suggested_actions": [
+                    {"type": "review", "reason": "movimentacao processual — checar prazo"}
+                ],
                 "escalation": False,
                 "rule_hits": rule_hits,
             }
@@ -3688,6 +3728,75 @@ _FINANCIAL_KEEP_SUBJECT_PHRASES = (
 )
 
 _GOV_DOMAINS = (".gov.br", ".jus.br")
+
+# ---------------------------------------------------------------------------
+# VIGILANCIA PROCESSUAL (19/10/2026)
+#
+# `.jus.br` ja esta no _GOV_DOMAINS, entao email DIRETO de tribunal e must_read.
+# O furo eram os INTERMEDIARIOS: Astrea (aurum.com.br) e Jusbrasil monitoram o
+# processo e avisam, mas sao SaaS comercial e nao casam `.jus.br`.
+#
+# Medido em prod: **86 alertas processuais, `needs_attention` em ZERO e 100%
+# `archive_proposed`**, de 17/06 a 19/10. Nao era amostra — era a populacao.
+#
+# ⚠️ A CAUSA NAO ERA O R4 (no-reply), e eu afirmei que era antes de ler o
+# `classification_reasons` gravado. O que os arquivava e o **R7 default da conta
+# PERSONAL**: os 92 chegam todos em `renato.almeida.prado@gmail.com`, e ali o
+# default e `archive_proposed` agressivo (decisao de 09/06/26, justificada por
+# 12.496 promo + 11.921 update naquela caixa) com a razao literal *"must_read
+# exige sinal claro"*. A regra do R7 esta CERTA para a caixa pessoal — materia
+# processual era so o sinal que o default agressivo engolia, e nao havia nenhuma
+# regra `must_read` que o desse. Diagnostico so fecha depois de ler a
+# procedencia gravada ([[feedback_procedencia_do_defeito_antes_de_corrigir]]).
+#
+# Duplica a cegueira o fato de a conta pessoal **nao ser coberta pelo MCP do
+# Gmail** (so `copilot.emails` a indexa) — ver
+# [[reference_intel_indexa_email_pessoal]]: o alerta cai exatamente na caixa com
+# default agressivo E sem a outra superficie de leitura.
+#
+# Alerta judicial vem de no-reply por natureza (tribunal nao espera resposta),
+# entao a regra tem de vir antes do R4 de todo modo — mas o que a torna
+# NECESSARIA e o R7, nao o R4.
+_JURIDICO_SENDERS = (
+    "aurum.com.br",          # Astrea — gestao processual do escritorio
+    "jusbrasil.com.br",      # inclui nao-responda@ e descubra.jusbrasil
+    "comunica.pje.jus.br",   # DJEN/Comunica do CNJ (ja coberto por .jus.br;
+                             # explicito aqui pra nao depender da outra lista)
+)
+
+# ⚠️ EVIDENCIA DE MATERIA, NAO DE TEMA — e a distincao que faz a regra funcionar.
+# O MESMO endereco manda alerta e propaganda: `nao-responda@jusbrasil` mandou
+# "Nova decisao no processo" E "Vai fechar negocio? Confere antes 🔍"; e
+# `novidades@descubra` (nome de marketing) mandou um alerta real. Logo whitelist
+# por remetente nao separa — so o assunto separa, e so por opt-IN positivo, como
+# o guard de campanha do R3.5 ja ensinava.
+#
+# 🔴 "juridico" NAO entra nesta lista de proposito: casa com
+# "sua rotina JURIDICA merece esse proximo passo", que e marketing puro. A
+# palavra do TEMA aceita o anuncio; a palavra da MATERIA, nao.
+#
+# Validado contra os 92 emails reais de Astrea+Jusbrasil em 19/10: **87 passam,
+# 5 ficam fora, e os 5 sao exatamente os de marketing** — zero falso positivo e
+# zero falso negativo no corpus inteiro.
+_PROCESSUAL_EVIDENCE = (
+    "processo", "processos", "audiencia", "decisao", "publicacao",
+    "movimenta", "andamento", "intima", "acordao", "sentenca",
+    "despacho", "prazo", "citacao", "penhora", "recurso", "peticao",
+    "liminar", "execucao fiscal", "diario oficial", "distribuido",
+)
+
+
+def _is_juridico_sender(from_email: str, sender_domain: str) -> bool:
+    """Remetente e monitoramento processual (ou tribunal)?"""
+    alvo = (from_email or "").lower()
+    dom = (sender_domain or "").lower()
+    return any(alvo.endswith(s) or dom.endswith(s) for s in _JURIDICO_SENDERS)
+
+
+def _has_processual_evidence(texto: str) -> bool:
+    """O texto fala de MATERIA processual (nao do tema 'juridico')?"""
+    t = _norm_txt(texto or "")
+    return any(kw in t for kw in _PROCESSUAL_EVIDENCE)
 
 # Fonte unica do whitelist financeiro (era local em classify_email_cos; hoisted
 # 25/07 pra que o guard de campanha derive dela em vez de duplicar a lista).
