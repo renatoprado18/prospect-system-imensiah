@@ -27829,5 +27829,35 @@ Responda SOMENTE com JSON válido:
     }
 
 
+@app.post("/api/v1/tools/image-generate")
+async def image_generate(request: Request):
+    """Gera imagem via OpenRouter (Flux, DALL-E). Requer X-API-Key."""
+    import os, httpx
+    api_key = request.headers.get("X-API-Key", "")
+    master_key = os.getenv("API_MASTER_KEY", "")
+    if not api_key or api_key != master_key:
+        raise HTTPException(status_code=401, detail="X-API-Key inválida")
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    model = body.get("model", "black-forest-labs/flux-1.1-pro")
+    width = body.get("width", 1024)
+    height = body.get("height", 1024)
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Campo 'prompt' obrigatório")
+    or_key = os.getenv("OPENROUTER_API_KEY", "")
+    if not or_key:
+        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY não configurada")
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            "https://openrouter.ai/api/v1/images/generations",
+            headers={"Authorization": f"Bearer {or_key}", "Content-Type": "application/json",
+                     "HTTP-Referer": "https://intel.almeida-prado.com"},
+            json={"model": model, "prompt": prompt, "width": width, "height": height, "n": 1},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text[:500])
+    return resp.json()
+
+
 # Vercel handler
 app_handler = app
