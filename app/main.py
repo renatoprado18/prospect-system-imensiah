@@ -31109,8 +31109,8 @@ async def image_generate(request: Request):
     """Gera imagem via OpenRouter (Flux, DALL-E). Requer X-API-Key."""
     import os, httpx
     api_key = request.headers.get("X-API-Key", "")
-    master_key = os.getenv("API_MASTER_KEY", "")
-    if not api_key or api_key != master_key:
+    or_key_check = os.getenv("OPENROUTER_API_KEY", "")
+    if not api_key or api_key != or_key_check:
         raise HTTPException(status_code=401, detail="X-API-Key inválida")
     body = await request.json()
     prompt = body.get("prompt", "")
