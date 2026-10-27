@@ -915,52 +915,51 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
 
             if text_content or has_media:
                 try:
-                    from database import get_db
-                    with get_db() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT pwg.project_id, p.nome FROM project_whatsapp_groups pwg
-                            JOIN projects p ON p.id = pwg.project_id
-                            WHERE pwg.group_jid = %s AND pwg.ativo = TRUE
-                        """, (remote_jid,))
-                        group_project = cursor.fetchone()
+                    # FONTE UNICA (27/10/26). Isto resolvia o escopo em DUAS
+                    # viagens: lia `project_whatsapp_groups` (onde o
+                    # `project_id` ja estava), descartava o id, levava o NOME do
+                    # projeto ao outro Neon e casava por
+                    # `ILIKE '%nome%'` em `empresas`. Dois defeitos no mesmo
+                    # trecho: o casamento por nome pode acertar a empresa errada
+                    # (ou nenhuma, calado, quando projeto e empresa nao se
+                    # chamam igual), e sem `CONSELHOOS_DATABASE_URL` o RACI do
+                    # grupo simplesmente nao rodava — inclusive para projeto que
+                    # nunca foi empresa de conselho.
+                    from services import raci_store
+                    scope = raci_store.resolve_scope_by_group_jid(remote_jid)
 
-                    if group_project:
-                        cos_db = os.getenv("CONSELHOOS_DATABASE_URL", "")
-                        if cos_db:
-                            import psycopg2 as pg2
-                            conn2 = pg2.connect(cos_db)
-                            cur2 = conn2.cursor()
-                            cur2.execute("SELECT id, nome FROM empresas WHERE LOWER(nome) LIKE LOWER(%s) LIMIT 1",
-                                        (f"%{group_project['nome']}%",))
-                            emp = cur2.fetchone()
-                            conn2.close()
-                            if emp:
-                                from services.raci_smart_updates import process_group_message, extract_text_from_media
+                    # O GATE É NOVO E PRESERVA O ALCANCE (27/10/26). Resolver
+                    # pelo `project_id` acha MAIS grupos que o `ILIKE` em
+                    # `empresas` achava — inclusive o #47 (advogados/contadores,
+                    # 8 itens de RACI), que passaria a receber `✅ Atualizado`
+                    # automático sem ninguém ter pedido. Ver
+                    # `raci_store.grupo_raci_habilitado`.
+                    if scope and raci_store.grupo_raci_habilitado(scope):
+                        from services.raci_smart_updates import process_group_message, extract_text_from_media
 
-                                # Phase 2: extrai texto de media se houver. Junta com text_content/caption.
-                                if has_media:
-                                    instance = data.get("instance") or os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
-                                    media_text = await extract_text_from_media(message_obj, key, instance, caption=caption)
-                                    if media_text:
-                                        combined = (text_content + "\n\n" if text_content else "") + media_text
-                                        text_content = combined
-                                        logger.info(f"RACI media extracted: {len(media_text)} chars")
+                        # Phase 2: extrai texto de media se houver. Junta com text_content/caption.
+                        if has_media:
+                            instance = data.get("instance") or os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+                            media_text = await extract_text_from_media(message_obj, key, instance, caption=caption)
+                            if media_text:
+                                combined = (text_content + "\n\n" if text_content else "") + media_text
+                                text_content = combined
+                                logger.info(f"RACI media extracted: {len(media_text)} chars")
 
-                                if text_content:
-                                    result = await process_group_message(text_content, emp[0], emp[1])
-                                    applied = result.get("applied", [])
-                                    if applied:
-                                        logger.info(f"RACI smart_updates applied {len(applied)} via {result.get('source')}: {applied}")
-                                        client = get_evolution_client()
-                                        for a in applied:
-                                            await client.send_text(
-                                                remote_jid,
-                                                f"✅ Atualizado: *{a['acao'][:60]}* → {a['new_status']}",
-                                                instance_name="rap-whatsapp"
-                                            )
-                                    elif result.get("pending_review"):
-                                        logger.info(f"RACI smart_updates {len(result['pending_review'])} pending review")
+                        if text_content:
+                            result = await process_group_message(text_content, scope.chave, scope.nome)
+                            applied = result.get("applied", [])
+                            if applied:
+                                logger.info(f"RACI smart_updates applied {len(applied)} via {result.get('source')}: {applied}")
+                                client = get_evolution_client()
+                                for a in applied:
+                                    await client.send_text(
+                                        remote_jid,
+                                        f"✅ Atualizado: *{a['acao'][:60]}* → {a['new_status']}",
+                                        instance_name="rap-whatsapp"
+                                    )
+                            elif result.get("pending_review"):
+                                logger.info(f"RACI smart_updates {len(result['pending_review'])} pending review")
                 except Exception as e:
                     logger.warning(f"RACI group update error: {e}")
 

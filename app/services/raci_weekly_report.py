@@ -29,7 +29,12 @@ def _clip(s: Optional[str], width: int = 120) -> str:
 
 logger = logging.getLogger(__name__)
 
-CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL", "")
+# A CONSTANTE DE MÓDULO SAIU (27/10/26). Era o anti-padrão que
+# `raci_store.conselhoos_url()` existe para evitar: lida uma vez no import, fica
+# vazia para quem seta a env depois — e isso já custou um diagnóstico falso
+# ("item não encontrado no RACI" quando quem faltava era a conexão). Hoje este
+# módulo não abre conexão com o ConselhoOS em lugar nenhum: tudo passa pelo
+# `raci_store`, que decide o banco em call-time.
 
 # Teto de tamanho do caminho REGEX (fix 22/08). Comando de status e' curto
 # ("3 concluido", "5 em andamento: detalhe"); relatorio de RACI tem milhares de
@@ -40,41 +45,29 @@ RACI_REGEX_MAX_CHARS = 400
 
 
 def generate_raci_report(empresa_id: str) -> Optional[Dict]:
-    """Generate RACI status report for an empresa."""
-    import psycopg2
-    import psycopg2.extras
+    """Generate RACI status report for an empresa.
 
-    if not CONSELHOOS_DATABASE_URL:
-        logger.error("CONSELHOOS_DATABASE_URL not configured")
-        return None
+    FONTE UNICA (27/10/26) — e aqui o conserto nao era cosmetico. Esta funcao
+    lia o `raci_itens` do ConselhoOS enquanto a matriz da pagina lia o do INTEL,
+    e o estrago ia alem de "duas telas divergentes": `parse_raci_update` resolve
+    o "3 concluido" do grupo PELA ORDEM QUE ESTA FUNCAO DEVOLVE. Apontar so a
+    escrita para o INTEL faria o numero do Renato indexar a lista de um banco e
+    escrever no item de mesma posicao do outro — trocaria defasagem silenciosa
+    por escrita no item errado.
+
+    `empresa_id` aceita project_id OU uuid da empresa (`raci_store.resolve_scope`).
+    """
+    from services import raci_store
 
     try:
-        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        scope = raci_store.resolve_scope(empresa_id)
+        raw_items = raci_store.report_rows(scope)
+    except Exception as e:
+        logger.error(f"generate_raci_report({empresa_id}): {type(e).__name__}: {e}")
+        return None
 
-        # Get empresa info
-        cur.execute("SELECT nome FROM empresas WHERE id = %s", (empresa_id,))
-        empresa = cur.fetchone()
-        if not empresa:
-            conn.close()
-            return None
-
-        # Get RACI items — busca todos e ordena em Python pra usar buckets
-        # de prioridade (urgente/atrasada-com-movimento/no-prazo/concluida).
-        # Filtro de concluidos: so mostra os ainda nao relatados em report
-        # anterior (concluido_relatado_em IS NULL). Apos enviar, chamar
-        # mark_concluidos_as_reported(empresa_id) pra marcar.
-        cur.execute("""
-            SELECT id, area, acao, prazo, status, updated_at, notas,
-                   responsavel_r, responsavel_a, responsavel_c, responsavel_i,
-                   concluido_relatado_em
-            FROM raci_itens
-            WHERE empresa_id = %s
-              AND (status != 'concluido' OR concluido_relatado_em IS NULL)
-        """, (empresa_id,))
-        raw_items = cur.fetchall()
-        conn.close()
-
+    empresa = {"nome": scope.nome}
+    try:
         if not raw_items:
             return None
 
@@ -356,57 +349,54 @@ async def send_raci_to_groups() -> Dict:
     """
     from database import get_db
 
+    from services import raci_store
+
     results = {"previews_sent": 0, "skipped": 0, "errors": 0, "empresas": [],
                "conselhos_preview": "on" if _preview_conselhos_enabled() else "off"}
 
-    if not CONSELHOOS_DATABASE_URL:
-        return {"error": "CONSELHOOS_DATABASE_URL not configured"}
+    # ⚠️ O EARLY-RETURN EM `CONSELHOOS_DATABASE_URL` SAIU (27/10/26). Hoje esta
+    # funcao entrega, na pratica, um preview so — o da Governanca Jabo, que e
+    # nativo do INTEL e nada tem a ver com o outro Neon. Abortar aqui por falta
+    # de uma env que o unico consumidor nao usa derrubava o aviso que existe
+    # para avisar quando o RACI trava: um acoplamento capaz de apagar o proprio
+    # detector ([[feedback_fallback_sem_motor_vira_motor]]).
 
-    empresas = []
+    escopos = []
     if _preview_conselhos_enabled():
-        # Get all empresas from ConselhoOS
-        import psycopg2
-        import psycopg2.extras
+        # A PERGUNTA INVERTEU (27/10/26). Isto listava `empresas` do ConselhoOS e
+        # depois procurava o projeto por `ILIKE '%nome%'` — casamento por nome que
+        # falha calado quando projeto e empresa nao se chamam igual. Com a fonte
+        # no INTEL a pergunta certa e direta: quem tem itens de RACI e um grupo
+        # ativo para onde mandar.
         try:
-            conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            cur.execute("SELECT id, nome FROM empresas")
-            empresas = cur.fetchall()
-            conn.close()
+            escopos = [s for s in raci_store.escopos_com_grupo()
+                       if s.project_id != JABO_PROJECT_ID]
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": f"{type(e).__name__}: {e}"}
 
-    # Pra cada empresa, valida que tem grupo WA linkado e gera preview
+    # Pra cada escopo, valida que tem grupo WA linkado e gera preview
     with get_db() as conn:
         cursor = conn.cursor()
 
-        for empresa in empresas:
-            # Find INTEL project for this empresa (so pra validacao — mensagem
-            # vai ser entregue ao Renato, nao ao grupo, mas se nao houver grupo
-            # linkado o report nao tem destino final).
-            cursor.execute("""
-                SELECT p.id FROM projects p
-                WHERE LOWER(p.nome) LIKE LOWER(%s)
-                   OR p.nome ILIKE %s
-                LIMIT 1
-            """, (f"%{empresa['nome']}%", f"%{empresa['nome']}%"))
-            project = cursor.fetchone()
-            if not project:
-                results["skipped"] += 1
-                continue
-
+        for escopo in escopos:
+            # O #28 e excluido acima de proposito: ele tem bloco PROPRIO no fim
+            # desta funcao, com veredito de medicao e backlog de tasks que o
+            # preview genérico nao monta. Sem a exclusao a Andressa receberia
+            # dois previews da mesma governanca.
             cursor.execute("""
                 SELECT group_jid, group_name FROM project_whatsapp_groups
                 WHERE project_id = %s AND ativo = TRUE
                 LIMIT 1
-            """, (project['id'],))
+            """, (escopo.project_id,))
             group = cursor.fetchone()
             if not group:
                 results["skipped"] += 1
                 continue
 
+            empresa = {"id": escopo.chave, "nome": escopo.nome}
+
             # Generate report
-            report = generate_raci_report(empresa['id'])
+            report = generate_raci_report(escopo.project_id)
             if not report:
                 results["skipped"] += 1
                 continue
@@ -481,25 +471,17 @@ def mark_concluidos_as_reported(empresa_id: str) -> int:
 
     Pattern: 1 vez na lista (no report seguinte ao informe de conclusao),
     depois desaparece.
+
+    A coluna existia so no ConselhoOS; a 088 a criou no INTEL — sem ela o filtro
+    de `report_rows` nao teria em que se apoiar e a secao Concluidas voltaria a
+    ser lista historica toda segunda.
     """
-    import psycopg2
-    if not CONSELHOOS_DATABASE_URL:
-        return 0
+    from services import raci_store
     try:
-        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE raci_itens SET concluido_relatado_em = NOW()
-            WHERE empresa_id = %s
-              AND status = 'concluido'
-              AND concluido_relatado_em IS NULL
-        """, (empresa_id,))
-        n = cur.rowcount
-        conn.commit()
-        conn.close()
-        return n
+        scope = raci_store.resolve_scope(empresa_id)
+        return raci_store.mark_reported(scope)
     except Exception as e:
-        logger.error(f"mark_concluidos_as_reported error: {e}")
+        logger.error(f"mark_concluidos_as_reported error: {type(e).__name__}: {e}")
         return 0
 
 
@@ -904,9 +886,6 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
     NAO reconhece resumo de relatorio ("✅ 6 concluídos.", "12 itens, 6
     concluidos"). Ver as tres travas abaixo — o defeito de 21/08.
     """
-    import psycopg2
-    import psycopg2.extras
-
     # ── TRAVA 1: comando e' mensagem CURTA (fix 22/08) ───────────────────────
     # Todo relatorio de RACI termina com um resumo numerico, entao todo
     # relatorio e' um comando em potencial. Em 21/08 o rodape "✅ 6 concluídos."
@@ -949,32 +928,27 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
             elif any(w in status_text for w in ['andamento', 'iniciado', 'trabalhando', 'progress']):
                 new_status = 'em_andamento'
             elif any(w in status_text for w in ['cancelado', 'removido']):
-                # `cancelado` NAO existe no enum `raci_status` do ConselhoOS
-                # (pendente | em_andamento | concluido | atrasado). O UPDATE
-                # estouraria com InvalidTextRepresentation — nunca estourou
+                # `cancelado` NAO existe no CHECK de `status` em NENHUM dos dois
+                # bancos (medido em 27/10: ambos aceitam pendente | em_andamento
+                # | concluido | atrasado). O UPDATE estouraria — nunca estourou
                 # porque este regex jamais casou em prod (0 registros de
                 # `parse_raci_update` em agent_actions, medido 29/07). Cancelar
                 # item de ata nao tem representacao aqui: devolve o motivo em
                 # vez de gravar um valor que o banco recusa.
-                logger.info("RACI: 'cancelado' pedido por WA — sem equivalente no enum")
+                logger.info("RACI: 'cancelado' pedido por WA — sem equivalente no CHECK")
                 return {"blocked": "status_inexistente", "pedido": "cancelado",
                         "motivo": "cancelar item nao existe no RACI — "
-                                  "edite no ConselhoOS ou marque concluido"}
+                                  "edite na matriz do projeto ou marque concluido"}
             else:
                 continue
 
-            # Get the nth RACI item for this empresa
-            if not CONSELHOOS_DATABASE_URL:
-                return None
-
             try:
-                conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-                cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-
                 # Get items na MESMA ordem do report (priority-grouped). Reusa
                 # generate_raci_report pra garantir alinhamento entre o que o user
-                # ve no WhatsApp e o item que vai ser atualizado.
-                conn.close()
+                # ve no WhatsApp e o item que vai ser atualizado — e desde 27/10
+                # as duas pontas leem a MESMA fonte, que e o que torna este reuso
+                # honesto: antes a ordem vinha do ConselhoOS e a escrita ia (ou
+                # iria) para o INTEL, e o numero apontaria para outro item.
                 report = generate_raci_report(empresa_id)
                 if not report:
                     return None
@@ -1006,26 +980,13 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
                             "acao": target['acao'], "old_status": target['status'],
                             "new_status": new_status,
                             "motivo": f"item ja esta '{target['status']}' — "
-                                      f"reabrir so pelo INTEL ou ConselhoOS"}
+                                      f"reabrir so pela matriz do projeto"}
 
-                # Reabre conexao pra UPDATE
-                conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
-                cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-
-                # Update status
-                update_fields = {"status": new_status, "updated_at": datetime.now()}
-                if notes:
-                    cur.execute(
-                        "UPDATE raci_itens SET status = %s, notas = COALESCE(notas, '') || %s, updated_at = NOW() WHERE id = %s",
-                        (new_status, f"\n[{datetime.now().strftime('%d/%m')}] {notes}", target['id'])
-                    )
-                else:
-                    cur.execute(
-                        "UPDATE raci_itens SET status = %s, updated_at = NOW() WHERE id = %s",
-                        (new_status, target['id'])
-                    )
-                conn.commit()
-                conn.close()
+                from services import raci_store
+                scope = raci_store.resolve_scope(empresa_id)
+                nota = (f"\n[{datetime.now().strftime('%d/%m')}] {notes}") if notes else None
+                raci_store.update_item(scope, target['id'],
+                                       status=new_status, append_note=nota)
 
                 # Audit log (P3): RACI status mudou por regex em msg WA — quero rastro.
                 try:
@@ -1034,10 +995,14 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
                         action_type='raci_status_updated',
                         category='conselho',
                         title=f"RACI: '{(target['acao'] or '')[:60]}' → {new_status}",
-                        scope_ref={'raci_item_id': str(target['id']), 'empresa_id': str(empresa_id)},
+                        scope_ref={'raci_item_id': str(target['id']),
+                                   'empresa_id': scope.chave,
+                                   'project_id': scope.project_id,
+                                   'target': scope.target},
                         source='raci_weekly_report.parse_raci_update',
                         payload={'old_status': target['status'], 'new_status': new_status, 'item_num': item_num, 'notes': notes},
-                        undo_hint=f"UPDATE raci_itens SET status='{target['status']}' WHERE id='{target['id']}'::uuid;",
+                        undo_hint=raci_store.undo_hint_update(
+                            scope, target['id'], target['status']),
                     )
                 except Exception as e:
                     logger.warning(f"audit log failed for raci_update: {e}")

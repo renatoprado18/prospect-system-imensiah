@@ -77,32 +77,31 @@ def _cos_conn():
 
 
 def _resolve_empresa(group_jid: str) -> Optional[Tuple[str, str]]:
-    """group_jid -> (empresa_id, empresa_nome) no ConselhoOS. None se nao mapeia."""
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            """SELECT p.nome AS nome FROM project_whatsapp_groups pwg
-               JOIN projects p ON p.id = pwg.project_id
-               WHERE pwg.group_jid = %s AND pwg.ativo = TRUE LIMIT 1""",
-            (group_jid,),
-        )
-        row = cur.fetchone()
-    if not row:
+    """group_jid -> (chave_de_escopo, nome). None se o grupo nao mapeia projeto.
+
+    FONTE UNICA (27/10/26). Isto fazia `group_jid -> projects.nome -> ILIKE
+    '%nome%' em empresas (ConselhoOS)` — duas viagens e um casamento por nome,
+    sendo que `project_whatsapp_groups` ja tem o `project_id`. A viagem ao outro
+    banco existia so porque o destino da escrita era lá; com a escrita no INTEL
+    ela deixa de ter razao, e o `ILIKE` deixa de poder casar o projeto errado.
+
+    A chave devolvida e a do escopo (`RaciScope.chave`): o UUID da empresa
+    quando existe, senao `project:<id>`. Preserva-la importa porque e ela que
+    esta nas dedup-keys de notificacao ja emitidas e no `empresa_id` das 92
+    propostas da fila — trocar a chave junto com o target reemitiria aviso que o
+    Renato ja viu.
+    """
+    from services import raci_store
+    scope = raci_store.resolve_scope_by_group_jid(group_jid)
+    if not scope:
         return None
-    proj_nome = row["nome"] if isinstance(row, dict) else row[0]
-    conn2 = _cos_conn()
-    if not conn2:
+    # O gate preserva o alcance que o `ILIKE` dava por acidente. Devolver None
+    # aqui faz o sweep marcar a mensagem como processada e AVANCAR — que e' o
+    # desfecho certo: "este grupo nao alimenta RACI" nao e' falha, e deixar a
+    # msg na fila a reprocessaria para sempre.
+    if not raci_store.grupo_raci_habilitado(scope):
         return None
-    try:
-        cur2 = conn2.cursor()
-        cur2.execute(
-            "SELECT id, nome FROM empresas WHERE LOWER(nome) LIKE LOWER(%s) LIMIT 1",
-            (f"%{proj_nome}%",),
-        )
-        emp = cur2.fetchone()
-    finally:
-        conn2.close()
-    return (str(emp[0]), emp[1]) if emp else None
+    return (scope.chave, scope.nome)
 
 
 def _resolve_empresa_safe(group_jid: str) -> Optional[Tuple[str, str]]:
@@ -117,21 +116,23 @@ def _resolve_empresa_safe(group_jid: str) -> Optional[Tuple[str, str]]:
         raise TransientInfraError(f"resolve_empresa({group_jid}): {type(e).__name__}: {e}") from e
 
 
-def _fetch_item_acoes(item_ids: List[str]) -> Dict[str, str]:
-    """item_id -> acao (snapshot pro review). ConselhoOS."""
+def _fetch_item_acoes(empresa_id: str, item_ids: List[str]) -> Dict[str, str]:
+    """item_id -> acao (snapshot pro review), do target ativo.
+
+    Passou a receber o ESCOPO (27/10/26). O `ANY(%s::uuid[])` de antes não era
+    só o banco errado: o cast fixo em `uuid` tornava a função incapaz de olhar
+    um id do INTEL, então o snapshot de ação viria vazio e a tela de review
+    mostraria proposta sem dizer sobre o quê.
+    """
     if not item_ids:
         return {}
-    conn2 = _cos_conn()
-    if not conn2:
-        return {}
+    from services import raci_store
     try:
-        cur2 = conn2.cursor()
-        cur2.execute("SELECT id, acao FROM raci_itens WHERE id = ANY(%s::uuid[])", (item_ids,))
-        return {str(r[0]): (r[1] or "") for r in cur2.fetchall()}
+        scope = raci_store.resolve_scope(empresa_id)
+        return raci_store.item_acoes(scope, item_ids)
     except Exception:
+        log.warning("_fetch_item_acoes(%s): snapshot de acao indisponivel", empresa_id)
         return {}
-    finally:
-        conn2.close()
 
 
 async def _run_sweep(
@@ -139,7 +140,7 @@ async def _run_sweep(
     *,
     resolve_empresa: Callable[[str], Optional[Tuple[str, str]]],
     propose: Callable[[str, str], Awaitable[List[Dict[str, Any]]]],
-    fetch_acoes: Callable[[List[str]], Dict[str, str]],
+    fetch_acoes: Callable[[str, List[str]], Dict[str, str]],
     store_proposal: Callable[..., Optional[Dict[str, Any]]],
     mark_processed: Callable[[int], None],
     max_age_days: Optional[int] = None,
@@ -237,7 +238,7 @@ async def _run_sweep(
                                        "sender_name": m.get("sender_name")})
 
             props = await propose(m["content"], empresa_id)
-            acoes = fetch_acoes([str(p.get("item_id")) for p in props]) if props else {}
+            acoes = fetch_acoes(empresa_id, [str(p.get("item_id")) for p in props]) if props else {}
 
             for p in props:
                 stored = store_proposal(mid, jid, empresa_id, empresa_nome, m.get("sender_name"), p, acoes)
@@ -536,7 +537,7 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
         return {"error": f"proposta #{proposal_id} ja aplicada"}
 
     # Proposta de item NOVO (só nasce da reconciliação por ata): não há item pra
-    # atualizar — o apply CRIA a linha no ConselhoOS. Caminho separado de
+    # atualizar — o apply CRIA a linha no target ativo. Caminho separado de
     # propósito: `apply_proposal` inteiro pressupõe um item alvo existente, e
     # espremer criação lá dentro faria os guardrails (downgrade, no-op) rodarem
     # contra um item que ainda não existe.
@@ -552,8 +553,14 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
             from services.raci_smart_updates import create_item_from_proposal
             created = create_item_from_proposal(payload, row["empresa_id"], row["reuniao_id"])
         except RaciConfigError as e:
-            log.warning("apply_group_proposal #%s: config ConselhoOS ausente (%s)", proposal_id, e)
-            return {"error": f"conexao ConselhoOS indisponivel: {e}", "id": proposal_id, "retryable": True}
+            # A MENSAGEM PASSOU A DIZER A CAUSA (27/10/26). `RaciConfigError`
+            # cobria um caso (env do ConselhoOS vazia) e hoje cobre dois — o
+            # outro e' "o projeto nao tem vinculo de escopo". Anunciar
+            # "conexao ConselhoOS indisponivel" para o segundo mandaria conferir
+            # uma env que esta correta: a repeticao exata do defeito de 22/07,
+            # que colapsava desfechos distintos numa causa so.
+            log.warning("apply_group_proposal #%s: escopo/config indisponivel (%s)", proposal_id, e)
+            return {"error": f"escopo do RACI indisponivel: {e}", "id": proposal_id, "retryable": True}
         except RaciApplyError as e:
             _update_proposal_status(proposal_id, "apply_error", str(e))
             return {"error": f"criacao falhou: {e}", "id": proposal_id}
@@ -584,12 +591,16 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
         result = apply_proposal(proposal, row["empresa_id"], strict=True,
                                 allow_downgrade=True)
     except RaciConfigError as e:
-        # Problema de ambiente (env do ConselhoOS), nao da proposta: NAO marca
-        # apply_error (a proposta segue aplicavel assim que a conexao voltar).
-        log.warning("apply_group_proposal #%s: config ConselhoOS ausente (%s)", proposal_id, e)
-        return {"error": f"conexao ConselhoOS indisponivel: {e}", "id": proposal_id, "retryable": True}
+        # Problema de ambiente/vinculo, nao da proposta: NAO marca apply_error
+        # (a proposta segue aplicavel assim que o escopo resolver).
+        log.warning("apply_group_proposal #%s: escopo/config indisponivel (%s)", proposal_id, e)
+        return {"error": f"escopo do RACI indisponivel: {e}", "id": proposal_id, "retryable": True}
     except RaciItemNotFound as e:
-        _update_proposal_status(proposal_id, "apply_error", f"item nao encontrado no RACI: item_id={e}")
+        # Com a fonte no INTEL este desfecho ganhou um segundo significado: o
+        # item_id da fila e' UUID do ConselhoOS e pode nao ter par no INTEL
+        # (`conselhoos_raci_id`). Medido em 27/10, as 92 pendentes tem par —
+        # mas quem aparecer sem par precisa ler "sem par", nao "nao existe".
+        _update_proposal_status(proposal_id, "apply_error", f"item sem par no RACI: item_id={e}")
         return {"error": f"item nao encontrado no RACI (item_id={e})", "id": proposal_id}
     except RaciNoChange as e:
         # Item existe mas ja esta no estado alvo — nada a fazer. Fecha como aplicada

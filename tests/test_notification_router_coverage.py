@@ -190,24 +190,47 @@ def test_raci_smart_update_dedup_por_conteudo_nao_por_empresa():
     assert m.pending_review_dedup_key("a", mesmo_corpo) != m.pending_review_dedup_key("b", mesmo_corpo)
 
 
-def test_raci_smart_update_texto_preservado_na_migracao():
+def test_raci_smart_update_texto_preservado_na_migracao(monkeypatch):
     """O corpo que sai no WA tem que ser byte-a-byte o de antes da migracao —
-    a mudanca era de CANAL, nao de conteudo."""
+    a mudanca era de CANAL, nao de conteudo.
+
+    27/10/26: a ULTIMA LINHA passou a seguir `RACI_WRITE_TARGET`, e isso NAO
+    afrouxa este teste — mantem a intencao dele. O corpo continua travado
+    byte-a-byte; o que se fixa agora e' que o destino citado seja o destino
+    REAL da escrita. Mandar o Renato "editar no ConselhoOS" com a escrita no
+    INTEL o faria corrigir a linha que ninguem le, que e' a versao-instrucao do
+    mesmo defeito que esta frente consertou. Por isso o teste roda nos DOIS
+    targets: a frase tem de mudar com o switch, nao apesar dele.
+    """
     from services import raci_smart_updates as m
 
     pending = [
         {"evidencia": "documento ja elaborado", "new_status": "concluido", "confianca": "media"},
         {"evidencia": "", "confianca": "media"},
     ]
-    esperado = (
+    cabeca = (
         "⚠️ Update RACI Vallen Clinic precisa aprovacao:\n"
         "- _documento ja elaborado_\n"
         "  → propor concluido (conf media)\n"
         "- __\n"
         "  → propor note (conf media)\n"
-        "\nResponda no app /editorial ou edite manual no ConselhoOS."
     )
-    assert m.format_pending_review_wa(pending, "Vallen Clinic") == esperado
+
+    monkeypatch.setenv("RACI_WRITE_TARGET", "conselhoos")
+    assert m.format_pending_review_wa(pending, "Vallen Clinic") == (
+        cabeca + "\nResponda no app /editorial ou edite manual no ConselhoOS."
+    )
+
+    monkeypatch.setenv("RACI_WRITE_TARGET", "intel")
+    assert m.format_pending_review_wa(pending, "Vallen Clinic") == (
+        cabeca + "\nResponda no app /editorial ou edite manual "
+                 "na matriz RACI do projeto no INTEL."
+    )
+
+    # Sem a env, o default e' `intel` — e o default importa: flag que nasce
+    # desligada e' consumidor morto esperando alguem lembrar dela.
+    monkeypatch.delenv("RACI_WRITE_TARGET", raising=False)
+    assert "no INTEL." in m.format_pending_review_wa(pending, "Vallen Clinic")
 
 
 async def _fake_digest(group_jid, group_name, projeto=None, days=1):

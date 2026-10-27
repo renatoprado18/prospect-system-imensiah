@@ -142,25 +142,104 @@ def open_items(empresa_id: str, reuniao_id: str) -> List[Dict[str, Any]]:
 
     Inclui item com `reuniao_id` NULL (avulso, cadastrado fora de ata): também é
     passivo aberto e também merece reconciliação.
+
+    FONTE ÚNICA (27/10/26) — e aqui a assimetria é o ponto. O passivo em aberto
+    passa a vir do `raci_itens` do INTEL (onde a execução mora e onde a matriz
+    lê), mas a AMARRAÇÃO À REUNIÃO continua vindo do ConselhoOS, porque é lá que
+    `reunioes` existe e o INTEL não tem coluna `reuniao_id`. Ler o passivo de lá
+    faria o reconciliador cruzar a ata nova contra uma lista que ninguém mais
+    atualiza — isto é, re-propor como "novo" exatamente o que já foi absorvido
+    no INTEL, que é o empilhamento que esta peça existe para matar.
+
+    `desta_reuniao` se apoia em dois sinais, porque há duas gerações de item:
+    o importado carrega `conselhoos_raci_id` (ponteiro da 084) e se cruza com o
+    `reuniao_id` de lá; o que nasceu aqui carrega `origem='ata:<uuid>'`. Olhar
+    só um dos dois marcaria metade dos itens da própria reunião como "anterior".
     """
+    from services import raci_store
+
+    if raci_store.write_target() != raci_store.TARGET_INTEL:
+        conn = _cos_conn()
+        try:
+            import psycopg2.extras
+            cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cur.execute(
+                """SELECT i.id, i.acao, i.area, i.status, i.prazo, i.responsavel_r,
+                          r.data AS reuniao_data,
+                          (i.reuniao_id = %s) AS desta_reuniao
+                     FROM raci_itens i
+                LEFT JOIN reunioes r ON r.id = i.reuniao_id
+                    WHERE i.empresa_id = %s
+                      AND (i.status <> 'concluido' OR i.reuniao_id = %s)
+                 ORDER BY i.prazo NULLS LAST""",
+                (reuniao_id, empresa_id, reuniao_id),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    # Mapa uuid_do_item -> (reuniao_id, data da reunião), do ConselhoOS. Uma
+    # consulta só para a empresa inteira: é mais barato que N lookups e o
+    # conjunto é pequeno (122 itens no total, medido em 27/10).
+    por_uuid: Dict[str, Dict[str, Any]] = {}
     conn = _cos_conn()
     try:
         import psycopg2.extras
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute(
-            """SELECT i.id, i.acao, i.area, i.status, i.prazo, i.responsavel_r,
-                      r.data AS reuniao_data,
-                      (i.reuniao_id = %s) AS desta_reuniao
+            """SELECT i.id, i.reuniao_id, r.data AS reuniao_data
                  FROM raci_itens i
             LEFT JOIN reunioes r ON r.id = i.reuniao_id
-                WHERE i.empresa_id = %s
-                  AND (i.status <> 'concluido' OR i.reuniao_id = %s)
-             ORDER BY i.prazo NULLS LAST""",
-            (reuniao_id, empresa_id, reuniao_id),
+                WHERE i.empresa_id = %s""",
+            (empresa_id,),
         )
-        return [dict(r) for r in cur.fetchall()]
+        for r in cur.fetchall():
+            por_uuid[str(r["id"])] = {
+                "reuniao_id": str(r["reuniao_id"]) if r["reuniao_id"] else None,
+                "reuniao_data": r["reuniao_data"],
+            }
     finally:
         conn.close()
+
+    scope = raci_store.resolve_scope(empresa_id)
+    pid = scope.exige_project()
+    marca_origem = f"ata:{reuniao_id}"
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT id, acao, area, status, prazo, responsavel_r,
+                      conselhoos_raci_id, origem
+                 FROM raci_itens
+                WHERE project_id = %s
+             ORDER BY prazo NULLS LAST, id""",
+            (pid,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    itens: List[Dict[str, Any]] = []
+    for row in rows:
+        ponteiro = str(row["conselhoos_raci_id"]) if row.get("conselhoos_raci_id") else None
+        meta = por_uuid.get(ponteiro or "", {})
+        desta = bool(
+            (meta.get("reuniao_id") and meta["reuniao_id"] == str(reuniao_id))
+            or (row.get("origem") or "") == marca_origem
+        )
+        # Mesmo filtro da versão ConselhoOS: aberto de qualquer reunião, mais o
+        # CONCLUÍDO desta reunião (o achado do dry-run de 28/07 — o item já
+        # entregue era re-proposto como pendente porque o contexto não o via).
+        if row["status"] != "concluido" or desta:
+            itens.append({
+                "id": str(row["id"]),
+                "acao": row["acao"],
+                "area": row["area"],
+                "status": row["status"],
+                "prazo": row["prazo"],
+                "responsavel_r": row["responsavel_r"],
+                "reuniao_data": meta.get("reuniao_data"),
+                "desta_reuniao": desta,
+            })
+    return itens
 
 
 def next_meeting_date(empresa_id: str, after: date) -> Optional[date]:
@@ -190,12 +269,16 @@ def build_prompt(empresa_nome: str, data_reuniao: str, ata_md: str,
                  itens: List[Dict[str, Any]]) -> str:
     if itens:
         itens_str = "\n".join(
-            f"[{i+1}] id={it['id']} | {it['acao']}\n"
+            # SEM "[n]" de posição (27/10/26): com a fonte no INTEL os ids são
+            # inteiros, e o número decorativo da linha passaria a ser um id
+            # plausível — convite para o modelo devolver a POSIÇÃO e o apply
+            # acertar um item real, o errado. A posição nunca foi pedida de volta.
+            f"id={it['id']} | {it['acao']}\n"
             f"    Área: {it.get('area') or '?'} | Responsável: {it.get('responsavel_r') or '?'}"
             f" | Prazo: {it.get('prazo')} | Status: {it['status']}"
             f"{' ✅ JÁ CONCLUÍDO' if it['status'] == 'concluido' else ''}"
             f" | Origem: {'ESTA reunião' if it.get('desta_reuniao') else (it.get('reuniao_data') or 'avulso')}"
-            for i, it in enumerate(itens)
+            for it in itens
         )
     else:
         itens_str = "(nenhum item aberto)"
@@ -206,7 +289,7 @@ def build_prompt(empresa_nome: str, data_reuniao: str, ata_md: str,
 **Reunião:** {data_reuniao}
 
 ## ITENS RACI JÁ ABERTOS DESTA EMPRESA
-Cada um tem um id UUID. São compromissos ainda não concluídos. Alguns podem já
+Cada um tem um id próprio, em `id=`. São compromissos ainda não concluídos. Alguns podem já
 ter sido cadastrados a partir DESTA reunião (marcados "Origem: ESTA reunião") —
 esses também contam: se a ata fala deles, é atualização, e nunca item novo.
 
@@ -228,7 +311,7 @@ Formato:
 {{
   "atualizacoes": [
     {{
-      "item_id": "<uuid exato da lista acima>",
+      "item_id": "<o id exato, copiado de um `id=` da lista acima — nunca a posição>",
       "action": "update_status" | "update_prazo" | "add_note" | "complete",
       "new_status": "concluido" | "em_andamento" | "pendente" | "cancelado" | null,
       "new_prazo": "YYYY-MM-DD" | null,
@@ -313,9 +396,18 @@ def parse_llm_output(raw: str, valid_ids: set,
     for p in data.get("atualizacoes") or []:
         if not isinstance(p, dict):
             continue
-        iid = str(p.get("item_id") or "")
-        if not UUID_RE.match(iid):
-            log.info("raci_ata_reconciler: drop atualizacao item_id invalido %r", iid[:40])
+        iid = str(p.get("item_id") or "").strip()
+        # O TESTE DE FORMATO SAIU (27/10/26) e a razão é o oposto de relaxar a
+        # guarda. Com `UUID_RE` aqui e a fonte no INTEL (ids INTEIROS), TODA
+        # proposta de atualização era descartada — e descartada no `log.info`,
+        # então o reconciliador devolveria "0 atualizações, N novos" e cada
+        # reunião voltaria a empilhar item novo em cima do aberto: exatamente o
+        # fóssil que este módulo existe para matar, agora produzido pela defesa.
+        # Quem segura alucinação é o `valid_ids` abaixo — ele compara com os ids
+        # REAIS do contexto, que é uma peneira estritamente mais forte que o
+        # formato (um "13" inventado passa no formato, nunca no conjunto).
+        if not iid:
+            log.info("raci_ata_reconciler: drop atualizacao sem item_id")
             continue
         if iid not in valid_ids:
             log.info("raci_ata_reconciler: drop atualizacao item_id alucinado %s", iid)

@@ -271,25 +271,24 @@ def _apply_guardrails(proposals: List[Dict], items_by_id: Dict[str, str], text: 
 
 
 def _get_open_items(empresa_id: str) -> List[Dict]:
-    """Retorna itens nao-concluidos da empresa pra usar como contexto do classifier."""
-    import psycopg2, psycopg2.extras
-    url = _conselhoos_url()
-    if not url:
-        return []
+    """Itens nao-concluidos do escopo, pra usar como contexto do classifier.
+
+    FONTE UNICA (27/10/26): isto lia o ConselhoOS mesmo depois de a matriz ter
+    virado so-INTEL em 06/10. Nao era so a escrita que estava no banco errado —
+    a LEITURA DE CANDIDATOS tambem, e esse lado falha de um jeito pior: item que
+    nasceu no INTEL (3 abertos na Vallen em 27/10, entre eles o dominio
+    `vallenclinic`) nunca entrava no prompt, logo resposta de responsavel sobre
+    ele nao casava com nada e se perdia calada. Apontar so a escrita teria
+    deixado esse furo de pe.
+
+    `empresa_id` aceita project_id OU uuid da empresa — ver `raci_store.resolve_scope`.
+    """
+    from services import raci_store
     try:
-        conn = psycopg2.connect(url)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("""
-            SELECT id, acao, status, prazo, responsavel_r
-            FROM raci_itens
-            WHERE empresa_id = %s AND status != 'concluido'
-            ORDER BY prazo NULLS LAST
-        """, (empresa_id,))
-        rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
-        return rows
+        scope = raci_store.resolve_scope(empresa_id)
+        return raci_store.list_open_items(scope)
     except Exception as e:
-        logger.warning(f"_get_open_items({empresa_id}) falhou: {e}")
+        logger.warning(f"_get_open_items({empresa_id}) falhou: {type(e).__name__}: {e}")
         return []
 
 
@@ -309,14 +308,20 @@ async def propose_updates_from_text(text: str, empresa_id: str) -> List[Dict]:
     if not items:
         return []
 
+    # SEM numeracao de posicao (fix 27/10/26). A lista vinha como "[1] id=...",
+    # e com a fonte no INTEL os ids sao INTEIROS — entao o "[1]" decorativo e um
+    # id plausivel. O modelo ja devolvia `item_id="13"` quando os ids eram UUID
+    # (bug de 08/06); com ids numericos a mesma confusao deixa de ser detectavel
+    # pelo formato e passa a apontar para um item REAL, o errado. A posicao nao
+    # servia a nada aqui: o contrato pede o id, nunca a ordem.
     items_str = "\n".join([
-        f"[{i+1}] id={it['id']} | {it['acao']}\n    Responsavel: {it.get('responsavel_r') or '?'} | Prazo: {it['prazo']} | Status: {it['status']}"
-        for i, it in enumerate(items)
+        f"id={it['id']} | {it['acao']}\n    Responsavel: {it.get('responsavel_r') or '?'} | Prazo: {it['prazo']} | Status: {it['status']}"
+        for it in items
     ])
 
     prompt = f"""Voce e analista de governanca interpretando mensagens informais de grupo WhatsApp do Conselho.
 
-CONTEXTO: itens RACI abertos (nao-concluidos) da empresa. Cada um tem um id UUID.
+CONTEXTO: itens RACI abertos (nao-concluidos) da empresa. Cada um tem um id proprio.
 
 {items_str}
 
@@ -328,7 +333,7 @@ Responda JSON array (vazio se nada matchou):
 
 [
   {{
-    "item_id": "<uuid exato>",
+    "item_id": "<o id exato, copiado da lista acima>",
     "action": "update_status" | "update_prazo" | "add_note" | "complete",
     "new_status": "concluido" | "em_andamento" | "pendente" | "cancelado" | null,
     "new_prazo": "YYYY-MM-DD" | null,
@@ -339,7 +344,7 @@ Responda JSON array (vazio se nada matchou):
 ]
 
 Regras:
-- IMPORTANTE: item_id DEVE ser exatamente um UUID listado acima. NUNCA invente ID, NUNCA use numero. Se nao achar item correspondente claro, NAO inclua a proposta.
+- IMPORTANTE: item_id DEVE ser copiado LITERALMENTE de um `id=` da lista acima. NUNCA invente um id, NUNCA monte um id a partir da posicao do item na lista. Se nao achar item correspondente claro, NAO inclua a proposta.
 - confianca=alta: msg cita item de forma inequivoca (acao, nome do responsavel, dados especificos). Ex: "Kommo CRM ativado hoje" + tem item "Ativar Kommo CRM".
 - confianca=media: msg pode estar relacionada mas ambigua.
 - confianca=baixa: matching forçado, contexto insuficiente. Prefira retornar vazio em vez de baixa.
@@ -382,20 +387,28 @@ Responda APENAS o JSON array."""
         if start < 0:
             return []
         proposals = json.loads(text_out[start:end])
-        # Validacao basica + filtro de alucinacao de IDs (UUID real do contexto)
-        # Bug detectado 08/06/26: Claude as vezes inventa item_id="13" ou UUIDs ineditos.
+        # Validacao basica + filtro de alucinacao de IDs.
+        # Bug detectado 08/06/26: Claude as vezes inventa item_id="13" ou ids ineditos.
+        #
+        # A PENEIRA QUE IMPORTA E' A SEGUNDA (27/10/26). Antes havia duas: formato
+        # UUID + pertencer ao contexto. Com a fonte no INTEL os ids sao inteiros,
+        # e um "13" inventado PASSA no teste de formato — entao o `valid_ids` deixa
+        # de ser redundante e passa a ser a unica coisa entre uma alucinacao e um
+        # UPDATE num item real. Por isso ele e checado SEMPRE, e o teste de
+        # formato ficou apenas como mensagem de log mais util.
         valid_ids = {str(it['id']) for it in items}
-        import re
-        UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
         valid = []
         for p in proposals:
             if not isinstance(p, dict): continue
-            iid = str(p.get('item_id') or '')
-            if not iid or not UUID_RE.match(iid):
-                logger.info(f"smart_updates: drop proposta item_id invalido '{iid[:40]}'")
+            iid = str(p.get('item_id') or '').strip()
+            if not iid:
+                logger.info("smart_updates: drop proposta sem item_id")
                 continue
             if iid not in valid_ids:
-                logger.info(f"smart_updates: drop proposta item_id alucinado '{iid}' (nao esta no contexto)")
+                logger.info(
+                    "smart_updates: drop proposta item_id '%s' fora do contexto "
+                    "(%d itens ofertados)", iid[:40], len(valid_ids)
+                )
                 continue
             if not p.get('confianca'):
                 continue
@@ -428,32 +441,37 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
     allow_downgrade=False (default): recusa andar pra tras (ver `is_downgrade`).
     O desfecho NAO e um None mudo — devolve {'blocked': 'downgrade', ...} pra que
     o chamador consiga transformar a proposta em revisao humana em vez de a
-    mensagem sumir. Quem ja passou por aprovacao do Renato passa True."""
-    import psycopg2, psycopg2.extras
-    url = _conselhoos_url()
-    if not url:
-        if strict:
-            raise RaciConfigError("CONSELHOOS_DATABASE_URL ausente ou vazia — sem conexao pro RACI")
-        return None
-    try:
-        conn = psycopg2.connect(url)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT id, acao, status FROM raci_itens WHERE id = %s", (proposal['item_id'],))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            if strict:
-                raise RaciItemNotFound(str(proposal.get('item_id')))
-            return None
-        target = dict(row)
+    mensagem sumir. Quem ja passou por aprovacao do Renato passa True.
 
-        # Build update — skip se nao tem mudanca real (msg-pergunta ou contexto)
-        sets = []
-        params = []
+    FONTE UNICA (27/10/26): escreve onde `raci_store.write_target()` manda —
+    `intel` por default. O `item_id` da proposta e TRADUZIDO: as 92 propostas
+    `pending_review` na fila carregam UUID do ConselhoOS (a mais nova de 27/10) e
+    todas tem par no INTEL via `conselhoos_raci_id`, entao continuam aplicaveis
+    sem que nenhuma linha da fila tenha sido reescrita em lote."""
+    from services import raci_store
+    try:
+        scope = raci_store.resolve_scope(empresa_id)
+    except raci_store.RaciScopeError as e:
+        # Mesmo lugar do RaciConfigError antigo: e' falha de CONEXAO/VINCULO, nao
+        # "item nao existe". Colapsar os dois foi o defeito de 22/07, que mandava
+        # quem revisa investigar um mapeamento que estava correto.
+        if strict:
+            raise RaciConfigError(str(e)) from e
+        logger.warning("apply_proposal: escopo nao resolvido (%s)", e)
+        return None
+
+    try:
+        target = raci_store.get_item(scope, proposal['item_id'])
+        if not target:
+            if strict:
+                raise RaciItemNotFound(
+                    f"{proposal.get('item_id')} (sem par no target {scope.target})"
+                )
+            return None
+
         new_status = proposal.get('new_status')
         if (new_status and not allow_downgrade
                 and is_downgrade(target['status'], new_status)):
-            conn.close()
             motivo = (f"proposta automatica tentou {target['status']} -> {new_status} "
                       f"em '{(target['acao'] or '')[:60]}'")
             logger.warning("RACI downgrade bloqueado: %s", motivo)
@@ -463,24 +481,21 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
             return {"blocked": "downgrade", "item_id": str(target['id']),
                     "acao": target['acao'], "old_status": target['status'],
                     "new_status": new_status, "motivo": motivo}
-        if new_status and new_status != target['status']:
-            sets.append("status = %s"); params.append(new_status)
-        if proposal.get('new_prazo'):
-            sets.append("prazo = %s"); params.append(proposal['new_prazo'])
+
+        status_novo = new_status if (new_status and new_status != target['status']) else None
+        nota = None
         if proposal.get('notes'):
-            sets.append("notas = COALESCE(notas, '') || %s")
             from services.tz import now_utc, format_brt
-            params.append(f"\n[{format_brt(now_utc(), '%d/%m')}] {proposal['notes'][:200]}")
-        if not sets:
-            conn.close()
+            nota = f"\n[{format_brt(now_utc(), '%d/%m')}] {proposal['notes'][:200]}"
+
+        escreveu = raci_store.update_item(
+            scope, proposal['item_id'],
+            status=status_novo, prazo=proposal.get('new_prazo'), append_note=nota,
+        )
+        if not escreveu:
             if strict:
                 raise RaciNoChange(f"item ja em '{target['status']}' e proposta nao altera nada")
             return None  # no-op — nao polui audit log nem reply no grupo
-        sets.append("updated_at = NOW()")
-        params.append(target['id'])
-        cur.execute(f"UPDATE raci_itens SET {', '.join(sets)} WHERE id = %s", tuple(params))
-        conn.commit()
-        conn.close()
 
         # Audit log
         try:
@@ -489,7 +504,8 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
                 action_type='raci_status_updated',
                 category='conselho',
                 title=f"RACI (AI): '{(target['acao'] or '')[:60]}' → {proposal.get('new_status') or 'note'}",
-                scope_ref={'raci_item_id': str(target['id']), 'empresa_id': str(empresa_id)},
+                scope_ref={'raci_item_id': str(target['id']), 'empresa_id': scope.chave,
+                           'project_id': scope.project_id, 'target': scope.target},
                 source='raci_smart_updates.apply_proposal',
                 payload={
                     'old_status': target['status'],
@@ -498,8 +514,13 @@ def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False,
                     'notes': proposal.get('notes'),
                     'evidencia': proposal.get('evidencia'),
                     'confianca': proposal.get('confianca'),
+                    # A referencia COMO VEIO, ao lado do id onde se escreveu. Sem
+                    # as duas nao se audita uma traducao: o UUID da fila e o
+                    # inteiro do INTEL sao a mesma linha e nao se parecem.
+                    'item_ref_original': str(proposal.get('item_id')),
                 },
-                undo_hint=f"UPDATE raci_itens SET status='{target['status']}' WHERE id='{target['id']}'::uuid;",
+                undo_hint=raci_store.undo_hint_update(
+                    scope, proposal['item_id'], target['status']),
             )
         except Exception as e:
             logger.warning(f"audit log apply_proposal falhou: {e}")
@@ -532,42 +553,29 @@ def create_item_from_proposal(payload: Dict, empresa_id: str,
     Só é chamado depois da aprovação do Renato (`apply_group_proposal`). Levanta
     erro tipado; quem chama traduz pra fila de revisão.
 
-    `area` e `prazo` são NOT NULL do lado de lá. O prazo já vem resolvido (e
-    justificado) pela proposta; `area` cai em 'Geral' quando a ata não classifica
-    — inventar uma área plausível seria pior, porque a área guia o agrupamento
-    do relatório semanal.
+    `area` cai em 'Geral' quando a ata não classifica — inventar uma área
+    plausível seria pior, porque a área guia o agrupamento do relatório semanal.
+
+    `prazo` é NOT NULL no ConselhoOS e OPCIONAL no INTEL, e essa diferença é
+    deliberada (item sem prazo não vira atrasado). Desde 27/10 a exigência é do
+    TARGET, resolvida em `raci_store.create_item`: cobrar prazo ao escrever no
+    INTEL inventaria data onde a ausência é informação.
     """
-    import psycopg2, psycopg2.extras
-    url = _conselhoos_url()
-    if not url:
-        raise RaciConfigError("CONSELHOOS_DATABASE_URL ausente ou vazia — sem conexao pro RACI")
+    from services import raci_store
 
     acao = (payload.get("acao") or "").strip()
     if not acao:
         raise RaciApplyError("proposta de item novo sem 'acao'")
-    prazo = payload.get("prazo")
-    if not prazo:
-        raise RaciApplyError("proposta de item novo sem 'prazo' (coluna NOT NULL no ConselhoOS)")
 
-    notas = payload.get("prazo_motivo") or None
     try:
-        conn = psycopg2.connect(url)
-        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute(
-            """INSERT INTO raci_itens
-                   (empresa_id, reuniao_id, area, acao, prazo, status,
-                    responsavel_r, responsavel_a, responsavel_c, responsavel_i, notas)
-               VALUES (%s,%s,%s,%s,%s,'pendente',%s,%s,%s,%s,%s)
-               RETURNING id""",
-            (empresa_id, reuniao_id, (payload.get("area") or "Geral")[:100], acao, prazo,
-             payload.get("responsavel_r"), payload.get("responsavel_a"),
-             payload.get("responsavel_c"), payload.get("responsavel_i"), notas),
-        )
-        new_id = str(cur.fetchone()["id"])
-        conn.commit()
-        conn.close()
-    except RaciApplyError:
-        raise
+        scope = raci_store.resolve_scope(empresa_id)
+    except raci_store.RaciScopeError as e:
+        raise RaciConfigError(str(e)) from e
+
+    try:
+        new_id = raci_store.create_item(scope, payload, reuniao_id)
+    except raci_store.RaciStoreError as e:
+        raise RaciApplyError(str(e)) from e
     except Exception as e:
         logger.warning(f"create_item_from_proposal falhou: {e}")
         raise RaciApplyError(f"{type(e).__name__}: {e}") from e
@@ -578,17 +586,23 @@ def create_item_from_proposal(payload: Dict, empresa_id: str,
             action_type='raci_item_created',
             category='conselho',
             title=f"RACI (ata): item novo '{acao[:60]}'",
-            scope_ref={'raci_item_id': new_id, 'empresa_id': str(empresa_id),
+            scope_ref={'raci_item_id': new_id, 'empresa_id': scope.chave,
+                       'project_id': scope.project_id, 'target': scope.target,
                        'reuniao_id': str(reuniao_id) if reuniao_id else None},
             source='raci_smart_updates.create_item_from_proposal',
             payload=payload,
-            undo_hint=f"DELETE FROM raci_itens WHERE id='{new_id}'::uuid;",
+            undo_hint=(
+                f"DELETE FROM raci_itens WHERE id='{new_id}'::uuid;"
+                if scope.target == raci_store.TARGET_CONSELHOOS
+                else f"DELETE FROM raci_itens WHERE id={new_id};"
+            ),
         )
     except Exception as e:
         logger.warning(f"audit log create_item_from_proposal falhou: {e}")
 
     return {"item_id": new_id, "acao": acao, "created": True,
-            "prazo": str(prazo), "area": payload.get("area") or "Geral"}
+            "prazo": str(payload.get("prazo")) if payload.get("prazo") else None,
+            "area": payload.get("area") or "Geral"}
 
 
 async def _download_media_from_evolution(message_key: Dict, instance: str) -> Optional[Dict]:
@@ -753,7 +767,13 @@ def format_pending_review_wa(pending: List[Dict], empresa_nome: str = "") -> str
                          f"(nao apliquei sozinha)")
         else:
             lines.append(f"  → propor {p.get('new_status') or 'note'} (conf {p.get('confianca')})")
-    lines.append("\nResponda no app /editorial ou edite manual no ConselhoOS.")
+    # O destino da edicao manual segue o target (27/10/26): mandar o Renato
+    # "editar no ConselhoOS" com a escrita no INTEL o faria corrigir a linha que
+    # ninguem le — o mesmo erro de consumidor, agora cometido por uma instrucao.
+    from services import raci_store
+    destino = ("no ConselhoOS" if raci_store.write_target() == raci_store.TARGET_CONSELHOOS
+               else "na matriz RACI do projeto no INTEL")
+    lines.append(f"\nResponda no app /editorial ou edite manual {destino}.")
     return "\n".join(lines)
 
 
@@ -861,7 +881,8 @@ async def process_week_for_empresa(
     """Roda smart_updates em batch sobre todas msgs de texto do grupo nos ultimos N dias.
 
     Args:
-        empresa_id: UUID da empresa no ConselhoOS
+        empresa_id: project_id do INTEL ou UUID da empresa no ConselhoOS
+                    (ver `raci_store.resolve_scope`)
         group_jid: JID do grupo WA (ex: '120363408325592607@g.us')
         empresa_nome: nome amigavel pra logs
         days: janela retroativa (default 7)

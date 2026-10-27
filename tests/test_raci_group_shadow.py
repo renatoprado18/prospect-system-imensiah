@@ -32,13 +32,21 @@ class _Harness:
         self.marked = []               # ids marcados como processados
         self.stored = []               # propostas gravadas
         self.propose_calls = 0         # quantas vezes a IA foi chamada
+        self.acoes_calls = []          # [(empresa_id, ids)] do snapshot de acao
         self._resolve = resolve or (lambda jid: ("emp-1", "Vallen"))
         self._propose_result = propose_result if propose_result is not None else []
 
     def mark_processed(self, mid):
         self.marked.append(mid)
 
-    def fetch_acoes(self, ids):
+    def fetch_acoes(self, empresa_id, ids):
+        # 27/10/26: passou a receber o ESCOPO. O `_fetch_item_acoes` real tem de
+        # saber em que banco (e sob que chave) buscar a acao — antes ele fazia
+        # `ANY(%s::uuid[])` fixo, que nao consegue nem olhar um id do INTEL e
+        # devolveria snapshot vazio: proposta na tela de review sem dizer sobre
+        # o que. O escopo e' registrado aqui pra que o teste possa cobrar que ele
+        # chegou.
+        self.acoes_calls.append((empresa_id, list(ids)))
         return {i: f"acao {i}" for i in ids}
 
     def store_proposal(self, mid, jid, empresa_id, empresa_nome, sender, p, acoes):
