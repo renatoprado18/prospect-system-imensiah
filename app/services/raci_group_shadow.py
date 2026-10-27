@@ -324,6 +324,16 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
         except Exception:
             log.exception("raci_group_shadow: falha avisando da peca publicada")
 
+    # O MODO EM QUE O SISTEMA ESTÁ, dito na resposta (27/10/26). O kill-switch
+    # `RACI_WRITE_TARGET` governa em que banco o RACI do cliente é escrito e não
+    # tinha UMA superfície que o declarasse — ou seja, o switch não se media a si
+    # mesmo ([[feedback_medidor_que_nao_mede_a_si_mesmo]]). Como a frente nasceu
+    # de cinco meses de escrita no banco errado, ficar sem esse campo repetiria a
+    # condição exata do defeito: comportamento correto e invisível, ou errado e
+    # igualmente invisível. Também é a prova de deploy — `/health` responde 200
+    # do container antigo ([[reference_railway_deploy_intel_api]]).
+    from services import raci_store
+    out["raci_target"] = raci_store.write_target()
     log.info("raci_group_shadow: %s", out)
     return out
 
