@@ -10789,10 +10789,9 @@ async def cron_daily_sync(request: Request):
                             tel_obj = wa_pref or tels[0]
                             raw = tel_obj.get("number") if isinstance(tel_obj, dict) else None
                             if raw:
-                                digits = re.sub(r"\D", "", raw)
+                                from services.phone_br import normalize_br_phone
+                                digits = normalize_br_phone(raw)
                                 if digits:
-                                    if not digits.startswith("55") and len(digits) <= 11:
-                                        digits = "55" + digits
                                     phone = digits
 
                 options = [
@@ -15501,13 +15500,11 @@ async def sync_contact_whatsapp(request: Request, contact_id: int):
         if not phone:
             return {"success": False, "error": "Contato não tem telefone WhatsApp"}
 
-        # Normalizar telefone (remover formatação, adicionar 55 se necessário)
-        import re
-        phone_digits = re.sub(r'\D', '', phone)
-        if len(phone_digits) == 11:  # Ex: 11999232162
-            phone_digits = "55" + phone_digits
-        elif len(phone_digits) == 10:  # Ex: 1199923216
-            phone_digits = "55" + phone_digits
+        # Normalização única — ver services/phone_br.py. A cópia em linha que
+        # havia aqui prefixava `55` em QUALQUER número de 10 ou 11 dígitos,
+        # inclusive internacional (`+14157588419` virava `5514157588419`).
+        from services.phone_br import normalize_br_phone
+        phone_digits = normalize_br_phone(phone)
 
     # Fazer sync
     service = get_whatsapp_sync_service()
@@ -20156,10 +20153,11 @@ async def debug_avatar_fetch(request: Request, contact_id: int):
     else:
         phone = telefones[0].get('number') or telefones[0].get('numero', '')
 
-    # Limpar telefone (mesmo que Evolution API faz)
-    phone_clean = ''.join(filter(str.isdigit, phone))
-    if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-        phone_clean = '55' + phone_clean
+    # Mesma normalização que o cliente da Evolution aplica — é o ponto da rota:
+    # mostrar o número que de fato vai no fio. A cópia em linha que havia aqui
+    # reportava `55` + DDD estrangeiro (ver services/phone_br.py).
+    from services.phone_br import normalize_br_phone
+    phone_clean = normalize_br_phone(phone)
 
     # Chamar Evolution API diretamente
     evolution = get_evolution_client()

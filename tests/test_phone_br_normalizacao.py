@@ -237,7 +237,11 @@ class TestUmaSoImplementacao:
 
         raiz = pathlib.Path(__file__).resolve().parent.parent
         prefixacao = _re.compile(r"""=\s*['"]55\d*['"]\s*\+""")
-        for arquivo in ("app/integrations/evolution_api.py", "app/integrations/whatsapp.py"):
+        for arquivo in (
+            "app/integrations/evolution_api.py",
+            "app/integrations/whatsapp.py",
+            "app/main.py",
+        ):
             fonte = (raiz / arquivo).read_text(encoding="utf-8")
             achados = [
                 linha.strip()
