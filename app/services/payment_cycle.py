@@ -6,14 +6,25 @@ auto-fecha milestones e abre proximo ciclo.
 """
 import json
 import logging
-from datetime import datetime, date
+from datetime import date
 from typing import Dict, List, Optional
 from database import get_db
+from services.tz import now_utc, format_brt
 
 logger = logging.getLogger(__name__)
 
-MESES = ['', 'Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
+MESES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
          'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
+
+# Fallbacks de voz. Sobrescreva por projeto em metadata.payment_cycle
+# ('greeting' / 'signoff') — o #17 usa "Oi pai," e "Grato. Bj,".
+GREETING_FALLBACK = "Oi {nome},"
+SIGNOFF_FALLBACK = "Grato. Abraço,"
+
+
+def brl(valor: float) -> str:
+    """Formata valor em pt-BR: 1557.21 -> '1.557,21' (nao '1,557.21')."""
+    return f"{valor:,.2f}".translate(str.maketrans(",.", ".,"))
 
 
 def get_payment_cycle_config(project_id: int) -> Optional[Dict]:
@@ -57,12 +68,16 @@ def generate_payment_email(project_id: int, month: int, year: int,
     )
 
     # Gerar tabela HTML + bloco em texto plano (markdown-like)
+    greeting = config.get('greeting') or GREETING_FALLBACK.format(
+        nome=config.get('contact_name', 'pai')
+    )
+    signoff = config.get('signoff') or SIGNOFF_FALLBACK
+
     rows_html = ""
     text_lines = []
-    text_lines.append(f"Despesas Pessoais - {mes_nome}/{year}")
-    text_lines.append(f"Oi {config.get('contact_name', 'Pai')}!")
+    text_lines.append(greeting)
     text_lines.append("")
-    text_lines.append(f"Seguem as despesas do mes de {mes_nome}/{year} para pagamento:")
+    text_lines.append(f"Seguem as despesas do mês de {mes_nome}/{year} para pagamento:")
     text_lines.append("")
 
     for e in expenses:
@@ -85,24 +100,26 @@ def generate_payment_email(project_id: int, month: int, year: int,
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb;">{e['nome']}{nota}</td>
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb;">{venc}</td>
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:right; font-weight:600;">
-                R$ {valor:,.2f}{pagamento_html}
+                R$ {brl(valor)}{pagamento_html}
             </td>
         </tr>"""
 
         # Versao texto plano
         nota_txt = f" ({e['nota']})" if e.get('nota') else ""
-        text_lines.append(f"{e['nome']}{nota_txt} - Dia {e.get('vencimento_dia', '-')} - R$ {valor:,.2f}")
+        text_lines.append(f"{e['nome']}{nota_txt} - Dia {e.get('vencimento_dia', '-')} - R$ {brl(valor)}")
+        # Sem indentacao: o Orestes copia a linha digitavel pra pagar, e espaco
+        # a esquerda entra na selecao e quebra a leitura do codigo de barras.
         if e.get('pix'):
-            text_lines.append(f"  PIX: {e['pix']}")
+            text_lines.append(f"PIX: {e['pix']}")
         if e.get('boleto'):
-            text_lines.append(f"  Boleto: {e['boleto']}")
+            text_lines.append(f"Boleto: {e['boleto']}")
         text_lines.append("")
 
-    text_lines.append(f"TOTAL: R$ {total:,.2f}")
+    text_lines.append(f"TOTAL: R$ {brl(total)}")
     text_lines.append("")
-    text_lines.append("Por favor, me envie os comprovantes quando pagar.")
+    text_lines.append("Por favor, se possível me envie os comprovantes quando pagar para meu arquivo.")
     text_lines.append("")
-    text_lines.append("Obrigado! Abraco,")
+    text_lines.append(signoff)
     text_lines.append("Renato")
     body_text = "\n".join(text_lines)
 
@@ -114,8 +131,8 @@ def generate_payment_email(project_id: int, month: int, year: int,
         </div>
 
         <div style="background: #ffffff; border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
-            <p style="color: #374151; margin: 0 0 16px 0;">Oi {config.get('contact_name', 'Pai')}!</p>
-            <p style="color: #374151; margin: 0 0 20px 0;">Seguem as despesas do mes de <strong>{mes_nome}/{year}</strong> para pagamento:</p>
+            <p style="color: #374151; margin: 0 0 16px 0;">{greeting}</p>
+            <p style="color: #374151; margin: 0 0 20px 0;">Seguem as despesas do mês de <strong>{mes_nome}/{year}</strong> para pagamento:</p>
 
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 16px;">
                 <thead>
@@ -131,15 +148,15 @@ def generate_payment_email(project_id: int, month: int, year: int,
                 <tfoot>
                     <tr style="background: #f0fdf4;">
                         <td colspan="2" style="padding: 12px; font-weight: 700; color: #166534; border-top: 2px solid #22c55e;">TOTAL</td>
-                        <td style="padding: 12px; text-align: right; font-weight: 700; font-size: 18px; color: #166534; border-top: 2px solid #22c55e;">R$ {total:,.2f}</td>
+                        <td style="padding: 12px; text-align: right; font-weight: 700; font-size: 18px; color: #166534; border-top: 2px solid #22c55e;">R$ {brl(total)}</td>
                     </tr>
                 </tfoot>
             </table>
 
             <p style="color: #6b7280; font-size: 13px; margin: 16px 0 0 0;">
-                Por favor, me envie os comprovantes quando pagar.
+                Por favor, se possível me envie os comprovantes quando pagar para meu arquivo.
             </p>
-            <p style="color: #374151; margin: 16px 0 0 0;">Obrigado! Abraco,<br>Renato</p>
+            <p style="color: #374151; margin: 16px 0 0 0;">{signoff}<br>Renato</p>
         </div>
     </div>
     """
@@ -185,7 +202,10 @@ async def send_payment_email(project_id: int, month: int, year: int,
             access_token=access_token,
             to=email_data['to'],
             subject=email_data['subject'],
-            body=f"Despesas {email_data['month_name']}/{year} - Total R$ {email_data['total']:,.2f}",
+            # body = a parte text/plain do multipart. Mandava so um resumo de uma
+            # linha, sem boleto nenhum: quem le em plain-text (ou copia dali) nao
+            # tinha o que colar pra pagar. body_text ja vem completo do template.
+            body=email_data['body_text'],
             html_body=email_data['body_html']
         )
     except Exception as e:
@@ -218,7 +238,7 @@ async def send_payment_email(project_id: int, month: int, year: int,
     else:
         milestone = add_milestone(project_id, {
             'titulo': milestone_titulo,
-            'descricao': f"Email de cobranca enviado em {datetime.now().strftime('%d/%m/%Y')}. Total: R$ {email_data['total']:,.2f}",
+            'descricao': f"E-mail de cobrança enviado em {format_brt(now_utc(), '%d/%m/%Y')}. Total: R$ {brl(email_data['total'])}",
             'data_prevista': date(year, month, 5).isoformat()
         })
         milestone_id = milestone['id']
@@ -231,7 +251,7 @@ async def send_payment_email(project_id: int, month: int, year: int,
     # Adicionar nota ao projeto
     try:
         add_project_note(project_id, {
-            'conteudo': f"Email de cobranca {mes_nome}/{year} enviado para {email_data['to']}. Total: R$ {email_data['total']:,.2f}",
+            'conteudo': f"E-mail de cobrança {mes_nome}/{year} enviado para {email_data['to']}. Total: R$ {brl(email_data['total'])}",
             'tipo': 'atividade'
         })
     except Exception:
