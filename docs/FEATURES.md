@@ -158,6 +158,10 @@
 ## 12. Comunicação
 - **WhatsApp**: send, receive, sync, webhook, import .txt, grupos → Evolution API
 - **Envio de DOCUMENTO — `evolution_api.send_document` (CONSERTADO 30/09/26).** Postava em **`/message/sendWhatsAppAudio/`**, o endpoint de ÁUDIO: nenhum envio de documento jamais funcionou. Sobreviveu meses porque a função tinha **ZERO chamadores** — e por isso parecia acadêmica. Não era: em 30/09 o PPT de 4,99 MB ao cliente saiu por chamada **manual** à Evolution (nota #2229), porque daqui não sairia. **Função quebrada não tem chamador: o trabalho vai por fora, e é isso que esconde o bug** — [[feedback_consumidor_morto_wiring]] pelo avesso. Agora vai em `/message/sendMedia/` com `mediatype: "document"`, e três coisas aprendidas nesse envio manual: **`mimetype`** inferido do nome pela stdlib (sem ele o PPTX chega como arquivo genérico; a stdlib cobre pptx/docx/xlsx/pdf/odt), **`timeout` 120s** em vez dos 30s do default (5 MB viram ~6,6 MB em base64 subindo para uma VPS, e upload cortado devolve o **mesmo** `{"error"}` de payload inválido — indistinguíveis no log), e **guarda de `media`/`filename` vazios** (o 400 do envio manual não vinha da Evolution, vinha de `media` vazio; recusar aqui dá a mensagem certa). `document_url` aceita URL pública **ou** base64. Testes: `tests/test_evolution_send_document.py` (12), incluindo o endpoint em si — sabotagem conferida.
+- **`POST /api/whatsapp/send-document` (06/11/26) — a rota que faltava, e a 3ª vez que o trabalho saiu por fora.** A função acima estava consertada desde 30/09 e **sem porta em `main.py`**: só havia `/api/whatsapp/send` (texto). Contagem do que saiu por chamada manual à Evolution por falta desta rota: PPT de 4,99 MB em **30/09** (#2229), as duas certidões da Pitangueiras em **04/11**, e a proposta de mandato da Building 8 em **06/11**. **Capacidade sem rota não tem quem a use — e função sem chamador não tem quem denuncie o defeito.** Auth `require_scaffold_auth` (admin OU `X-API-Key`), no padrão do `/send`. Body: `phone` · `document` (**caminho local**, URL `http(s)` ou base64) · `filename` (opcional quando `document` é caminho — sai do basename) · `caption` · `mimetype` (inferido do nome). Teto de 100 MB (limite do WhatsApp para documento), recusado aqui.
+  - ⚠️ **Chama `evolution_api.send_document` DIRETO, não `integrations/whatsapp.py`** — deliberado. O `WhatsAppIntegration.send_media` é um 2º cliente, mais antigo, e reproduziria os três defeitos de 30/09 (sem `fileName`/`mimetype`, timeout 30s, sem guarda de `media` vazio). Pior: o `_normalize_phone` dele **só acerta DDD 11** — medido em 06/11, `"41991064663"` sai **sem o `55`** porque nenhum `if` casa. Guarda de classe por AST (não por substring) garante que a rota não migre pro cliente antigo.
+  - **Não grava em `messages`, e é o padrão da casa** (o `/api/whatsapp/send` também não): a Evolution emite `SEND_MESSAGE` para envio via API e o webhook persiste via `wa_ingest.persist_sent_message`; `parse_webhook_message` trata `documentMessage` gravando o `fileName` como conteúdo. Gravar aqui brigaria com a dedup por `message_id`.
+  - Testes em `tests/test_envio_com_anexo.py`. Validado por FIO em 06/11 (servidor que finge ser a Evolution): `POST /message/sendMedia/rap-whatsapp`, `mediatype=document`, `fileName`, `mimetype=application/pdf` inferido, `number` **5541**991064663 (ganhou o 55 que o cliente antigo perderia), media round-trip byte a byte.
 - **Gmail**: sync, send, threading → Google API
   - **Sync via Railway worker** (02/05): `services/gmail_sync.py:sync_all_contacts` migrado pro worker. Vercel matava em 300s pq loop e O(N x M) (3.5k contatos x 2 contas x 3 emails x 2 calls Gmail API + sleep 0.1 = piso ~2100s). `/api/cron/sync-gmail` e `step_gmail` agora chamam `services/job_dispatcher.enqueue_job` que cria registro em `background_jobs` (status queued) e dispara POST fire-and-forget pra `{AUDIO_WORKER_URL}/sync-gmail`. Worker (Railway) faz idempotencia (skip se ja tem job running < 1h), processa async com checkpoint a cada 50 contatos, atualiza status pra completed/error. `GET /api/jobs/{id}` pra inspecionar. Doc completa: [`docs/GMAIL_SYNC_RAILWAY.md`](GMAIL_SYNC_RAILWAY.md)
 - **Inbox unificado**: `/inbox`
@@ -698,6 +702,47 @@ mutante** que reintroduz o `MIMEText`. ⚠️ As guardas de classe são por **AS
 não substring: três falsos positivos num dia vieram de casar a palavra dentro do
 comentário que explica o defeito — a frase que descreve a guarda quebrava a
 guarda.
+
+🔴 **O ENVIO NÃO SABIA ANEXAR ATÉ 06/11/2026 — o rascunho sabia, e a assimetria
+era o bug.** `gmail.send_message` montava `MIMEText`/`MIMEMultipart('alternative')`
+e não tinha **uma** ocorrência de "attachment" no arquivo; `action="send_message"`
+do proxy **descartava `cc`, `bcc` e `attachments` em silêncio** — o mesmo defeito
+de 10/10 que foi corrigido só do lado do `create_draft`. Custo medido: em 06/11 a
+proposta de mandato da Building 8, aos três sócios, saiu por **script avulso**
+(`enviar_proposta.py`) que remontou o MIME e postou direto na Gmail API.
+**Capacidade que existe num caminho e não no outro é pior que capacidade ausente:
+quem chama supõe simetria.** ✅ `send_message` agora **delega a
+`services/gmail_mime.py`** (nenhum segundo montador — há guarda de classe por AST
+contra `MIMEText(`/`MIMEMultipart(` nos três arquivos) e aceita `attachments`,
+`cc` e `bcc`. Quatro coisas:
+  - **`path`** — caminho de arquivo local, ao lado de `content_b64` e
+    `content_bytes`. É **o caso de uso real** (as peças vivem em `~/cockpit`);
+    exigir base64 à mão é o atrito que manda o trabalho para fora. `filename`
+    sai do basename, `mimetype` da stdlib (sem ele o DOCX/PPTX chega genérico).
+  - **Teto de 25 MB da MENSAGEM, não do arquivo** — o Gmail mede a mensagem e o
+    base64 infla ~33%: 20 MB de PDF viram ~26,7 MB e são recusados. Uma guarda
+    sobre o arquivo deixaria passar justamente a borda, e o erro voltaria como um
+    400 opaco do Google **depois** de subir tudo. A recusa sai daqui nomeando o
+    bruto e o estimado. Timeout de 120s só quando há anexo.
+  - **No rascunho anexo ruim é ignorado com log; no envio ele ABORTA**
+    (`estrito=True`). Não é inconsistência: no rascunho há revisão humana depois
+    do defeito, no envio não — o e-mail chegaria sem a proposta e ninguém seria
+    avisado. É o modo de falha do `cc` descartado, com arquivo no lugar do
+    endereço.
+  - **`/api/gmail/send` não renovava o token** — usava o `access_token` cru de
+    `google_accounts`, que vale 1 hora; o do banco expirara em **20/09**, 47 dias
+    antes. A rota respondia 500 `token_expired` fora da janela em que outro
+    serviço tivesse renovado e gravado de volta. Expor anexo numa porta que não
+    abre não é expor nada. Agora dá refresh e grava de volta (padrão do
+    `email_digest._refresh_token`). **E o `except Exception` da rota reembalava
+    `HTTPException` em 500** com `detail="400: anexo recusado…"` — o status certo
+    virava texto dentro do status errado.
+  - Testes: `tests/test_envio_com_anexo.py` (23), com os de **compatibilidade**
+    dos 7 chamadores vivos (sem `attachments`, o MIME continua `text/plain` puro
+    ou `multipart/alternative`, e o threading intacto). Validado por EFEITO em
+    06/11, lendo a mensagem de volta da Gmail API: `multipart/mixed` →
+    `multipart/alternative`(text+html) + `application/pdf` de 603 bytes, `cc` e
+    `bcc` nos cabeçalhos.
 
 ⚠️ **E a docstring do proxy anunciava 8 ações omitindo 6** — entre elas o
 `get_attachment`. Em 10/10 a CoS leu a lista, concluiu que não dava para baixar

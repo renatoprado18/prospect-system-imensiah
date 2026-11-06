@@ -267,36 +267,75 @@ class GmailIntegration:
         body: str,
         html_body: str = None,
         reply_to_message_id: str = None,
-        thread_id: str = None
+        thread_id: str = None,
+        attachments: List[Dict] = None,
+        cc=None,
+        bcc=None,
     ) -> Dict[str, Any]:
         """
-        Send an email message
+        Send an email message — com anexo, cópia e cópia oculta.
 
         Args:
             access_token: Valid OAuth access token
-            to: Recipient email address
+            to: destinatário(s) — `"a@x, b@y"` ou lista
             subject: Email subject
             body: Plain text body
             html_body: Optional HTML body
             reply_to_message_id: Message ID to reply to
             thread_id: Thread ID for threading
+            attachments: `[{filename?, content_b64|content_bytes|path, mimetype?}]`
+                — `path` é caminho de arquivo LOCAL do servidor, que é o caso de
+                uso real (as peças vivem em `~/cockpit`).
+            cc / bcc: `"a@x, b@y"` ou lista
 
         Returns:
-            Sent message details
+            Sent message details, ou `{"error": ...}` — nunca exceção, que é o
+            contrato do resto desta classe.
+
+        ──────────────────────────────────────────────────────────────────────
+        **ESTA FUNÇÃO NÃO SABIA ANEXAR ATÉ 06/11/2026**, e não havia uma única
+        ocorrência de "attachment" no arquivo. O custo não foi teórico: a
+        proposta de mandato da Building 8, aos três sócios, saiu por **script
+        avulso** (`enviar_proposta.py`) que remontou o MIME e postou direto na
+        Gmail API, porque daqui não sairia. É o mesmo padrão do `send_document`
+        da Evolution — capacidade que falta não gera erro, gera trabalho por
+        fora, e o trabalho por fora é o que esconde a lacuna.
+
+        **A montagem foi para `services.gmail_mime`, não reescrita aqui.** Dois
+        motivos. (1) Ela já existia: o `create_draft` do gmail-proxy ganhou
+        anexo em 15/10/2026, então o INTEL sabia anexar em RASCUNHO e não sabia
+        em ENVIO — a assimetria é que era o bug. (2) Esta função montava um
+        `MIMEText`, exatamente a classe que descartou o `cc` do Orestes em
+        silêncio em 10/10/2026; manter um segundo montador aqui era manter a
+        porta por onde o defeito volta. Há guarda de classe por AST contra
+        `MIMEText(` nos três arquivos (`tests/test_gmail_proxy_create_draft.py`).
+
+        **`cc`/`bcc` entraram junto porque estavam sendo descartados em
+        silêncio** pelo `action="send_message"` do gmail-proxy — o mesmo defeito
+        de 10/10 que foi corrigido só no lado do rascunho.
+
+        **Anexo ruim ABORTA o envio** (`estrito=True`), ao contrário do
+        rascunho, que ignora com log. No rascunho há revisão humana depois do
+        defeito; no envio não há — o e-mail chega sem a proposta e ninguém é
+        avisado.
         """
-        import email.mime.text as mime_text
-        import email.mime.multipart as mime_multipart
+        from services.gmail_mime import AnexoInvalido, monta_mensagem
 
-        # Build message
-        if html_body:
-            msg = mime_multipart.MIMEMultipart('alternative')
-            msg.attach(mime_text.MIMEText(body, 'plain'))
-            msg.attach(mime_text.MIMEText(html_body, 'html'))
-        else:
-            msg = mime_text.MIMEText(body)
-
-        msg['To'] = to
-        msg['Subject'] = subject
+        try:
+            msg = monta_mensagem(
+                to=to,
+                subject=subject,
+                body=body,
+                cc=cc,
+                bcc=bcc,
+                attachments=attachments,
+                html_body=html_body,
+                estrito=True,
+            )
+        except AnexoInvalido as e:
+            # Recusa ANTES de chamar a API: um 400 do Google por tamanho não diz
+            # que o problema é tamanho, e chega depois de subir o arquivo.
+            return {"error": f"anexo recusado: {e}"}
 
         if reply_to_message_id:
             msg['In-Reply-To'] = reply_to_message_id
@@ -309,6 +348,12 @@ class GmailIntegration:
         if thread_id:
             payload["threadId"] = thread_id
 
+        # 30s não sobem 20 MB de base64, e o upload cortado no meio devolve erro
+        # indistinguível de payload inválido — a lição literal do `send_document`
+        # da Evolution (30/09/2026). Só sobe o teto quando há anexo: e-mail de
+        # texto que trava em 30s é problema de rede, e esperar 120s não ajuda.
+        timeout = 120.0 if attachments else 30.0
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.GMAIL_API_BASE}/users/me/messages/send",
@@ -317,7 +362,7 @@ class GmailIntegration:
                     "Content-Type": "application/json"
                 },
                 json=payload,
-                timeout=30.0
+                timeout=timeout
             )
 
             if response.status_code == 401:

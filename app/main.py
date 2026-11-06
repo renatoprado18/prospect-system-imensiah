@@ -2009,6 +2009,120 @@ async def send_whatsapp_message(request: Request):
     return {"status": "sent", "result": result}
 
 
+# WhatsApp: documento (PDF/PPTX/DOCX/XLSX). Teto do WhatsApp para documento.
+# O upload vai em base64 dentro do JSON, ou seja 1,33x isto na rede — por isso
+# o `send_document` da Evolution usa timeout de 120s e não os 30s do default.
+WA_DOC_LIMITE_BYTES = 100 * 1024 * 1024
+
+
+@app.post("/api/whatsapp/send-document", dependencies=[Depends(require_scaffold_auth)])
+async def send_whatsapp_document(request: Request):
+    """
+    Envia DOCUMENTO por WhatsApp (PDF, PPTX, DOCX, XLSX...).
+
+    Body:
+    - phone: número em qualquer formato
+    - document: caminho de arquivo LOCAL, URL pública (http/https) ou base64
+    - filename: nome que o WhatsApp exibe (opcional se `document` for caminho)
+    - caption: legenda opcional
+    - mimetype: opcional — inferido do `filename` pela stdlib
+
+    ──────────────────────────────────────────────────────────────────────────
+    **POR QUE ESTA ROTA EXISTE (06/11/2026): a função já estava pronta e não
+    tinha chamador, e por isso o trabalho saiu por fora TRÊS vezes.**
+    `evolution_api.send_document` foi consertada em 30/09 (postava em
+    `/message/sendWhatsAppAudio/`, o endpoint de ÁUDIO — nenhum envio de
+    documento jamais funcionou) e ficou sem rota. Resultado medido: o PPT de
+    4,99 MB em 30/09 (nota #2229), as duas certidões da Pitangueiras em 04/11 e
+    a proposta da Building 8 em 06/11 — todas por chamada manual à Evolution ou
+    script avulso. **Função sem chamador não tem quem denuncie o defeito, e
+    capacidade sem rota não tem quem a use.**
+
+    **CHAMA `evolution_api` DIRETO, não o módulo `whatsapp`** — e isso é
+    deliberado, não atalho. O `whatsapp.WhatsAppIntegration.send_media` é um
+    segundo cliente, mais antigo, e reproduziria os três defeitos que o
+    `send_document` já pagou para consertar: não manda `fileName` nem
+    `mimetype` (o PPTX chega como arquivo genérico), usa timeout de 30s (não
+    sobem 6,6 MB de base64 para a VPS, e o upload cortado devolve o MESMO
+    `{"error"}` de payload inválido) e não tem guarda de `media` vazio (o 400
+    que parece vir da Evolution e vem de casa). Pior: o `_normalize_phone` dele
+    só acerta DDD de São Paulo — `"41991064663"` sai sem o `55` porque nenhum
+    dos `if` casa, enquanto a normalização do `evolution_api` acerta. Envolver
+    aquele cliente seria criar o segundo caminho pelo qual o defeito volta.
+
+    **Não grava em `messages` aqui**, e é o padrão da casa: o `/api/whatsapp/send`
+    também não. A Evolution emite `SEND_MESSAGE` para envio via API (nunca
+    `messages.upsert`), e o webhook o persiste via
+    `wa_ingest.persist_sent_message`; `parse_webhook_message` trata
+    `documentMessage` gravando o `fileName` como conteúdo. Gravar aqui também
+    duplicaria a linha ou brigaria com a dedup por `message_id`.
+    """
+    import base64 as _base64
+    import mimetypes as _mimetypes
+
+    data = await request.json()
+    phone = (data.get("phone") or "").strip()
+    document = data.get("document") or ""
+    filename = (data.get("filename") or "").strip()
+    caption = data.get("caption") or ""
+    mimetype = data.get("mimetype")
+
+    if not phone or not document:
+        raise HTTPException(status_code=400, detail="phone e document sao obrigatorios")
+
+    # Três formas de `document`, resolvidas na ordem em que são distinguíveis.
+    # O caminho local é o caso de uso real (as peças vivem em ~/cockpit) e é
+    # exatamente o que o script avulso fazia à mão.
+    documento = str(document)
+    if documento.startswith(("http://", "https://")):
+        if not filename:
+            raise HTTPException(
+                status_code=400,
+                detail="filename obrigatorio quando document e URL — o WhatsApp exibe este nome",
+            )
+    else:
+        caminho = os.path.expanduser(documento)
+        # `len < 4096` evita chamar `isfile` com um base64 de 7 MB, que em
+        # alguns SOs levanta em vez de devolver False.
+        if len(documento) < 4096 and os.path.isfile(caminho):
+            try:
+                with open(caminho, "rb") as fh:
+                    conteudo = fh.read()
+            except OSError as e:
+                raise HTTPException(status_code=400, detail=f"arquivo ilegivel: {e}")
+            if len(conteudo) > WA_DOC_LIMITE_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{len(conteudo) / 1048576:.1f} MB — o WhatsApp recusa documento "
+                        f"acima de {WA_DOC_LIMITE_BYTES / 1048576:.0f} MB"
+                    ),
+                )
+            documento = _base64.b64encode(conteudo).decode()
+            filename = filename or os.path.basename(caminho)
+            mimetype = mimetype or _mimetypes.guess_type(filename)[0]
+        elif not filename:
+            raise HTTPException(
+                status_code=400,
+                detail="filename obrigatorio quando document e base64",
+            )
+
+    from integrations.evolution_api import get_evolution_client
+
+    result = await get_evolution_client().send_document(
+        phone=phone,
+        document_url=documento,
+        filename=filename,
+        caption=caption,
+        mimetype=mimetype,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {"status": "sent", "filename": filename, "result": result}
+
+
 # ============== WHATSAPP TEMPLATES ==============
 
 @app.get("/api/whatsapp/templates")
@@ -12918,15 +13032,26 @@ async def sync_gmail_messages(request: Request, account_id: int, days: int = 30,
 @app.post("/api/gmail/send")
 async def send_gmail_message(request: Request):
     """
-    Send an email via Gmail API.
+    Send an email via Gmail API — com anexo, cópia e cópia oculta.
 
     Body:
     - account_id: Google account ID to send from
-    - to: Recipient email
+    - to: Recipient email (string "a@x, b@y" ou lista)
     - subject: Email subject
     - body: Plain text body
     - html_body: Optional HTML body
     - thread_id: Optional thread ID for replies
+    - cc / bcc: opcionais, string ou lista
+    - attachments: `[{filename?, content_b64|path, mimetype?}]`
+
+    ⚠️ `path` é caminho de arquivo LOCAL DO SERVIDOR (as peças vivem em
+    `~/cockpit`, que é o caso de uso real). Em produção (Railway) esse
+    diretório não existe — lá o caminho é `content_b64`. A rota é admin-only
+    justamente porque `path` lê arquivo do host.
+
+    Teto de 25 MB **da mensagem** (o Gmail mede a mensagem, e base64 infla
+    ~33%): a recusa vem daqui, com os números, antes de subir o arquivo.
+    Anexo ruim ABORTA o envio — não há revisão humana depois do envio.
     """
     user = get_current_user(request)
     if not user or user.get("role") != "admin":
@@ -12939,6 +13064,9 @@ async def send_gmail_message(request: Request):
     text_body = body.get("body", "")
     html_body = body.get("html_body")
     thread_id = body.get("thread_id")
+    attachments = body.get("attachments")
+    cc = body.get("cc")
+    bcc = body.get("bcc")
 
     if not all([account_id, to, subject]):
         raise HTTPException(status_code=400, detail="account_id, to, subject sao obrigatorios")
@@ -12957,6 +13085,33 @@ async def send_gmail_message(request: Request):
     account = dict(account)
     access_token = account.get("access_token")
 
+    # REFRESH ANTES DE ENVIAR (06/11/2026). Esta rota usava o `access_token`
+    # guardado, cru. Token do Google vale 1 HORA, e o que estava no banco
+    # expirara em 20/09 — 47 dias. Ou seja: a rota respondia 500
+    # "token_expired" em qualquer momento que não fosse logo depois de outro
+    # serviço ter renovado e gravado de volta. Expor anexo aqui sem isto seria
+    # expor a capacidade numa porta que não abre.
+    #
+    # O gmail-proxy já fazia o refresh; esta rota, não. Mesma assimetria do
+    # anexo (rascunho sim, envio não): duas portas para o mesmo ato, uma
+    # consertada e a outra não.
+    if account.get("refresh_token"):
+        token_result = await gmail.refresh_access_token(account["refresh_token"])
+        if token_result.get("access_token"):
+            access_token = token_result["access_token"]
+            # Grava de volta pra que o próximo chamador aproveite — mesmo padrão
+            # de `email_digest._refresh_token`. Best-effort: falhar aqui não pode
+            # impedir o envio, que já tem token válido em mão.
+            try:
+                cursor.execute(
+                    "UPDATE google_accounts SET access_token = %s, "
+                    "token_expiry = NOW() + INTERVAL '1 hour' WHERE id = %s",
+                    (access_token, account["id"]),
+                )
+                conn.commit()
+            except Exception as _e:
+                logger.warning(f"gmail/send: falha ao gravar token renovado: {_e}")
+
     try:
         result = await gmail.send_message(
             access_token=access_token,
@@ -12964,15 +13119,32 @@ async def send_gmail_message(request: Request):
             subject=subject,
             body=text_body,
             html_body=html_body,
-            thread_id=thread_id
+            thread_id=thread_id,
+            attachments=attachments,
+            cc=cc,
+            bcc=bcc,
         )
 
         if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
+            # Anexo recusado é erro de QUEM CHAMOU (arquivo inexistente, grande
+            # demais) — 400, não 500. Devolver 500 manda procurar o defeito no
+            # servidor, que é onde ele não está.
+            erro = str(result["error"])
+            if erro.startswith("anexo recusado:"):
+                raise HTTPException(status_code=400, detail=erro)
+            raise HTTPException(status_code=500, detail=erro)
 
         conn.close()
         return {"status": "sent", "message_id": result.get("id")}
 
+    except HTTPException:
+        # `HTTPException` É uma `Exception`, então o `except` abaixo a capturava
+        # e a reembalava em 500 com `detail="400: anexo recusado: ..."` — o
+        # status certo virava texto dentro do status errado. Quem chama lê 500 e
+        # vai procurar o defeito no servidor, onde ele não está. Medido em
+        # 06/11/2026 ao testar a recusa de anexo inexistente.
+        conn.close()
+        raise
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=500, detail=str(e))
@@ -13472,7 +13644,14 @@ async def admin_gmail_proxy(request: Request):
 
     `create_draft` aceita: to, subject, body, thread_id, cc, bcc,
     attachments=[{filename, content_b64, mimetype?}], source, contact_id.
+    `send_message` aceita: to, subject, body, html_body, thread_id, cc, bcc,
+    attachments — os tres ultimos eram DESCARTADOS EM SILENCIO ate 06/11/2026,
+    o mesmo defeito de 10/10 consertado so do lado do rascunho.
     `to`/`cc`/`bcc` aceitam string "a@x, b@y" ou lista.
+    `attachments` aceita `path` (arquivo local do servidor) alem de
+    `content_b64`; teto de 25 MB DA MENSAGEM, recusado aqui com os numeros.
+    Diferenca deliberada: no rascunho anexo ruim e ignorado com log; no envio
+    ele ABORTA (400), porque depois do envio nao ha revisao humana.
     """
     import base64 as _b64
 
@@ -13652,6 +13831,12 @@ async def admin_gmail_proxy(request: Request):
             return resultado
 
         if action == "send_message":
+            # 🔴 `cc`, `bcc` e `attachments` eram DESCARTADOS EM SILÊNCIO aqui
+            # até 06/11/2026 — o mesmo defeito de 10/10 que foi corrigido só do
+            # lado do `create_draft`. O INTEL sabia anexar em RASCUNHO e não
+            # sabia em ENVIO, e a assimetria é que era o bug: em 06/11 a
+            # proposta da Building 8 aos três sócios saiu por script avulso.
+            # A montagem vive em `services.gmail_mime`, via `gmail.send_message`.
             result = await gmail.send_message(
                 access_token=access_token,
                 to=params.get("to", ""),
@@ -13659,7 +13844,12 @@ async def admin_gmail_proxy(request: Request):
                 body=params.get("body", ""),
                 html_body=params.get("html_body"),
                 thread_id=params.get("thread_id"),
+                attachments=params.get("attachments"),
+                cc=params.get("cc"),
+                bcc=params.get("bcc"),
             )
+            if str(result.get("error") or "").startswith("anexo recusado:"):
+                raise HTTPException(400, result["error"])
             return result
 
         if action == "list_filters":
