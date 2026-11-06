@@ -124,24 +124,26 @@ class WhatsAppIntegration:
         }
 
     def _normalize_phone(self, phone: str) -> str:
-        """
-        Normalize phone number to WhatsApp format (only digits)
-        Examples:
-            +55 11 98415-3337 -> 5511984153337
-            (11) 98415-3337 -> 5511984153337
-        """
-        # Remove all non-digits
-        digits = re.sub(r'\D', '', phone)
+        """Normaliza o telefone do destinatário para o formato da Evolution.
 
-        # Add Brazil country code if not present
-        if len(digits) == 11 and digits.startswith('11'):
-            digits = '55' + digits
-        elif len(digits) == 10:
-            digits = '5511' + digits
-        elif len(digits) == 9:
-            digits = '55119' + digits
+        **A regra vive em `services.phone_br`, não aqui** (06/11/2026). O que
+        havia neste corpo só acertava DDD de São Paulo:
 
-        return digits
+            if len(digits) == 11 and digits.startswith('11'): ...
+
+        — o ramo de 11 dígitos exigia o par `11`, então `41991064663`
+        (Curitiba) não casava com `if` nenhum e saía **sem o `55`**. Medido na
+        base: dos 713 telefones de 11 dígitos, **597 saíam sem DDI** por aqui.
+        Falha calada: a Evolution aceita o número malformado e devolve sucesso.
+
+        Não foi corrigido em linha porque a mesma regra estava duplicada em 7
+        pontos do `evolution_api.py` — errada em sentido oposto (prefixava `55`
+        em número internacional). Duas implementações é a porta por onde o
+        defeito volta; ver o docstring de `services.phone_br`.
+        """
+        from services.phone_br import normalize_br_phone
+
+        return normalize_br_phone(phone)
 
     async def get_connection_status(self) -> Dict[str, Any]:
         """Get current connection status"""

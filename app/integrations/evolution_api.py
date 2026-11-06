@@ -17,6 +17,7 @@ from typing import Optional, Dict, List, Any
 from datetime import datetime
 
 from services.worker_secret import get_worker_secret
+from services.phone_br import normalize_br_phone
 from services.tz import now_utc, UTC
 from services.contact_identity import find_contact_by_phone
 
@@ -136,9 +137,7 @@ class EvolutionAPIClient:
             return {"error": "Evolution API nao configurada"}
 
         name = instance_name or self.instance_name
-        phone_clean = ''.join(filter(str.isdigit, phone))
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         url = f"{self.base_url}/message/sendText/{name}"
         try:
@@ -291,12 +290,7 @@ class EvolutionAPIClient:
         """Envia mensagem de texto"""
         name = instance_name or self.instance_name
 
-        # Normalizar telefone (remover caracteres não numéricos)
-        phone_clean = ''.join(filter(str.isdigit, phone))
-
-        # Garantir formato correto (com código do país)
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         return await self._request("POST", f"/message/sendText/{name}", {
             "number": phone_clean,
@@ -314,10 +308,7 @@ class EvolutionAPIClient:
     ) -> Dict:
         """Envia mídia (imagem, vídeo, documento, áudio)"""
         name = instance_name or self.instance_name
-        phone_clean = ''.join(filter(str.isdigit, phone))
-
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         endpoint = f"/message/sendMedia/{name}"
 
@@ -361,10 +352,7 @@ class EvolutionAPIClient:
           vez de um 400 que parece ser do outro lado.
         """
         name = instance_name or self.instance_name
-        phone_clean = ''.join(filter(str.isdigit, phone))
-
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         if not (document_url or "").strip():
             return {"error": "send_document: `media` vazio (URL ou base64 do documento)"}
@@ -395,9 +383,7 @@ class EvolutionAPIClient:
         # Normalizar telefones
         clean_phones = []
         for phone in phones:
-            phone_clean = ''.join(filter(str.isdigit, phone))
-            if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-                phone_clean = '55' + phone_clean
+            phone_clean = normalize_br_phone(phone)
             clean_phones.append(phone_clean)
 
         return await self._request("POST", f"/chat/whatsappNumbers/{name}", {
@@ -411,10 +397,7 @@ class EvolutionAPIClient:
     ) -> Dict:
         """Obtém foto de perfil do contato via Evolution API v2"""
         name = instance_name or self.instance_name
-        phone_clean = ''.join(filter(str.isdigit, phone))
-
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         # Evolution API v2 usa POST com body JSON
         return await self._request("POST", f"/chat/fetchProfilePictureUrl/{name}", {
@@ -441,10 +424,7 @@ class EvolutionAPIClient:
     ) -> Dict:
         """Obtém mensagens de uma conversa"""
         name = instance_name or self.instance_name
-        phone_clean = ''.join(filter(str.isdigit, phone))
-
-        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
-            phone_clean = '55' + phone_clean
+        phone_clean = normalize_br_phone(phone)
 
         return await self._request("POST", f"/chat/findMessages/{name}", {
             "where": {
