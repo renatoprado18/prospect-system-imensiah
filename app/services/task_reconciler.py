@@ -78,7 +78,7 @@ import os
 import re
 from datetime import timedelta
 from database import get_db
-from services import llm, llm_usage
+from services import llm, llm_defer, llm_usage
 from services.wa_texto import texto_efetivo_sql
 
 # Texto EFETIVO: transcricao do audio / OCR da imagem quando ha anexo extraido.
@@ -623,6 +623,68 @@ def batch_key(msgs) -> str:
     return hashlib.sha256("\n".join(linhas).encode("utf-8")).hexdigest()
 
 
+# ============ O JULGAMENTO QUE NÃO ACONTECE (09/11, migration 089) ============
+#
+# Com o canário de saldo aceso, `messages.create` levanta e o julgamento devolve
+# `judge_failed` — e NADA registra que a pergunta ficou sem resposta. Em 09/11 isso
+# durava 284 horas, com o reconciler respondendo por 41% dos fechamentos: 12 dias
+# de task que fecharia sozinha e não fechou, sem rastro que apontasse a causa.
+#
+# Aqui o passo LLM vai pra fila (`services/llm_defer`) em vez de evaporar. Quem
+# responde depois é uma sessão `/sys`; a resposta volta por `apply_deferred_judgment`
+# e segue o MESMO caminho — `_finaliza_verdict` → `_close_task`. A barra de 0.85, a
+# conferência de citação, o `undo_hint` e o `agent_actions` não mudam de lugar: o
+# que a fila transporta é o prompt, nunca a decisão.
+def _defer_judgment(kind, tasks, msgs, prompt, exibidas, rotulos,
+                    model, max_tokens) -> dict:
+    """Enfileira o julgamento e devolve `judge_failed` para as tasks do bloco.
+
+    `judge_failed=True` é o ponto fino, e é o oposto de um detalhe: diferido NÃO é
+    "o modelo disse não". Com ele, `run_task_reconciler` não carimba marcador
+    nenhum, então a task volta a julgamento na run seguinte — que é exatamente o
+    certo se ninguém responder o job. Quem carimba o marcador é o APLICADOR, no
+    momento em que a resposta chega. Carimbar aqui congelaria a task para sempre
+    por causa de uma pergunta que ninguém fez (mesma armadilha do `judge_failed`
+    de rede, documentada no laço da run).
+
+    `rotulos` é `{"T1": task_id}` e vem de quem montou o prompt — nunca
+    reconstruído aqui. Recalcular a numeração por fora é como um veredito acaba
+    aplicado na task errada quando a ordem divergir.
+    """
+    por_id = {t["id"]: t for t in tasks}
+    inverso = {tid: rot for rot, tid in (rotulos or {}).items()}
+    ctx = {
+        "kind": kind,
+        # `exibidas` é o texto das mensagens COMO foi ao prompt. Guardar em vez de
+        # re-buscar na hora de aplicar é deliberado: a conferência de citação tem
+        # de rodar contra o que o modelo VIU. Re-buscando, uma mensagem que chegou
+        # depois entraria na aferição e a guarda passaria a medir outra coisa.
+        # Chave vira string no JSONB; o aplicador restaura o int.
+        "exibidas": {str(i): t for i, t in exibidas.items()},
+        "tasks": [
+            {"id": tid, "titulo": por_id[tid]["titulo"],
+             "contact_id": por_id[tid].get("contact_id"),
+             "project_id": por_id[tid].get("project_id"),
+             "rotulo": inverso.get(tid),
+             "fingerprint": task_fingerprint(por_id[tid], msgs)}
+            for tid in por_id
+        ],
+    }
+    job_id = llm_defer.enqueue(f"task_reconciler.{kind}", prompt, model,
+                               max_tokens, ctx)
+    if job_id:
+        logger.info("task_reconciler: julgamento de %s diferido no job #%s "
+                    "(canário aceso)", list(por_id), job_id)
+        motivo = f"diferido no job #{job_id} (canário aceso)"
+    else:
+        # Fila indisponível (089 não aplicada no alvo, Neon fora). Não há o que
+        # fazer além do que já se fazia hoje — mas o motivo fica dito, não calado.
+        motivo = "canário aceso e fila indisponível"
+    return {tid: {"done": False, "confidence": 0.0, "reason": motivo,
+                  "judge_failed": True, "deferred": bool(job_id)}
+            for tid in por_id}
+
+
 def _judge(task, msgs, prompt=None, exibidas=None) -> dict:
     """LLM (Haiku) decide se a task foi concluída à luz das mensagens. JSON estrito.
     Retorna {done, confidence, reason, evidencia}. Best-effort: erro → done=false.
@@ -641,6 +703,10 @@ def _judge(task, msgs, prompt=None, exibidas=None) -> dict:
     ficaria congelada para sempre, porque o lote nunca mais muda."""
     if prompt is None or exibidas is None:
         prompt, exibidas = _build_judge_prompt(task, msgs)
+
+    if llm_defer.should_defer():
+        return _defer_judgment("judge", [task], msgs, prompt, exibidas,
+                               {"T1": task["id"]}, llm.FAST, 400)[task["id"]]
 
     api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -734,6 +800,11 @@ def _judge_group(tasks, msgs) -> dict:
     def _falha(motivo):
         return {tid: {"done": False, "confidence": 0.0, "reason": motivo,
                       "judge_failed": True} for tid in ids}
+
+    if llm_defer.should_defer():
+        return _defer_judgment("judge_grupo", tasks, msgs, prompt, exibidas,
+                               rotulos, llm.FAST,
+                               min(400 + 260 * len(tasks), 4000))
 
     api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -863,6 +934,101 @@ async def _notify_closed(closed):
         "task_reconciler", "Reconciliação: tarefas fechadas", msg, 3,
         msg_type="tasks_reconciled", dedup=dedup,
     )
+
+
+async def apply_deferred_judgment(context: dict, answer: str) -> dict:
+    """Aplica a resposta de um job de `llm_defer` — o outro lado de `_defer_judgment`.
+
+    Chamado por `llm_defer.submit_answer` quando uma sessão `/sys` devolve o
+    veredito. Daqui pra frente **é o caminho normal**: o JSON passa por
+    `_finaliza_verdict` (que aplica a conferência de citação de 23/08), a barra de
+    `CONFIDENCE_THRESHOLD` é a mesma, e o fechamento é o `_close_task` com
+    `undo_hint`. Nada aqui decide nada que o caminho da API não decidiria — a única
+    diferença no sistema todo é de onde veio o texto da resposta.
+
+    Três recusas explícitas, nesta ordem:
+
+    (1) **Kill-switch do reconciler.** Se ele está `off`, a resposta é julgada e
+        relatada mas NADA fecha. O gate é do Renato e não pode ser contornado por
+        porta nova — foi pra isso que a chave de 23/08 passou a barrar a escrita
+        e não a medição.
+    (2) **Resposta sem JSON** é falha de aplicação, não veredito. `ok=False` faz o
+        job virar `failed` com o motivo, e a task volta a julgamento amanhã.
+    (3) **Rótulo fora do bloco** é descartado, igual ao `_judge_group`. Adivinhar
+        por posição é como um veredito acaba na task errada, e o dano é pior que
+        não julgar.
+
+    Carimba o marcador do skip (`_record_judgment`) com o fingerprint gravado no
+    job — nunca recalculado. O lote já pode ter mudado desde o enfileiramento; o
+    marcador tem de descrever a pergunta que FOI respondida, senão ele certifica
+    um julgamento que não houve.
+    """
+    kind = context.get("kind") or "judge_grupo"
+    tasks = context.get("tasks") or []
+    if not tasks:
+        return {"ok": False, "erro": "job sem tasks no contexto"}
+    exibidas = {int(k): v for k, v in (context.get("exibidas") or {}).items()}
+    por_id = {int(t["id"]): t for t in tasks}
+    por_rotulo = {t.get("rotulo"): int(t["id"]) for t in tasks if t.get("rotulo")}
+
+    m = re.search(r'\{.*\}', answer or "", re.DOTALL)
+    if not m:
+        return {"ok": False, "erro": "resposta sem JSON — nada aplicado"}
+    try:
+        data = json.loads(m.group(0))
+    except Exception as e:
+        return {"ok": False, "erro": f"JSON inválido: {e}"}
+
+    # Normaliza os dois formatos num só: {task_id: veredito_bruto}.
+    brutos = {}
+    if kind == "judge":
+        brutos[int(tasks[0]["id"])] = data
+    else:
+        for item in (data.get("vereditos") or []):
+            tid = por_rotulo.get(str(item.get("tarefa") or "").strip())
+            if tid is None or tid in brutos:
+                logger.warning("apply_deferred_judgment: rótulo %r fora do bloco %s "
+                               "— descartado", item.get("tarefa"), list(por_id))
+                continue
+            brutos[tid] = item
+    if not brutos:
+        return {"ok": False, "erro": "nenhum veredito casou com as tasks do job"}
+
+    desligado = not is_reconciler_enabled()
+    skip_ligado = is_skip_unchanged_enabled()
+    closed, would_close, sem_evidencia = [], [], []
+
+    for tid, bruto in brutos.items():
+        task = por_id[tid]
+        verdict = _finaliza_verdict(task, bruto, exibidas)
+        if skip_ligado and not desligado and not verdict.get("judge_failed"):
+            fp = task.get("fingerprint")
+            if fp:
+                _record_judgment(tid, fp, verdict)
+        if verdict.get("evidencia_falha"):
+            sem_evidencia.append({"id": tid, "titulo": task["titulo"],
+                                  "motivo": verdict["evidencia_falha"],
+                                  "citacao": (verdict.get("evidencia") or "")[:160]})
+        if verdict["done"] and verdict["confidence"] >= CONFIDENCE_THRESHOLD:
+            rec = {"id": tid, "titulo": task["titulo"],
+                   "confidence": verdict["confidence"], "reason": verdict["reason"],
+                   "evidencia": verdict.get("evidencia")}
+            if desligado:
+                would_close.append(rec)
+            else:
+                # `_close_task` já fecha com `AND status='pending'`: task que o
+                # Renato fechou à mão entre o enfileiramento e agora não é tocada,
+                # e o rowcount zero não vira exceção.
+                _close_task(task, verdict)
+                closed.append(rec)
+
+    if closed:
+        await _notify_closed(closed)
+
+    return {"ok": True, "kind": kind, "julgados": len(brutos),
+            "fechados": closed, "fecharia": would_close,
+            "sem_evidencia": sem_evidencia,
+            "reconciler_desligado": desligado}
 
 
 # ==================== FASE 2: saída do on_hold ====================

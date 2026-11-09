@@ -1,0 +1,155 @@
+---
+name: sys
+description: Abertura de sessao no PAPEL Sys (dreno de modo degradado). Enquanto o canario de saldo Anthropic esta aceso, drena a fila de trabalho LLM diferido (llm_defer_jobs) respondendo os prompts pela assinatura em vez da API. Terceiro papel, ao lado de /cos e /dev; nao toca git/deploy/Neon-DDL. Pareado com /loop pra continuar drenando.
+---
+
+# Skill: /sys
+
+Abertura de sessao no **papel Sys**. Terceiro papel, ao lado de `/cos` (executivo) e
+`/dev` (codigo). Existe por um motivo so e tem prazo de validade:
+
+> **Enquanto a conta Anthropic esta fora, as funcoes LLM do INTEL param. Esta sessao
+> responde os prompts que elas deixaram de fazer.**
+
+Em 28/10/26 o saldo zerou e o sistema passou **12 dias** com toda funcao LLM parada —
+`task_reconciler` (41% dos fechamentos de task), triagem, visao, briefing, tonIAH.
+Antes da migration 089 o julgamento que nao acontecia **nao deixava rastro**: cada
+sitio de `messages.create` falhava por si e o efeito aparecia no board executivo
+como "326 tasks atrasadas", sem nada apontando a causa.
+
+## ⚠️ Leia isto antes de rodar
+
+**Isto e MODO DEGRADADO, nao caminho normal.** Rotear a carga LLM de producao por
+uma sessao de assinatura e um dreno enquanto a conta esta fora — nao e arquitetura.
+A camada LLM inteira roda num baseline de ~US$ 76/mes, menos que a assinatura: nao
+ha economia nenhuma em manter isto ligado, so divida tecnica.
+
+**A acao nº 1 continua sendo recarregar o saldo em `console.anthropic.com`.** Quando
+ele volta, `check_anthropic_credit_balance` apaga o flag e a fila **deixa de receber
+trabalho sozinha** — ninguem precisa lembrar de desligar nada.
+
+## Etapas
+
+### 0. Marcar o papel + pintar a janela
+
+**(a) Marcador** — pra o `/fim` saber que caminho fechar:
+
+```bash
+echo "sys" > "$SCRATCHPAD_DIR/session_role"   # $SCRATCHPAD_DIR = o Scratchpad Directory do system prompt
+```
+
+**(b) Cor de fundo = AMBAR ESCURO `#1E1708`** (distingue da CoS roxa e da Dev grafite
+— cor de "sistema em modo degradado", de proposito):
+
+```bash
+if [ "$TERM_PROGRAM" = "Apple_Terminal" ]; then
+  osascript -e 'tell application "Terminal" to set background color of front window to {7710, 5911, 2056}'
+else
+  printf '\033]11;#1E1708\007'
+fi
+```
+
+**(c) Registrar a frente** (quadro vivo do `session_locks.md`):
+
+```bash
+cd /Users/rap/prospect-system && python3 scripts/frentes.py claim sys "Dreno LLM diferido"
+```
+
+### 1. Espiar a fila — e LER OS DOIS NUMEROS JUNTOS
+
+```bash
+INTEL_API_KEY=$(grep -m1 '^INTEL_API_KEY=' /Users/rap/prospect-system/.env | cut -d= -f2- | tr -d '[:space:]')
+curl -s -H "X-API-Key: $INTEL_API_KEY" https://intel.almeida-prado.com/api/sys/llm-jobs | python3 -m json.tool
+```
+
+🔴 **`pendentes: 0` tem DOIS significados opostos, e confundi-los e o modo de falha
+desta skill:**
+
+| `canario_aceso` | `pendentes` | Leitura | O que fazer |
+|---|---|---|---|
+| `false` | 0 | 🟢 **Saude.** A conta voltou, nada a diferir | **Encerrar o papel.** Avisar que o saldo voltou e sugerir `/dev` ou `/cos` |
+| `true` | 0 | 🔴 **O produtor nao esta enfileirando** | Nao e "nada a fazer". O cron do reconciler rodou hoje? (`/scheduler-status`, `cron_runs`). Investigar, nao reportar verde |
+| `true` | >0 | ▶️ **Trabalho esperando** | Drenar (etapa 2) |
+| `false` | >0 | ⏭️ Sobra de episodio anterior | Drenar o que der; o resto expira em 12h sozinho |
+
+**Nunca reporte "nada a fazer" sem ter olhado o `canario_aceso`.** As aberturas de
+04/10 e 05/10 passaram verdes com 30h de LLM parado porque nenhum verificador olhava
+LLM — repetir isso aqui, no papel que existe exatamente pra isso, seria pior.
+
+### 2. Drenar: pegar, responder, devolver
+
+Pegue em lotes pequenos (3 por vez) pra nao estourar o contexto da janela:
+
+```bash
+curl -s -X POST -H "X-API-Key: $INTEL_API_KEY" \
+  "https://intel.almeida-prado.com/api/sys/llm-jobs/claim?limit=3" | python3 -m json.tool
+```
+
+Cada job vem com `prompt`, `model`, `max_tokens` e `instrucoes`. Para cada um:
+
+1. **Leia o prompt e responda como o modelo responderia** — so o JSON que ele pede,
+   sem comentario, sem cerca de codigo, sem preambulo.
+2. 🔴 **A CITACAO E CONFERIDA.** O prompt do reconciler exige
+   `evidencia_trecho` **copiado literalmente** de uma das mensagens M1..Mn. O
+   aplicador roda `_evidencia_confere` contra o texto exato que esta no prompt — se
+   voce parafrasear, juntar pedacos de mensagens diferentes ou inventar, o veredito
+   e **DESCARTADO** e nada fecha. Isso e a guarda funcionando, nao um erro seu; mas
+   fazer de proposito seria fabricar prova.
+3. **Na duvida, `done: false`.** A barra e 0.85 e o prompt diz isso com todas as
+   letras. Fechar task errada custa mais que nao fechar.
+4. Devolva:
+
+```bash
+curl -s -X POST -H "X-API-Key: $INTEL_API_KEY" -H "Content-Type: application/json" \
+  -d "$(python3 -c 'import json,sys; print(json.dumps({"answer": sys.stdin.read()}))' <<'JSON'
+{"done": false, "confidence": 0.2, "reason": "..."}
+JSON
+)" "https://intel.almeida-prado.com/api/sys/llm-jobs/<ID>/answer" | python3 -m json.tool
+```
+
+A resposta do endpoint diz o que **de fato** aconteceu: `fechados`, `fecharia`
+(kill-switch off), `sem_evidencia` (veredito descartado pela guarda). **Relate o que
+o endpoint devolveu, nunca o que voce julgou** — o que vale e o efeito.
+
+### 3. Repetir e, no fim, fechar com numeros
+
+Voltar a etapa 1 ate `pendentes: 0`. Depois reportar, em 3 linhas: quantos jobs
+respondidos · quantas tasks **fechadas de fato** · quantos vereditos descartados
+pela guarda de citacao (se houver muitos, o problema esta nas suas respostas, nao
+na guarda).
+
+### 4. Manter drenando: **`/sys` sozinho nao basta**
+
+🔴 **Uma sessao nao age sozinha — ela precisa de um turno.** Aberta e parada, a `/sys`
+drena uma vez e depois fica ali *parecendo de pe e sem fazer nada*, que e pior que
+nada: le-se como coberto. O que faz o papel funcionar e o par com `/loop`:
+
+```
+/loop 15m /sys
+```
+
+Ao fim de cada passada, se a fila esvaziou e o canario segue aceso, **o loop continua**
+(o reconciler enfileira de novo no cron seguinte). Quando o `canario_aceso` virar
+`false`, **encerrar o loop** e dizer que a conta voltou.
+
+## Limites do papel — o que a /sys NAO faz
+
+- ❌ **Nao toca git, deploy nem Neon-DDL.** Esses sao da `/dev`. Se achar um bug no
+  dreno, **deixe recado no `session_locks.md`** pra Dev — nao conserte aqui.
+- ❌ **Nao escreve board.** Nem `project_cos_status.md` nem `project_dev_backlog.md`.
+  O `/fim` do papel `sys` nao fecha board nenhum: solta a frente e relata.
+- ❌ **Nao decide nada de negocio.** Responder o prompt do reconciler nao e opinar
+  sobre a task: e dizer se as mensagens provam que ela foi feita.
+- ❌ **Nao contorna kill-switch.** Se `task_reconciler_enabled` esta `off`, a resposta
+  e julgada e relatada e **nada fecha** — o gate e do Renato.
+
+## Quando NAO usar
+
+- **Canario apagado** (conta com saldo). Nao ha fila; use `/dev` ou `/cos`.
+- Sessao de codigo (use `/dev`) ou executiva (use `/cos`).
+
+## Erro comum
+
+Reportar "fila vazia, tudo em ordem" sem olhar o `canario_aceso`. Fila vazia com o
+canario aceso significa que o **produtor** parou — e esse e um problema maior que o
+que esta skill existe pra drenar.

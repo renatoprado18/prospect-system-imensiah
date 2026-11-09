@@ -102,6 +102,7 @@ Se houver feedback pendente, informar ao usuário e priorizar na sessão.
 **RECOMENDADO**: Pra abertura estruturada, o user invoca o comando do PAPEL da sessão (substituíram o antigo `/abre`):
 - **`/cos`** — sessão executiva (Chief of Staff). Marca a sessão como `cos`, lê `project_cos_status.md` inteiro + topo do dev, mostra "onde paramos + próximos passos" e roda checks dinâmicos. NÃO toca git/deploy/Neon-DDL.
 - **`/dev`** — sessão de código. Marca como `dev`, lê `project_dev_backlog.md` inteiro + topo do executivo + `session_locks.md`, checa saúde técnica (git/deploy/health), pega os locks e propõe frente. Dona de git/deploy/Neon-DDL; só a Dev pusha `main`.
+- **`/sys`** — sessão de DRENO, só enquanto o **canário de saldo Anthropic** está aceso. Marca como `sys`, drena `llm_defer_jobs` respondendo os prompts que as funções LLM deixaram de fazer (assinatura, não API). **Não toca git/deploy/Neon-DDL e não escreve board.** ⚠️ Sessão não age sozinha — usar **`/loop 15m /sys`**, senão ela drena uma vez e fica parecendo de pé sem fazer nada. Modo degradado: a ação nº 1 segue sendo recarregar o saldo. Ver FEATURES 20.7.
 
 Cada um grava um marcador de papel (`session_role` no scratchpad); o `/fim` lê esse marcador e fecha o board certo automaticamente (não é desdobrado em 2). Ver `session_locks.md` + `feedback_parallel_sessions`.
 

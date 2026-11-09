@@ -4029,6 +4029,61 @@ async def dev_delegations_list(request: Request, days: int = 14, review_window: 
             "delegations": delegations}
 
 
+# ============ FILA DE TRABALHO LLM DIFERIDO — o papel /sys (09/11/2026) ============
+#
+# Com o canário de saldo aceso, o passo LLM do `task_reconciler` é enfileirado em
+# `llm_defer_jobs` em vez de perdido (ver services/llm_defer e a migration 089).
+# Estes três endpoints são o canal da sessão `/sys`: ela ESPIA, PEGA e RESPONDE.
+#
+# Auth = `require_scaffold_auth` (sessão admin OU X-API-Key), o mesmo par
+# "admin OU máquina" de /api/dev/delegations. A sessão `/sys` chama por curl com a
+# INTEL_API_KEY, então exigir só cookie mataria o único uso real.
+class LlmJobAnswerBody(BaseModel):
+    answer: str
+
+
+@app.get("/api/sys/llm-jobs", dependencies=[Depends(require_scaffold_auth)])
+async def sys_llm_jobs_peek(request: Request, limit: int = 20):
+    """Estado da fila, sem pegar nada. Read-only de propósito — o claim é POST.
+
+    Devolve `canario_aceso` junto porque fila vazia tem DOIS significados opostos:
+    com o canário apagado é o estado saudável (nada a diferir); com ele aceso é
+    sinal de que o produtor não está enfileirando, e aí o problema é outro. Sem
+    esse par, uma sessão `/sys` leria as duas como "nada a fazer" e reportaria
+    verde — que é o modo de falha das aberturas de 04/10.
+    """
+    from services import llm_defer
+    return llm_defer.peek(limit=max(1, min(limit, 100)))
+
+
+@app.post("/api/sys/llm-jobs/claim", dependencies=[Depends(require_scaffold_auth)])
+async def sys_llm_jobs_claim(request: Request, limit: int = 3, by: str = "sys"):
+    """Pega até `limit` jobs pendentes (atômico) e devolve prompt + instruções."""
+    from services import llm_defer
+    jobs = llm_defer.claim(limit=limit, by=by)
+    return {"claimed": len(jobs), "jobs": jobs}
+
+
+@app.post("/api/sys/llm-jobs/{job_id}/answer",
+          dependencies=[Depends(require_scaffold_auth)])
+async def sys_llm_jobs_answer(job_id: int, body: LlmJobAnswerBody,
+                              request: Request):
+    """Entrega a resposta ao aplicador da função de origem.
+
+    A resposta NÃO é aplicada aqui: quem a interpreta é a função que enfileirou
+    (no reconciler, `apply_deferred_judgment` → `_finaliza_verdict` → `_close_task`,
+    com a conferência de citação e o `undo_hint` intactos). Este endpoint só
+    transporta.
+
+    Recusa do aplicador vira `failed` com o motivo e HTTP 200 — o corpo diz
+    `ok: false`. Não é erro de transporte, e devolver 4xx faria o `/sys` tratar
+    "veredito descartado por citação inventada" como falha de rede e tentar de
+    novo.
+    """
+    from services import llm_defer
+    return await llm_defer.submit_answer(job_id, body.answer)
+
+
 @app.get("/api/dev/feedback")
 async def dev_feedback_unified(request: Request, days: int = 14):
     """F-C C3: visao unificada (read-only) dos funis de feedback + candidatas.
