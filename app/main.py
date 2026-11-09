@@ -24123,7 +24123,12 @@ async def api_raci_whatsapp_preview(project_id: int, incluir_concluidos: bool = 
 
     return {"text": texto, "chars": len(texto), "max_chars": WHATSAPP_MAX_CHARS,
             "aviso_chars": WHATSAPP_LEGIBILIDADE_CHARS,
-            "grupos": grupos, "project": matrix.get("project")}
+            "grupos": grupos, "project": matrix.get("project"),
+            # O preview é onde o Renato LÊ antes de disparar — é aqui que o aviso
+            # de defasagem tem chance de mudar a decisão. O nível `atencao` (gap
+            # dentro da tolerância de digitação da ata) só aparece aqui; quem
+            # barra é o `send-to-group`, e só no `defasado`.
+            "relogio": matrix.get("relogio")}
 
 
 @app.post("/api/projects/{project_id}/raci/send-to-group", dependencies=[Depends(require_scaffold_auth)])
@@ -24158,6 +24163,10 @@ async def api_raci_send_to_group(project_id: int, request: Request):
     # haver o caso legitimo de mandar mesmo assim, desde que seja DECLARADO.
     from services.raci_matrix import get_matrix as _get_matrix
     _confirmado = bool(data.get("confirmar_duplicatas"))
+    # Ligado ANTES do try: no caminho de exceção com `confirmar_duplicatas=true`
+    # a execução segue, e a guarda de defasagem abaixo leria um nome sem ligação
+    # (UnboundLocalError na rota que publica no grupo do cliente).
+    _m = None
     try:
         _m = _get_matrix(project_id)
         _dups = _m.get("duplicatas") or []
@@ -24200,6 +24209,28 @@ async def api_raci_send_to_group(project_id: int, request: Request):
                     f"{project_id}/raci. Para mandar mesmo assim, reenvie com "
                     "confirmar_duplicatas=true."
                 ))
+
+    # GUARDA DE DEFASAGEM (09/11/26) — a matriz pode estar mais velha que a mesa.
+    # Em 09/11 o Renato perguntou, antes de disparar o RACI de segunda: "como
+    # saber a última atualização? Corremos o risco de mandar desatualizado?" — e
+    # não havia como saber. O Alba tinha relógio de 06/10 contra uma mesa de
+    # 26/10, e o PRIMEIRO item que o conselho leria era "Remarcar a Reunião de
+    # Conselho — cancelar 13/10 e confirmar 27/10", vencido, de uma reunião que já
+    # tinha acontecido. Mandar aquilo mostra, no item nº 1, que a matriz não é
+    # lida por ninguém.
+    #
+    # Bloqueia só o INEQUÍVOCO (`nivel == 'defasado'`, gap acima da tolerância de
+    # digitação da ata). O ambíguo (`atencao`) sai no preview e não barra, e
+    # `sem_comparacao` NÃO barra de propósito: projeto sem nota de reunião é a
+    # maioria, e barrá-los para sempre por uma conferência que nunca teve o que
+    # conferir é o erro que a primeira versão de `duplicatas_checadas` cometeu
+    # pelo lado oposto, em 06/10. Guarda que barra o caso são acaba desligada
+    # junto com a que importa.
+    from services.raci_matrix import bloqueio_por_defasagem
+    _motivo = bloqueio_por_defasagem((_m or {}).get("relogio"),
+                                     bool(data.get("confirmar_defasagem")))
+    if _motivo:
+        raise HTTPException(status_code=409, detail=_motivo)
 
     from services.raci_matrix import WHATSAPP_MAX_CHARS
     if len(texto) > WHATSAPP_MAX_CHARS:

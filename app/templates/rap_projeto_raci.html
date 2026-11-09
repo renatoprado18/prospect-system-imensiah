@@ -440,6 +440,12 @@ function render(){
 
   const partes = [`Projeto <b>#${p.id}</b>`];
   if(p.empresa) partes.push(`Empresa <b>${esc(p.empresa)}</b>`);
+  // SELO DE IDADE (09/11/26). "Emitido em" é a hora do request — muda a cada F5 e
+  // nada dizia de quando o DADO é. Era a pergunta literal do Renato antes de
+  // disparar o RACI de segunda: "corremos o risco de mandar desatualizado?".
+  // Os dois ficam, com rótulos que não se confundem.
+  const rel = dados.relogio || {};
+  if(rel.relogio_label) partes.push(`Dado de <b>${rel.relogio_label}</b>`);
   partes.push(`Emitido em <b>${dados.gerado_em}</b>`);
   document.getElementById('proj-meta').innerHTML = partes.join(' · ');
   document.getElementById('rodape-fonte').textContent =
@@ -448,11 +454,26 @@ function render(){
   // Fonte que falhou vira aviso VISÍVEL (inclusive no PDF): uma matriz
   // incompleta que se apresenta como completa é pior que erro na cara.
   const quebradas = dados.fontes.filter(f => f.erro);
-  document.getElementById('avisos').innerHTML = quebradas.length
-    ? `<div class="aviso"><b>Matriz possivelmente incompleta.</b> Não consegui ler a fonte
-       <b>${quebradas.map(f => esc(f.fonte)).join(', ')}</b> (${esc(quebradas[0].erro)}).
-       O que está abaixo é só o restante.</div>`
-    : '';
+  const avisos = [];
+  if(quebradas.length) avisos.push(
+    `<div class="aviso"><b>Matriz possivelmente incompleta.</b> Não consegui ler a fonte
+     <b>${quebradas.map(f => esc(f.fonte)).join(', ')}</b> (${esc(quebradas[0].erro)}).
+     O que está abaixo é só o restante.</div>`);
+  // Defasagem contra a mesa. Os dois níveis saem com o MESMO número à vista (o
+  // gap e as duas datas) e textos diferentes: `defasado` barra o envio no
+  // backend, `atencao` não — e dizer qual é qual aqui evita que o 409 pareça
+  // arbitrário quando aparecer.
+  if(rel.nivel === 'defasado') avisos.push(
+    `<div class="aviso"><b>A matriz é anterior à última mesa.</b> Dado de
+     <b>${esc(rel.relogio_label)}</b> e reunião registrada <b>${rel.gap_dias} dias</b>
+     depois${rel.reuniao_titulo ? ` (${esc(rel.reuniao_titulo)})` : ''}.
+     Transcreva a ata antes de mandar no grupo — <b>o envio está bloqueado</b>.</div>`);
+  else if(rel.nivel === 'atencao') avisos.push(
+    `<div class="aviso"><b>Confira antes de mandar.</b> Há reunião registrada
+     <b>${rel.gap_dias} dia(s)</b> depois do dado (de ${esc(rel.relogio_label)}) —
+     pode ser só a ata digitada depois da mesa, ou movimento que não entrou aqui.
+     O envio NÃO está bloqueado.</div>`);
+  document.getElementById('avisos').innerHTML = avisos.join('');
 
   // O CARD "EM ANDAMENTO" É ESTRUTURALMENTE ZERO, e por isso informa nada.
   // `status_efetivo` converte TODO item com prazo vencido em `atrasado` —

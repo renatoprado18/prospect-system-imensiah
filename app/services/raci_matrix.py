@@ -91,6 +91,145 @@ STATUS_LABEL = {
 FONTE_INTEL = "intel"
 FONTE_CONSELHOOS = "conselhoos"
 
+# ============ O RELÓGIO DA MATRIZ (09/11/26) ============
+#
+# O Renato perguntou, antes de disparar o RACI de segunda: "como saber a última
+# atualização? Corremos o risco de mandar desatualizado?" — e não havia como
+# saber. A página só devolvia `gerado_em`, que é a HORA DO REQUEST: um carimbo que
+# muda a cada F5 e não diz nada sobre o dado.
+#
+# E a régua que existia media a COLUNA ERRADA. `max(atualizado_em)` não é o
+# relógio da matriz porque CONCLUIR um item carimba `concluido_em` sem tocar
+# `atualizado_em`. Medido em prod hoje, projeto 24 (Vallen): `max(atualizado_em)`
+# = 27/10, `greatest(...)` = **29/10** — a data da própria mesa, onde 6 itens
+# foram fechados. A régua antiga diria "parado desde 27/10" com a matriz mexida
+# na véspera, e erra nas DUAS direções: na de gerar medo infundado, e na de
+# certificar frescor se a próxima escrita vier só por `concluido_em`.
+_RELOGIO_COLUNAS = ("atualizado_em", "concluido_em", "criado_em")
+
+# ⚠️ A DATA DA MESA NÃO TEM CASA NO INTEL, e isto é um limite medido, não uma
+# escolha. Procurei as três fontes plausíveis em 09/11: `conselhoos_meetings`
+# está VAZIA (0 linhas), `project_events` está VAZIA (0 linhas) e
+# `calendar_events` não tem vínculo com projeto. Sobra `project_notes`
+# tipo='reuniao' — e o `criado_em` dela é quando a ATA FOI DIGITADA, não quando a
+# reunião aconteceu: a ata da mesa Vallen de 29/10 entrou em 31/10.
+#
+# Daí a trava ser de DOIS NÍVEIS. Uma trava de um nível só, comparando direto,
+# bloquearia o Vallen por 2 dias de atraso de digitação — e guarda que barra o
+# caso são acaba desligada, junto com a que importa (é o que o comentário da
+# guarda de duplicata em `main.api_raci_send_to_group` já dizia). Então:
+#
+#   gap > ATA_LAG_DIAS  -> DEFASADO, inequívoco, bloqueia (Alba: relógio 06/10
+#                          contra mesa de 26/10 = 20 dias, e o 1º item que o
+#                          conselho leria era "remarcar a reunião de 13/10")
+#   0 < gap <= LAG      -> ATENÇÃO, ambíguo, só avisa (Vallen: 2 dias)
+#
+# O número é a janela em que uma ata plausivelmente é escrita depois da mesa.
+# Quando a data real da reunião ganhar casa, esta tolerância morre — e aí a
+# comparação passa a ser exata.
+ATA_LAG_DIAS_DEFAULT = 7
+
+
+def _ata_lag_dias() -> int:
+    """Tolerância de atraso de digitação da ata, em dias. Env pra apertar sem deploy."""
+    try:
+        return max(0, int(os.getenv("RACI_ATA_LAG_DIAS") or ATA_LAG_DIAS_DEFAULT))
+    except ValueError:
+        return ATA_LAG_DIAS_DEFAULT
+
+
+def bloqueio_por_defasagem(relogio: Optional[Dict], confirmado: bool = False) -> Optional[str]:
+    """O envio ao grupo do cliente deve ser barrado? → motivo, ou None pra liberar.
+
+    Separado do endpoint porque é AQUI que está a decisão, e decisão embutida em
+    rota não se testa: a contraprova que importa (`sem_comparacao` NÃO barra) só
+    existe como teste se a regra tiver nome próprio.
+
+    Barra um caso só — `defasado`, isto é, reunião registrada mais de
+    `ATA_LAG_DIAS` depois do relógio da matriz. `atencao` sai no preview e não
+    barra; `sem_comparacao` (projeto sem nota de reunião, que é a maioria) **não
+    barra de propósito**: barrá-los para sempre por uma conferência que nunca teve
+    o que conferir é o erro que a 1ª versão de `duplicatas_checadas` cometeu pelo
+    lado oposto em 06/10. Guarda que barra o caso são acaba desligada junto com a
+    que importa.
+    """
+    rel = relogio or {}
+    if confirmado or rel.get("nivel") != "defasado":
+        return None
+    titulo = (rel.get("reuniao_titulo") or "")[:80]
+    return (
+        f"BLOQUEADO: a matriz não é tocada desde {rel.get('relogio_label')} e há "
+        f"reunião registrada {rel.get('gap_dias')} dias depois disso"
+        + (f" ({titulo})" if titulo else "")
+        + ". O grupo do cliente receberia a matriz ANTERIOR à mesa — transcreva a "
+        "ata primeiro. Para mandar mesmo assim, reenvie com confirmar_defasagem=true."
+    )
+
+
+def _relogio(cursor, project_id: int) -> Dict:
+    """De quando é o dado desta matriz, e ele é mais velho que a última mesa?
+
+    Devolve sempre as três coisas que a decisão precisa, nunca só o veredito:
+    o relógio, a reunião com que ele foi comparado, e a distância entre os dois.
+    Veredito sem os números por trás é o que faz uma trava virar superstição.
+
+    `defasado=None` significa **não há com o que comparar** (projeto sem nota de
+    reunião) — e isso é a terceira resposta, não um `False`. Dizer `False` ali
+    seria certificar frescor que ninguém conferiu, o mesmo erro que a primeira
+    versão de `duplicatas_checadas` cometeu em 06/10 pelo lado oposto.
+    """
+    cursor.execute(
+        f"""SELECT GREATEST({', '.join('MAX(' + c + ')' for c in _RELOGIO_COLUNAS)})
+                   AS relogio,
+                   MAX(atualizado_em) AS so_atualizado_em,
+                   COUNT(*) AS itens
+              FROM raci_itens WHERE project_id = %s""",
+        (project_id,),
+    )
+    r = dict(cursor.fetchone() or {})
+    relogio = r.get("relogio")
+
+    # A reunião mais recente REGISTRADA. `criado_em` é quando a ata entrou, não
+    # quando a mesa ocorreu — ver o bloco de ATA_LAG_DIAS.
+    cursor.execute(
+        """SELECT titulo, criado_em FROM project_notes
+            WHERE project_id = %s AND tipo = 'reuniao'
+            ORDER BY criado_em DESC LIMIT 1""",
+        (project_id,),
+    )
+    nota = cursor.fetchone()
+    reuniao_em = nota["criado_em"] if nota else None
+
+    gap = None
+    if relogio and reuniao_em:
+        gap = (reuniao_em.date() - relogio.date()).days
+
+    lag = _ata_lag_dias()
+    if gap is None:
+        defasado, nivel = None, "sem_comparacao"
+    elif gap > lag:
+        defasado, nivel = True, "defasado"
+    elif gap > 0:
+        defasado, nivel = False, "atencao"
+    else:
+        defasado, nivel = False, "ok"
+
+    return {
+        "relogio": relogio.isoformat() if relogio else None,
+        "relogio_label": relogio.strftime("%d/%m/%Y %H:%M") if relogio else None,
+        "itens": int(r.get("itens") or 0),
+        # Exposto de propósito: é a prova de que a régua antiga media errado, e o
+        # que permite ver a diferença sem reabrir o banco.
+        "so_atualizado_em": (r["so_atualizado_em"].isoformat()
+                             if r.get("so_atualizado_em") else None),
+        "reuniao_registrada_em": reuniao_em.isoformat() if reuniao_em else None,
+        "reuniao_titulo": (nota["titulo"] if nota else None),
+        "gap_dias": gap,
+        "defasado": defasado,
+        "nivel": nivel,
+        "tolerancia_dias": lag,
+    }
+
 
 def _conselhoos_url() -> str:
     """URL do ConselhoOS lida em CALL-TIME + strip().
@@ -426,6 +565,10 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
         projeto = dict(projeto)
 
         itens = _fetch_intel(cursor, project_id)
+        # Calculado com o cursor ainda aberto e ANTES de qualquer filtro: o
+        # relógio é da MATRIZ, não do recorte que se está olhando. Um relógio que
+        # mudasse ao filtrar "só os atrasados" responderia outra pergunta.
+        relogio = _relogio(cursor, project_id)
 
     fontes = [{"fonte": FONTE_INTEL, "itens": len(itens), "erro": None}]
 
@@ -545,6 +688,10 @@ def get_matrix(project_id: int, status: Optional[str] = None) -> Dict:
         "duplicatas_checadas": duplicatas_checadas,
         "fontes": fontes,
         "filtro_status": status,
+        # `relogio` é de quando o DADO é; `gerado_em` é a hora do request. Os dois
+        # ficam, com nomes que não se confundem — era justamente a ausência do
+        # primeiro que fazia o segundo ser lido como frescor da matriz.
+        "relogio": relogio,
         "gerado_em": datetime.now().strftime("%d/%m/%Y %H:%M"),
     }
 
