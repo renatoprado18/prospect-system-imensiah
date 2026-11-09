@@ -38,14 +38,16 @@ trabalho sozinha** — ninguem precisa lembrar de desligar nada.
 echo "sys" > "$SCRATCHPAD_DIR/session_role"   # $SCRATCHPAD_DIR = o Scratchpad Directory do system prompt
 ```
 
-**(b) Cor de fundo = AMBAR ESCURO `#1E1708`** (distingue da CoS roxa e da Dev grafite
-— cor de "sistema em modo degradado", de proposito):
+**(b) Cor de fundo = VERMELHO ESCURO `#3D0A0A`** (distingue da CoS roxa e da Dev grafite
+— cor de "sistema em modo degradado", de proposito; vermelho pedido pelo Renato em
+09/11/26, no lugar do ambar que nao lia como alarme). O badge `Sys` da statusline
+(`~/.claude/statusline_papel.sh`) usa o mesmo vermelho:
 
 ```bash
 if [ "$TERM_PROGRAM" = "Apple_Terminal" ]; then
-  osascript -e 'tell application "Terminal" to set background color of front window to {7710, 5911, 2056}'
+  osascript -e 'tell application "Terminal" to set background color of front window to {15677, 2570, 2570}'
 else
-  printf '\033]11;#1E1708\007'
+  printf '\033]11;#3D0A0A\007'
 fi
 ```
 
@@ -68,13 +70,31 @@ desta skill:**
 | `canario_aceso` | `pendentes` | Leitura | O que fazer |
 |---|---|---|---|
 | `false` | 0 | 🟢 **Saude.** A conta voltou, nada a diferir | **Encerrar o papel.** Avisar que o saldo voltou e sugerir `/dev` ou `/cos` |
-| `true` | 0 | 🔴 **O produtor nao esta enfileirando** | Nao e "nada a fazer". O cron do reconciler rodou hoje? (`/scheduler-status`, `cron_runs`). Investigar, nao reportar verde |
+| `true` | 0 | ⏳ **Normal na maior parte do dia** — ver o quadro abaixo | Conferir se o cron de hoje JA passou. Se passou e a fila esta vazia, o trabalho dele ja foi drenado |
 | `true` | >0 | ▶️ **Trabalho esperando** | Drenar (etapa 2) |
 | `false` | >0 | ⏭️ Sobra de episodio anterior | Drenar o que der; o resto expira em 12h sozinho |
 
-**Nunca reporte "nada a fazer" sem ter olhado o `canario_aceso`.** As aberturas de
-04/10 e 05/10 passaram verdes com 30h de LLM parado porque nenhum verificador olhava
-LLM — repetir isso aqui, no papel que existe exatamente pra isso, seria pior.
+🔴 **O PRODUTOR RODA 1×/DIA, e isto muda como se le a fila vazia.** O
+`task-reconciler` e disparado por `CronTrigger(hour=15, minute=0)` UTC = **12h BRT**
+(`workers/audio-transcriber/main.py:480`). Entao **fila vazia com canario aceso é o
+estado normal nas outras ~23 horas** — nao e produtor parado.
+
+A primeira versao desta tabela dizia "🔴 produtor nao esta enfileirando, investigar",
+e estava errada: mandaria toda sessao `/sys` cacar um defeito inexistente, que e
+exatamente como um alarme ensina a ser ignorado. **Fila vazia so e suspeita se o cron
+de hoje JA passou e a fila nunca teve nada** — aí sim vale olhar `cron_runs` /
+`/scheduler-status`.
+
+**O que segue valendo:** nunca reporte "nada a fazer" sem ter olhado o
+`canario_aceso`. As aberturas de 04/10 e 05/10 passaram verdes com 30h de LLM parado
+porque nenhum verificador olhava LLM.
+
+⚠️ **E A 089 COBRE 1 DAS 5 FUNCOES.** `llm_defer.enqueue` tem **um** sitio de
+chamada: `task_reconciler.py:673`. Triagem, visao, briefing e tonIAH **nao
+enfileiram** — seguem falhando cada uma por si, sem rastro, enquanto o canario
+estiver aceso. Foi escopo declarado do primeiro corte (FEATURES 20.7), nao descuido;
+mas **nao anuncie "o sistema esta drenado" com base numa fila vazia**: o que esta
+coberto e o reconciler.
 
 ### 2. Drenar: pegar, responder, devolver
 
@@ -125,12 +145,17 @@ drena uma vez e depois fica ali *parecendo de pe e sem fazer nada*, que e pior q
 nada: le-se como coberto. O que faz o papel funcionar e o par com `/loop`:
 
 ```
-/loop 15m /sys
+intel sys loop        # /loop 4h /sys
 ```
 
-Ao fim de cada passada, se a fila esvaziou e o canario segue aceso, **o loop continua**
-(o reconciler enfileira de novo no cron seguinte). Quando o `canario_aceso` virar
-`false`, **encerrar o loop** e dizer que a conta voltou.
+⚠️ **A CADENCIA UTIL E A DO PRODUTOR, NAO A DO LOOP.** Com o cron rodando 1×/dia
+(15h UTC), um `/loop 15m /sys` gira **~80 vezes vazio** entre uma run e outra —
+achado da sessao `/sys` de 09/11, e foi por isso que o default virou **4h**. Uma
+passada do `/sys` ja drena a fila INTEIRA (etapa 3 repete ate `pendentes: 0`), entao
+o loop nao serve pra acelerar o dreno: serve so pra pegar a run do dia seguinte.
+
+Quando o `canario_aceso` virar `false`, **encerrar o loop** e dizer que a conta
+voltou.
 
 ## Limites do papel — o que a /sys NAO faz
 
