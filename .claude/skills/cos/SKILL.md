@@ -316,10 +316,61 @@ WITH att AS (   -- anexos-documento (imagem = ~90% ruido, fora); join por extern
          max(kind) kind, max(original_filename) fname
   FROM wa_attachments WHERE criado_em > NOW() - INTERVAL '5 days' GROUP BY message_id
 ),
+-- 🆕 10/11: TEXTO EFETIVO + "SEM PEDIDO", classificados UMA vez e usados por
+-- todo mundo abaixo. Duas coisas que a query lia errado:
+--
+-- (a) ela lia `m.conteudo`, que para midia guarda o literal `[Audio]`/`[Imagem]`.
+--     O pipeline transcreve audio e faz OCR em `wa_attachments.extracted_text`
+--     desde ago/25 e NENHUM leitor de conversa usava. Medido 10/11: dos 6 audios
+--     incoming de 4 dias, 6 tinham transcricao — o do Kesley dizia "voce ja fez
+--     uma analise detalhada...", que E pedido, e a CoS lia `[Audio]` e nao tinha
+--     como julgar. Mesma expressao de `services/wa_texto.texto_efetivo_sql`, que
+--     o task_reconciler ja usa. [[feedback_ler_extracted_text_anexos_wa]]
+--
+-- (b) MENSAGEM SEM PEDIDO ZERAVA O RELOGIO (09/11, com o Orestes). Um reel do
+--     Instagram sem uma palavra de texto virava a `ultima` dele e ressuscitava
+--     conversa que ele havia FECHADO no dia anterior: o portao `lastdir=incoming`
+--     olha so a direcao da msg mais nova, e o supressor `ato_depois` ancora em
+--     `quando > a.ultima` — com a `ultima` sendo o reel, as respostas do Renato
+--     (anteriores) caem fora da janela e a coluna volta vazia, que se le como
+--     "ele nao fez nada". O `ack` nao pega: exige `length<=22` + regex de
+--     "ok/feito". **URL e a terceira categoria, que a query nao tinha.**
+--     Nao e caso isolado, e um PERFIL de remetente: na mesma janela o Jose
+--     Olimpio apareceu com um reel unico e a Heloisa com tres reels e um
+--     devocional. [[feedback_mensagem_sem_pedido_zera_o_relogio]]
+--
+-- ⚠️ `sem_pedido` e computado sobre o texto EFETIVO, e a ordem importa: o
+-- placeholder `[Audio]` SOBREVIVER ao COALESCE e que prova nao haver transcricao.
+-- Classificar midia pelo literal, antes de olhar o texto extraido, suprimiria
+-- justamente o pedido que chegou por audio — o inverso do defeito.
+cls AS (
+  SELECT m.id, m.contact_id, m.direcao, m.criado_em, m.external_id,
+         m.conteudo AS cru, COALESCE(NULLIF((SELECT wa_x.extracted_text FROM wa_attachments wa_x WHERE wa_x.message_id = m.external_id AND wa_x.extracted_text IS NOT NULL AND wa_x.extracted_text <> '' ORDER BY wa_x.id LIMIT 1), ''), m.conteudo) AS txt
+    FROM messages m
+   WHERE m.contact_id IS NOT NULL AND m.criado_em > NOW() - INTERVAL '14 days'
+),
+clsf AS (
+  SELECT c.*, (
+      btrim(COALESCE(c.txt,'')) = ''                                      -- midia sem nada
+      OR btrim(c.txt) ~* '^(https?://[^[:space:]]+[[:space:]]*)+$'        -- so link (reel, youtube)
+      OR btrim(c.txt) ~ '^\[(Áudio|Imagem|Vídeo|Video|Sticker|Figurinha|GIF)\]$'  -- placeholder SEM texto extraido
+  ) AS sem_pedido FROM cls c
+),
 lastdir AS (    -- de quem esta a bola: ultima msg de cada contato
-  SELECT DISTINCT ON (contact_id) contact_id, direcao FROM messages
-  WHERE contact_id IS NOT NULL AND criado_em > NOW() - INTERVAL '14 days'
-  ORDER BY contact_id, criado_em DESC
+  -- 🆕 `sem_pedido` incoming NAO conta como "bola com o Renato": um reel nao
+  -- passa a bola. Ele continua no `fio` (pode ser pedido implicito — "olha
+  -- isto, serve pra nos?"), so nao reabre o fio sozinho.
+  --
+  -- ⚠️ O ORDENADOR, e nao um WHERE, porque "rebaixar" NAO e "sumir". Com
+  -- `WHERE NOT (incoming AND sem_pedido)` o contato que SO mandou reel na
+  -- janela nao teria nenhuma linha aqui, sairia do `lastdir`, e o JOIN do
+  -- `cand` o eliminaria da lista INTEIRA — calado. E exatamente o perfil que
+  -- motivou o conserto (o Jose Olimpio apareceu com um reel unico, a Heloisa
+  -- com tres): eles desapareceriam em vez de serem rebaixados. Assim, a bola e
+  -- decidida pela msg mais nova COM pedido; se nao existe nenhuma, cai na mais
+  -- nova que houver e o contato fica, marcado `so_sem_pedido`.
+  SELECT DISTINCT ON (contact_id) contact_id, direcao FROM clsf
+  ORDER BY contact_id, (direcao = 'incoming' AND sem_pedido) ASC, criado_em DESC
 ),
 dispensadas AS ( -- ⛔ O QUE ELE JA MANDOU IGNORAR NAO VOLTA (fix 07/08)
   -- A migration 066 criou `dispensado_em` e o cockpit passou a le-lo, mas ESTA
@@ -345,20 +396,20 @@ qual AS (
   --
   -- `ack` marca encerramento obvio ("ok", "feito", "obrigado", so emoji) pra
   -- voce REBAIXAR, nao pra sumir: a lista mostra tudo, ordenada.
-  SELECT m.id, m.contact_id, m.criado_em, m.conteudo,
-         COALESCE(a.has_doc,false) has_doc, a.fname,
-         (length(btrim(m.conteudo)) <= 22
-          AND btrim(lower(m.conteudo)) ~ '^(ok|okay|blz|beleza|feito|certo|certinho|combinado|indo|vou|sim|nao|não|valeu|obrigad[oa]|grato|perfeito|show|joia|jóia|👍|🙏|😉|🤝|❤️|\W)+$') AS ack
-  FROM messages m LEFT JOIN att a ON a.message_id = m.external_id
-  WHERE m.direcao='incoming' AND m.contact_id IS NOT NULL
-    AND m.criado_em > NOW() - INTERVAL '4 days'
-    AND m.id NOT IN (SELECT message_id FROM dispensadas)   -- ⛔ ele ja disse "ignora"
+  SELECT c.id, c.contact_id, c.criado_em, c.txt AS conteudo, c.cru,
+         COALESCE(a.has_doc,false) has_doc, a.fname, c.sem_pedido,
+         (length(btrim(c.txt)) <= 22
+          AND btrim(lower(c.txt)) ~ '^(ok|okay|blz|beleza|feito|certo|certinho|combinado|indo|vou|sim|nao|não|valeu|obrigad[oa]|grato|perfeito|show|joia|jóia|👍|🙏|😉|🤝|❤️|\W)+$') AS ack
+  FROM clsf c LEFT JOIN att a ON a.message_id = c.external_id
+  WHERE c.direcao='incoming'
+    AND c.criado_em > NOW() - INTERVAL '4 days'
+    AND c.id NOT IN (SELECT message_id FROM dispensadas)   -- ⛔ ele ja disse "ignora"
     -- Remetente que ele ja classificou como cold-seller ou notificacao
     -- automatica: e a NATUREZA de quem manda, nao o assunto — por isso pode ser
     -- gate sem cair no gato-e-rato de vocabulario que foi removido em 05/08.
     -- Quando ele diz "ignora, e cold", a CoS marca a tag NA HORA, sem clique
     -- dele ([[feedback_ferramenta_nao_vira_tarefa_do_renato]]).
-    AND NOT EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.id = m.contact_id
+    AND NOT EXISTS (SELECT 1 FROM contacts ct2 WHERE ct2.id = c.contact_id
                       AND (ct2.tags::text ILIKE '%cold-seller%'
                         OR ct2.tags::text ILIKE '%notifica%autom%'))
 ),
@@ -370,7 +421,13 @@ cand AS (
       -- Sem `text_hit`: o que decide agora e ser inbound com a bola nele.
       -- Fica so o corte de RUIDO COMERCIAL, que e sobre a NATUREZA do
       -- remetente e nao sobre o assunto do Renato — promo nunca vira acao.
-      OR (length(q.conteudo) <= 600
+      -- ⚠️ O TETO MEDE O TEXTO CRU, nao o efetivo (10/11). O corte de 600 foi
+      -- calibrado quando midia valia 7 caracteres (`[Audio]`); medindo a
+      -- TRANSCRICAO, um audio de 2 minutos estoura o teto e a mensagem sai da
+      -- lista CALADA — o filtro passaria a cortar justamente o pedido longo que
+      -- o texto efetivo acabou de tornar legivel. O regex de ruido comercial
+      -- continua no efetivo, que e onde a promo aparece.
+      OR (length(COALESCE(q.cru, q.conteudo)) <= 600
           AND q.conteudo !~* 'desconto|promo[çc]|black friday|imperd|clique aqui|link na bio|inscri[çc]|newsletter|cancelar|no-?reply|unsubscribe')
   )
   AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.contact_id=q.contact_id AND t.data_criacao > q.criado_em)          -- GATE: ja virou task (criada depois)
@@ -381,6 +438,12 @@ agg AS (
 SELECT c.contact_id, ct.nome, max(c.criado_em) ultima, bool_or(c.has_doc) tem_doc,
        max(c.fname) FILTER (WHERE c.has_doc) anexo,
        bool_and(c.ack) so_ack,   -- true = tudo que ele mandou foi "ok/feito/obrigado": REBAIXE (nao suma)
+       -- 🆕 10/11: a ANCORA do `ato_depois` e a ultima msg COM PEDIDO, nao a
+       -- ultima msg. Era isto que fazia o reel do Orestes esconder as respostas
+       -- que ele dera no dia anterior. Fallback para `ultima` quando o contato
+       -- SO mandou coisa sem pedido — ai nao ha ancora melhor.
+       max(c.criado_em) FILTER (WHERE NOT c.sem_pedido) AS ultima_pedido,
+       bool_and(c.sem_pedido) so_sem_pedido,   -- so link/midia: REBAIXE (nao suma)
        -- ⚠️ 06/08: uma amostra so NAO basta — LEIA `fio`, nao `amostra`.
        -- `msgs` e o DENOMINADOR: quantas incoming distintas o contato mandou
        -- na janela. Medido no dia: 62 mensagens em 20 contatos — a amostra
@@ -409,7 +472,11 @@ FROM agg a
 LEFT JOIN LATERAL (
     SELECT array_agg(x.linha ORDER BY x.quando DESC) AS conversa FROM (
         SELECT (CASE WHEN m2.direcao='incoming' THEN '← ' ELSE '→ ' END)
-               || to_char(m2.criado_em,'DD/MM HH24:MI') || ' ' || left(m2.conteudo,110) AS linha,
+               || to_char(m2.criado_em,'DD/MM HH24:MI') || ' '
+               || left(COALESCE(NULLIF((SELECT wa_y.extracted_text FROM wa_attachments wa_y
+                     WHERE wa_y.message_id = m2.external_id
+                       AND wa_y.extracted_text IS NOT NULL AND wa_y.extracted_text <> ''
+                     ORDER BY wa_y.id LIMIT 1), ''), m2.conteudo), 110) AS linha,
                m2.criado_em AS quando
           FROM messages m2
          WHERE m2.contact_id = a.contact_id
@@ -419,10 +486,11 @@ LEFT JOIN LATERAL (
 ) f2 ON true
 LEFT JOIN LATERAL (
     SELECT o_que, canal, quando FROM acao_do_renato
-     WHERE pessoa_id = a.contact_id AND quando > a.ultima
+     WHERE pessoa_id = a.contact_id
+       AND quando > COALESCE(a.ultima_pedido, a.ultima)   -- 🆕 ancora no PEDIDO
      ORDER BY quando DESC LIMIT 1
 ) ato ON true
-ORDER BY a.so_ack ASC,    -- o que PEDE algo primeiro; encerramento no fim
+ORDER BY a.so_ack ASC, a.so_sem_pedido ASC,   -- o que PEDE algo primeiro; ack e link no fim
          a.tem_doc DESC, a.ultima DESC;
 ```
 **`ato_depois` PREENCHIDO = ele ja agiu depois da ultima mensagem do contato.**
@@ -442,6 +510,17 @@ julgamento e teu, nao do SQL. Para cada linha, decida com o CONTEXTO (quem e a
 pessoa, que frente, o que estava pendente), nao pelo texto isolado:
 - `ack=true` (ok/feito/obrigado/so emoji) → encerramento; **rebaixe**, nao suma.
   Mas leia junto: "Ok" depois de uma pergunta aberta ainda pode exigir resposta.
+- 🆕 `so_sem_pedido=true` (10/11) → o contato **so** mandou link, midia sem
+  legenda ou vazio na janela. **Rebaixe, nao suma**: reel do pai pode ser pedido
+  implicito ("olha isto, serve pra nos?"). O que mudou e que isso **nao reabre o
+  fio sozinho** nem apaga o que o Renato ja fez — a bola e decidida pela ultima
+  msg COM pedido, e o `ato_depois` ancora nela. Era o defeito do Orestes em
+  09/11: um reel de 08h49 escondeu as duas respostas que ele dera no dia
+  anterior, e eu ofereci como pendente ([[feedback_mensagem_sem_pedido_zera_o_relogio]]).
+- 🔊 **Midia agora vem TRANSCRITA no `fio` e na `conversa`.** Onde se lia
+  `[Audio]` aparece o que foi dito. Se ainda aparecer `[Audio]`/`[Imagem]`
+  literal, significa que **nao houve transcricao/OCR** — e ai `sem_pedido` fica
+  true. Nao julgue mídia opaca como "nada a fazer": abra a conversa.
 - Pedido de contato sem palavra-chave ("Avise quando puder falar do projeto X",
   "Tudo bem? Sumido") → **e acao**. Foi exatamente isso que o regex antigo
   cortava.

@@ -175,6 +175,16 @@ voltou.
 
 ## Erro comum
 
-Reportar "fila vazia, tudo em ordem" sem olhar o `canario_aceso`. Fila vazia com o
-canario aceso significa que o **produtor** parou — e esse e um problema maior que o
-que esta skill existe pra drenar.
+**Reportar "fila vazia, tudo em ordem".** Duas coisas separam essa frase da verdade,
+e nenhuma aparece na fila:
+
+1. **Olhe o `canario_aceso`.** Fila vazia com canario apagado e saude; com ele aceso
+   e o estado normal das ~23h fora da janela do cron — mas nunca e "tudo em ordem",
+   porque as funcoes LLM seguem caidas. Ver a tabela da etapa 1, que e a regra.
+2. **A 089 cobre 1 das 5 funcoes.** Fila vazia diz que o *reconciler* esta drenado,
+   nao que o sistema esta: triagem, visao, briefing e tonIAH **nao enfileiram**.
+
+⚠️ _Este rodape dizia, ate 10/11, que fila vazia + canario aceso significa "o produtor
+parou". Estava errado e contradizia a tabela da etapa 1 no mesmo arquivo — o produtor
+roda 1×/dia. Quem lesse o rodape primeiro iria cacar um defeito inexistente, que e o
+que o `9d9e703` corrigiu acima e esqueceu aqui._
