@@ -414,9 +414,16 @@ async def refresh_groups_basic(full: bool = False) -> Dict:
       findChats se falhar/vier vazio.
 
     UPSERT so do registro basico. ON CONFLICT atualiza APENAS o nome (preserva
-    participantes/health/labels/sync_enabled ja cacheados). Como as fontes so devolvem grupos
-    com nome real, o nome nunca vira vazio; de quebra conserta o placeholder
-    `group_name = group_jid` que o `toggle_group_sync` deixa (esse escondia o grupo da lista).
+    participantes/health/labels/sync_enabled ja cacheados). As fontes podem devolver grupo
+    com `name=None` (sem nome e nao resolvido); esse NAO e gravado — inserir o jid como
+    nome recria o placeholder `group_name = group_jid` do `toggle_group_sync`, que esconde o
+    grupo da lista. Mas ele sai CONTADO em `sem_nome`, com os jids, que e a diferenca que
+    importa: antes ele desaparecia e `refreshed` dizia que estava tudo certo.
+
+    ⚠️ `refreshed` NAO E COBERTURA (10/11). Medido contra a Evolution: `findChats` devolve
+    136 grupos, 60 com `pushName: null`, e a resposta dizia `refreshed: 75`. Agora a resposta
+    traz `vistos` (o denominador), `resolvidos_por_info` e `sem_nome` — sem os tres, "75"
+    se le como sucesso e e o numero errado ([[feedback_mecanismo_que_nao_mede_o_denominador]]).
     """
     if full:
         groups = await _fetch_all_groups_evolution()  # pesado (~2min), inclui mudos
@@ -428,7 +435,11 @@ async def refresh_groups_basic(full: bool = False) -> Dict:
         groups = await _fetch_groups_from_api()  # findChats: rapido, ja filtra @g.us + pushName
         source = "findChats"
     if not groups:
-        return {"refreshed": 0, "note": "nenhum grupo com nome retornado pela API", "source": source}
+        return {"refreshed": 0, "vistos": 0,
+                "note": "nenhum grupo retornado pela API", "source": source}
+
+    sem_nome = [g['jid'] for g in groups if not g.get('name')]
+    resolvidos = sum(1 for g in groups if g.get('resolvido_por_info'))
 
     def _persist():
         upserted = 0
@@ -449,7 +460,27 @@ async def refresh_groups_basic(full: bool = False) -> Dict:
 
     import asyncio as aio
     upserted = await aio.to_thread(_persist)
-    return {"refreshed": upserted, "total_from_api": len(groups), "source": source}
+    out = {
+        "refreshed": upserted,
+        # O DENOMINADOR. `refreshed` sozinho nao diz cobertura: eram 75 de 136.
+        "vistos": len(groups),
+        "resolvidos_por_info": resolvidos,
+        "sem_nome": len(sem_nome),
+        "source": source,
+        "total_from_api": len(groups),
+    }
+    if sem_nome:
+        # Os jids VAO na resposta. Contagem sem a lista nao permite descobrir se
+        # e grupo novo (acionavel) ou JID morto de grupo que o numero deixou —
+        # em 10/11 os 6 eram todos 404 no findGroupInfos, mas isso se descobre
+        # olhando, nao supondo.
+        out["sem_nome_jids"] = sem_nome[:50]
+        out["nota_sem_nome"] = (
+            f"{len(sem_nome)} de {len(groups)} grupos nao tem nome e nao foram "
+            "resolvidos pelo findGroupInfos — NAO entraram no cache. 404 aqui "
+            "costuma ser grupo que o numero deixou ou JID de comunidade."
+        )
+    return out
 
 
 # --- Refresh completo em BACKGROUND (Railway always-on) ------------------------
@@ -548,8 +579,66 @@ def suggest_groups_for_project(project_name: str, exclude_jids=None, limit: int 
     return out[:limit]
 
 
+# ===== GRUPO SEM NOME NAO SE DESCARTA EM SILENCIO (10/11/26) =====
+#
+# O DEFEITO. Os dois caminhos de inventario filtravam por nome
+# (`and c.get('pushName')` no findChats, `and name` no fetchAllGroups) e o que nao
+# tinha nome SUMIA — sem log, sem contagem, sem erro. MEDIDO em 10/11 contra a
+# Evolution ao vivo: o `findChats` devolve **136 grupos, 60 deles com
+# `pushName: null` (44%)**, e o refresh respondia `refreshed: 75`, que se le como
+# "deu tudo certo". Foi assim que a "Fazenda Jaboticabeiras" nao existia no cache
+# no dia do dossie.
+#
+# ⚠️ O QUE A MEDICAO MOSTROU, e que muda o tamanho do conserto: dos 60 sem nome,
+# **54 ja estavam no cache com nome real** (de quando tinham `pushName`, ou via
+# fetchAllGroups) e os outros **6 dao 404 no `findGroupInfos`** — nao sao
+# resolviveis (numero saiu do grupo, JID de comunidade). Ou seja: hoje isto
+# recupera ZERO grupo. O que conserta e o MECANISMO (grupo novo sem nome passa a
+# aparecer) e, principalmente, a MEDICAO — `refreshed: 75` era o numero errado e
+# nao havia como notar.
+#
+# Por isso a regra aqui e: resolver o que da, e o que NAO da sai CONTADO na
+# resposta, nunca engolido ([[feedback_guarda_abstencao_vira_fabrica]]).
+_INFO_CONC = 8          # findGroupInfos em paralelo
+_INFO_CAP = 200         # teto declarado: acima disto, o excedente vai na resposta
+
+
+async def _resolver_nomes(jids: List[str]) -> Dict[str, Optional[str]]:
+    """`{jid: subject}` via findGroupInfos, em paralelo. Valor None = nao resolveu.
+
+    Nunca levanta: grupo que falha entra como None e quem chama o CONTA. O
+    semaforo existe porque sao ~60 chamadas de ~1s — sequenciais poriam um minuto
+    no relogio de um refresh que promete 2-4s.
+    """
+    import asyncio as aio
+    if not jids:
+        return {}
+    sem = aio.Semaphore(_INFO_CONC)
+
+    async def _um(jid: str):
+        async with sem:
+            try:
+                info = await get_group_info(jid)
+            except Exception as e:
+                logger.warning("findGroupInfos falhou em %s: %s", jid, e)
+                return jid, None
+            subject = (info or {}).get('subject') if isinstance(info, dict) else None
+            return jid, (subject or None)
+
+    pares = await aio.gather(*[_um(j) for j in jids[:_INFO_CAP]])
+    out = dict(pares)
+    for j in jids[_INFO_CAP:]:      # teto NUNCA silencioso
+        out[j] = None
+    return out
+
+
 async def _fetch_groups_from_api() -> List[Dict]:
-    """Busca grupos da Evolution API via findChats (rapido, ~2s)."""
+    """Busca grupos da Evolution API via findChats (rapido, ~2s).
+
+    Devolve TODOS os `@g.us` vistos. `name=None` significa "sem nome e nao
+    resolvido" — quem chama precisa distinguir isso de "nao existe", que era
+    justamente o que o filtro antigo apagava.
+    """
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
     instance = os.getenv('EVOLUTION_INSTANCE', 'default')
@@ -565,13 +654,69 @@ async def _fetch_groups_from_api() -> List[Dict]:
                 json={}
             )
             chats = resp.json()
-            groups = [{'jid': c.get('remoteJid', ''), 'name': c.get('pushName', ''),
-                       'total': 0, 'labels': [], 'sync_enabled': False}
-                      for c in chats if '@g.us' in c.get('remoteJid', '') and c.get('pushName')]
-            return sorted(groups, key=lambda g: g['name'])
     except Exception as e:
         logger.error(f"Erro ao listar grupos: {e}")
         return []
+
+    import asyncio as aio
+    vistos = [c for c in chats
+              if isinstance(c, dict) and '@g.us' in (c.get('remoteJid') or '')]
+
+    # ORDEM DE RESOLUCAO: pushName -> cache -> findGroupInfos. O cache no meio e o
+    # que mantem a promessa de 2-4s do refresh rapido.
+    #
+    # A primeira versao disto chamava findGroupInfos para TODOS os 60 sem
+    # pushName e levava **13,4s** — 3 a 6 vezes o prometido. Medido: dos 60, 26
+    # resolvem e **34 dao 404** (grupo que o numero deixou, JID de comunidade), e
+    # esses 34 seriam marteladas desperdicadas a CADA refresh, para sempre. Com o
+    # cache no meio, a chamada ao vivo sobra so para o que ninguem conhece ainda —
+    # que e exatamente o grupo novo, o caso que esta frente existe pra consertar.
+    #
+    # ⚠️ TRADE-OFF DECLARADO: grupo RENOMEADO cujo `pushName` vem null mantem o
+    # nome velho do cache, porque a chamada ao vivo nao acontece para ele. O nome
+    # novo entra pelo `full=True` (fetchAllGroups, que devolve `subject`) ou pelo
+    # cron de enriquecimento. Trocar isso por 13s em todo refresh nao vale.
+    com_nome_no_cache = await aio.to_thread(_jids_nomeados_no_cache)
+    faltam = [c['remoteJid'] for c in vistos
+              if not c.get('pushName') and c['remoteJid'] not in com_nome_no_cache]
+    resolvidos = await _resolver_nomes(faltam)
+    if faltam:
+        logger.info("findChats: %d de %d grupos sem pushName e fora do cache; "
+                    "findGroupInfos resolveu %d", len(faltam), len(vistos),
+                    sum(1 for v in resolvidos.values() if v))
+
+    groups = []
+    for c in vistos:
+        jid = c['remoteJid']
+        nome = c.get('pushName') or resolvidos.get(jid) or com_nome_no_cache.get(jid)
+        groups.append({'jid': jid, 'name': nome or None,
+                       'resolvido_por_info': bool(not c.get('pushName')
+                                                  and resolvidos.get(jid)),
+                       'total': 0, 'labels': [], 'sync_enabled': False})
+    return sorted(groups, key=lambda g: (g['name'] is None, g['name'] or g['jid']))
+
+
+def _jids_nomeados_no_cache() -> Dict[str, str]:
+    """`{jid: nome}` dos grupos que o cache JA conhece por um nome de verdade.
+
+    Exclui `group_name = group_jid`, o placeholder que o `toggle_group_sync`
+    deixa: tratar o jid como nome aqui faria o grupo parecer resolvido e ele
+    continuaria escondido da lista, que e o defeito que o placeholder causa.
+    """
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""SELECT group_jid, group_name FROM social_groups_cache
+                            WHERE group_name IS NOT NULL AND btrim(group_name) <> ''
+                              AND group_name <> group_jid""")
+            return {r['group_jid']: r['group_name'] for r in cur.fetchall()}
+    except Exception as e:
+        # Sem cache a resolucao fica mais lenta, nao errada: todos os sem-nome
+        # caem no findGroupInfos. Degradar para o caminho correto-e-lento e o
+        # certo; degradar para "descarta" era o defeito.
+        logger.warning("cache de nomes de grupo indisponivel (%s) — "
+                       "findGroupInfos vai ser chamado para todos os sem-nome", e)
+        return {}
 
 
 async def _fetch_all_groups_evolution() -> List[Dict]:
@@ -606,15 +751,20 @@ async def _fetch_all_groups_evolution() -> List[Dict]:
                 data = data.get('groups') or data.get('data') or []
             if not isinstance(data, list):
                 return []
+            # MESMO defeito do findChats, por outra porta: `and name` descartava
+            # calado. Aqui nem findGroupInfos faz sentido — o fetchAllGroups JA e
+            # a fonte do `subject`; se ele veio vazio, o nome nao existe. Entao o
+            # grupo entra com `name=None` e e CONTADO pelo chamador.
             groups = []
             for g in data:
                 if not isinstance(g, dict):
                     continue
                 jid = g.get('id', '')
-                name = g.get('subject', '')
-                if '@g.us' in jid and name:
-                    groups.append({'jid': jid, 'name': name})
-            return sorted(groups, key=lambda x: x['name'])
+                name = (g.get('subject') or '').strip()
+                if '@g.us' in jid:
+                    groups.append({'jid': jid, 'name': name or None})
+            return sorted(groups, key=lambda x: (x['name'] is None,
+                                                 x['name'] or x['jid']))
     except Exception as e:
         logger.warning(f"Erro ao buscar grupos via fetchAllGroups: {e}")
         return []
