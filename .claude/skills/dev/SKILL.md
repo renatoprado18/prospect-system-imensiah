@@ -30,6 +30,20 @@ else
 fi
 ```
 
+
+**(c) Registrar a FRENTE no quadro vivo** — é o que separa DUAS sessões do MESMO papel, que o
+marcador de papel não separa (09/11/26: "Flamarpar" e "Vallen-RACI", as duas CoS, escreveram no
+mesmo `project_cos_status.md` sem ver uma a outra; foi de 12,2 a 15,5 KB).
+
+```bash
+python3 /Users/rap/prospect-system/scripts/frentes.py claim dev      # frente = nome da sessão
+```
+
+Quando a frente for escolhida na Etapa 4, reivindicar de novo com o nome dela (é upsert):
+`frentes.py claim dev "<frente>"`. **Se o script avisar que há outra sessão no mesmo papel,
+repassar o aviso ao Renato** — as duas dividem o mesmo board, e aí vale a regra de escrever só as
+linhas da própria frente e conferir o `stat` antes de gravar ([[feedback_parallel_sessions]]).
+
 ### 1. Ler os boards — roadmap dev INTEIRO + topo do executivo + locks
 
 ```
