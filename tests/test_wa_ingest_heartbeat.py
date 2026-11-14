@@ -32,7 +32,7 @@ def relogio(monkeypatch):
     return agora
 
 
-def _arma(monkeypatch, ultimo_banco, epoch_evolution, estado="open"):
+def _arma(monkeypatch, ultimo_banco, epoch_evolution, estado="open", atraso=0.02):
     """Arma o cenario. `estado` default "open" NAO e cosmetico.
 
     Desde 15/10/26 `checar_ingestao` consulta `connectionState`. Sem este mock,
@@ -40,10 +40,16 @@ def _arma(monkeypatch, ultimo_banco, epoch_evolution, estado="open"):
     do estado da instancia do Renato na hora de rodar a suite. Com a instancia
     caida (como em 15/10) a suite ficaria vermelha sem nenhuma regressao:
     a classe de [[feedback_teste_com_ambiente_declarado_nao_aplicado]].
+
+    `atraso` default 0,02 min e o p50 REAL do periodo saudavel (60 dias, medido
+    em 14/11/26): entrega normal e instantanea. Sem este mock os testes bateriam
+    no banco de verdade, e o default tem de ser o estado sadio para que o novo
+    detector nao mude o veredito de nenhum cenario antigo.
     """
     monkeypatch.setattr(hb, "_ultimo_evento_no_banco", lambda: ultimo_banco)
     monkeypatch.setattr(hb, "_ultima_mensagem_na_evolution", lambda: epoch_evolution)
     monkeypatch.setattr(hb, "_estado_da_conexao", lambda: estado)
+    monkeypatch.setattr(hb, "_atraso_de_entrega_min", lambda: atraso)
 
 
 # ------------------------------------------------------- o incidente de 03/08 --
@@ -96,13 +102,21 @@ def test_mensagem_em_transito_nao_alerta(relogio, monkeypatch):
 
 
 def test_fluxo_normal_nem_pergunta_pra_evolution(relogio, monkeypatch):
-    """Custo: no caminho feliz nao ha chamada externa nenhuma."""
+    """Custo: no caminho feliz nao ha chamada externa nenhuma.
+
+    As DUAS chamadas externas precisam explodir aqui: `connectionState` entrou em
+    15/10 e, sem o mock do atraso (que le o banco), este teste tambem bateria em
+    Postgres de verdade -- teste que depende de ambiente passa a medir o ambiente
+    ([[feedback_teste_com_ambiente_declarado_nao_aplicado]]).
+    """
     monkeypatch.setattr(hb, "_ultimo_evento_no_banco", lambda: relogio - timedelta(minutes=3))
+    monkeypatch.setattr(hb, "_atraso_de_entrega_min", lambda: 0.02)
 
     def _explode():
         raise AssertionError("chamou a Evolution com o banco em dia")
 
     monkeypatch.setattr(hb, "_ultima_mensagem_na_evolution", _explode)
+    monkeypatch.setattr(hb, "_estado_da_conexao", _explode)
 
     assert hb.checar_ingestao()["status"] == "ok"
 
@@ -263,19 +277,30 @@ def test_ultimo_evento_filtra_por_instancia(monkeypatch):
     assert capturado["params"] == (hb.INSTANCIA,)
 
 
+def _bloco_do_endpoint() -> str:
+    """Corpo do endpoint do heartbeat em main.py, do decorador ao proximo.
+
+    Antes isto era `fonte[i:i + 4500]`, e a janela fixa quebrou no dia em que um
+    ramo novo empurrou o `atraso_min` para o caractere 4501: o teste reprovou
+    codigo certo e disse "perdeu o atraso_min do texto", que era falso. Fatia
+    ancorada no proximo `@app.` nao tem esse modo de falha.
+    """
+    caminho = os.path.join(_ROOT, "app", "main.py")
+    with open(caminho, encoding="utf-8") as fh:
+        fonte = fh.read()
+    i = fonte.find('@app.post("/api/cron/wa-ingest-heartbeat")')
+    assert i > 0
+    fim = fonte.find("\n@app.", i + 10)
+    return fonte[i:fim if fim > 0 else len(fonte)]
+
+
 def test_ramo_desconectado_existe_antes_de_ler_atraso_min():
     """Guarda do formatador em main.py (ver o teste do payload acima).
 
     Verifica a ORDEM: o ramo `desconectado` tem de aparecer antes do texto que
     le `atraso_min`, senao o veredito novo estoura KeyError no notify.
     """
-    caminho = os.path.join(_ROOT, "app", "main.py")
-    with open(caminho, encoding="utf-8") as fh:
-        fonte = fh.read()
-
-    i = fonte.find('@app.post("/api/cron/wa-ingest-heartbeat")')
-    assert i > 0
-    bloco = fonte[i:i + 4500]
+    bloco = _bloco_do_endpoint()
 
     pos_ramo = bloco.find("if desconectado:")
     # Procura o USO, nao a mencao: a 1a versao deste teste casou com a palavra
@@ -287,6 +312,49 @@ def test_ramo_desconectado_existe_antes_de_ler_atraso_min():
     assert "not desconectado" in bloco, (
         "catchup com a instancia caida varre 200 contatos pra achar zero"
     )
+
+
+def test_ramo_atrasada_tem_texto_proprio_e_nao_le_atraso_min():
+    """O MESMO defeito de 14-15/10, uma vez a mais (14/11/26).
+
+    O veredito `entrega_atrasada` carrega `atraso_entrega_min`, NAO `atraso_min`.
+    Se o formatador caisse no ramo comparativo, o KeyError iria para o `except`
+    que so loga warning -- e o alarme novo falharia calado, que e exatamente o
+    defeito que ele existe para consertar.
+    """
+    bloco = _bloco_do_endpoint()
+    assert "elif atrasada:" in bloco, "o veredito novo nao tem ramo de texto proprio"
+    pos_atrasada = bloco.find("elif atrasada:")
+    pos_atraso_min = bloco.find("veredito['atraso_min']")
+    assert pos_atrasada < pos_atraso_min, (
+        "o ramo do atraso de entrega tem de vir antes do que le `atraso_min`"
+    )
+    assert "atraso_entrega_min" in bloco, "o texto nao usa a chave que o veredito traz"
+    assert "not atrasada" in bloco, (
+        "catchup em entrega atrasada busca o que ainda esta na Evolution e "
+        "devolveria 'recuperei 0', que se le como problema resolvido"
+    )
+
+
+def test_dedup_do_atraso_e_por_faixa_nao_por_lote():
+    """Sem isto o alerta vira ruido e e silenciado -- e ai a proxima pane passa.
+
+    `ultimo_evento` muda a cada lote (~50 min em 14/11): usa-lo na chave daria
+    ~20 avisos do MESMO problema num dia. A faixa avisa uma vez por patamar e de
+    novo quando piora, que e a informacao que o Renato precisa.
+    """
+    from main import _faixa_atraso
+
+    assert _faixa_atraso(16) == "15min"
+    assert _faixa_atraso(59.9) == "15min"
+    assert _faixa_atraso(60) == "1h"
+    assert _faixa_atraso(239) == "1h"
+    assert _faixa_atraso(240) == "4h"
+    assert _faixa_atraso(454.2) == "4h", "o atraso real de 14/11 (7,6h)"
+    assert _faixa_atraso(720) == "12h"
+    assert _faixa_atraso(5000) == "12h"
+    # patamares distintos => chaves distintas => a degradacao aparece
+    assert len({_faixa_atraso(m) for m in (16, 90, 300, 900)}) == 4
 
 
 # --------------------------------------------------------------- integracao --
@@ -342,3 +410,172 @@ def test_retry_so_pra_falha_de_rede():
     # o retorno de timeout tem que continuar saindo direto, sem 2a tentativa
     assert 'error": f"timeout > {AGENT_TIMEOUT_S}s"' in trecho
     assert "time.sleep(30)" in trecho
+
+
+# ------------------------------------- o atraso de ENTREGA (pane de 14/11/26) --
+#
+# A entrada nao parou: ficou LENTA. A Evolution so entregava no instante da
+# reconexao (ciclo de ~50 min medido), em lotes com 7 a 9h de atraso. O
+# comparativo ficou cego porque os DOIS lados estavam igualmente atrasados -- o
+# store dela tambem so tinha ate 19h00 do dia anterior --, e o frescor zerava a
+# cada lote. Passaram ~8h com o veredito "mundo_quieto".
+
+def test_entrega_atrasada_alerta_mesmo_com_os_dois_lados_de_acordo(relogio, monkeypatch):
+    """O cenario exato de 14/11: nada a comparar, e ainda assim ha problema.
+
+    Banco e Evolution concordam (atraso_seg <= tolerancia), instancia `open`,
+    nenhum gap -- o comparativo diria "mundo_quieto". O que delata e a conta
+    interna ao dado: as ultimas mensagens entraram com 7,6h de atraso.
+    """
+    ultimo = relogio - timedelta(minutes=30)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()), atraso=454.2)
+
+    v = hb.checar_ingestao()
+
+    assert v["alerta"] is True, "o comparativo diria mundo_quieto; o atraso delata"
+    assert v["status"] == "entrega_atrasada"
+    assert v["atraso_entrega_min"] == 454.2
+    assert "atraso_min" not in v, (
+        "`atraso_min` e do veredito comparativo; prometer a chave aqui faria o "
+        "formatador do main.py ler o campo errado"
+    )
+
+
+def test_entrega_atrasada_vence_o_atalho_de_silencio_curto(relogio, monkeypatch):
+    """A ordem que faz o detector existir de verdade.
+
+    Um lote entrando AGORA zera `quieto_min`, e se o `return "ok"` viesse antes
+    o atraso de 8h sairia verde -- que e como a pane passou por saudavel por 9
+    dias, com o relogio reiniciando a cada madrugada.
+    """
+    ultimo = relogio - timedelta(minutes=1)   # lote acabou de entrar
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()), atraso=600.0)
+
+    v = hb.checar_ingestao()
+
+    assert v["quieto_min"] < hb.SILENCIO_MIN, "o cenario tem de cair no atalho"
+    assert v["alerta"] is True, "o atalho de silencio curto engoliu o atraso"
+    assert v["status"] == "entrega_atrasada"
+
+
+def test_entrega_instantanea_nao_alerta(relogio, monkeypatch):
+    """O falso positivo que mataria o alerta. p50 real do periodo saudavel =
+    0,02 min: se este caso gritasse, o alarme seria desligado na primeira
+    semana e a proxima pane passaria igual."""
+    ultimo = relogio - timedelta(minutes=1)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()), atraso=0.02)
+
+    v = hb.checar_ingestao()
+
+    assert v["alerta"] is False
+    assert v["status"] == "ok"
+    assert v["atraso_entrega_min"] == 0.0
+
+
+def test_atraso_logo_abaixo_do_limiar_nao_alerta(relogio, monkeypatch):
+    ultimo = relogio - timedelta(minutes=1)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()),
+          atraso=hb.ATRASO_ENTREGA_MIN - 1)
+    assert hb.checar_ingestao()["alerta"] is False
+
+
+def test_atraso_acima_do_limiar_alerta(relogio, monkeypatch):
+    """Em 10/11 a mediana ja era de 3h33 e ninguem viu. Com esta regua, o
+    patamar de 15 min teria gritado dias antes."""
+    ultimo = relogio - timedelta(minutes=1)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()),
+          atraso=hb.ATRASO_ENTREGA_MIN + 1)
+    assert hb.checar_ingestao()["alerta"] is True
+
+
+def test_atraso_nao_medido_nao_alerta_mas_tambem_nao_diz_em_dia(relogio, monkeypatch):
+    """Nao-saber nunca vira alerta (senao instabilidade do banco viraria alarme),
+    mas tambem nao pode virar silencio confiante: o veredito tem de CARREGAR o
+    desconhecimento, senao quem le supoe entrega em dia
+    ([[feedback_guarda_abstencao_vira_fabrica]])."""
+    ultimo = relogio - timedelta(minutes=1)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()), atraso=None)
+
+    v = hb.checar_ingestao()
+
+    assert v["alerta"] is False, "nao-saber nao pode gritar"
+    assert v["atraso_entrega_min"] is None
+    assert "NAO MEDIDO" in v.get("detalhe", ""), (
+        "o veredito tem de dizer que nao mediu, nao omitir"
+    )
+
+
+def test_desconectado_tem_prioridade_sobre_atraso(relogio, monkeypatch):
+    """Instancia caida exige QR e e acao fisica; atraso de entrega nao. Se o
+    atraso vencesse, o aviso mandaria esperar quando o certo e ir ao aparelho.
+
+    O atraso alto aqui e REAL e nao coincidencia: quando a sessao cai, as
+    ultimas mensagens gravadas ficaram justamente as do lote atrasado.
+    """
+    ultimo = relogio - timedelta(hours=3)
+    _arma(monkeypatch, ultimo, 0, estado="close", atraso=454.2)
+
+    v = hb.checar_ingestao()
+
+    assert v["status"] == "desconectado", (
+        "atraso nao pode mascarar instancia caida -- os remedios sao diferentes"
+    )
+    assert v["exige_qr"] is True
+
+
+def test_entrega_atrasada_nao_pede_catchup(relogio, monkeypatch):
+    """O que falta ainda esta DENTRO da Evolution, nao caiu num gap. Pedir
+    catchup aqui gasta chamada pra buscar o que ninguem tem e devolve
+    "recuperei 0", que se le como problema resolvido."""
+    ultimo = relogio - timedelta(minutes=30)
+    _arma(monkeypatch, ultimo, int(ultimo.timestamp()), atraso=454.2)
+
+    v = hb.checar_ingestao()
+
+    assert v["alerta"] is True
+    assert hb.janela_perdida(v) == {}, (
+        "alerta de entrega atrasada nao tem janela a recuperar"
+    )
+
+
+def test_ultimo_evento_filtra_tipo_de_evento(monkeypatch):
+    """O furo que manteve o heartbeat calado ~8h em 14/11/26.
+
+    `connection.update` chega 2x por hora, toda hora (80 eventos / 40 ciclos em
+    30h, medidos). Sem o filtro, `ultimo` ficava recente e -- pior -- mais NOVO
+    que qualquer mensagem que a Evolution conhecia: `atraso_seg` dava negativo e
+    "mundo_quieto" era o unico resultado aritmeticamente possivel. Em 14-15/10 a
+    contaminacao veio de outra INSTANCIA; aqui, de outro TIPO DE EVENTO.
+    """
+    sqls = []
+
+    class _Cur:
+        def execute(self, sql, params=None):
+            sqls.append(sql)
+
+        def fetchone(self):
+            return {"ultimo": None}
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(hb, "get_db", lambda: _Conn())
+    hb._ultimo_evento_no_banco()
+
+    assert sqls, "nao executou query nenhuma"
+    assert "event_type = 'messages.upsert'" in sqls[0], (
+        "sem o filtro de tipo, o keep-alive da conexao atesta ingestao viva"
+    )
+    assert "instance = %s" in sqls[0], "o filtro de instancia de 15/10 nao pode sumir"
+    assert "from_me IS NOT TRUE" in sqls[0], (
+        "sem o filtro de direcao o medidor e satisfeito pelo proprio envio: em "
+        "14/11, dois upserts `fromMe=True` das 11h30 deram `quieto_min: 0.9` com "
+        "a entrada morta havia 16h32 ([[feedback_maquina_ouve_o_proprio_eco]])"
+    )

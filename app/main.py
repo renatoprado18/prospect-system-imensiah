@@ -29749,6 +29749,19 @@ async def cron_process_scheduled_actions(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _faixa_atraso(minutos: float) -> str:
+    """Patamar do atraso de entrega, para a chave de dedup do alerta.
+
+    Existe para que um atraso que PIORA volte a avisar e um atraso estavel nao
+    repita. Sem faixas, a chave teria de usar a hora do ultimo lote (~50 min em
+    14/11) e o mesmo problema renderia ~20 avisos num dia.
+    """
+    for limite, nome in ((60, "15min"), (240, "1h"), (720, "4h")):
+        if minutos < limite:
+            return nome
+    return "12h"
+
+
 @app.get("/api/cron/wa-ingest-heartbeat")
 @app.post("/api/cron/wa-ingest-heartbeat")
 @track_cron_run
@@ -29781,13 +29794,18 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
         return resultado
 
     desconectado = veredito.get("status") == "desconectado"
+    atrasada = veredito.get("status") == "entrega_atrasada"
 
     # Instancia caida NAO tem o que recuperar: a Evolution parou de receber
     # junto, entao o catchup varreria 200 contatos pra achar zero. Quando o
     # Renato religar pelo QR, a Evolution volta a ter mensagem mais nova que o
     # INTEL, o veredito vira `parado` e a recuperacao dispara aqui com a janela
     # inteira -- que e o que o filtro por instancia passou a calcular certo.
-    if recuperar and not desconectado:
+    # `entrega_atrasada` tambem nao tem o que recuperar, por motivo diferente de
+    # `desconectado`: ali a Evolution parou de receber; aqui ela RECEBEU e ainda
+    # nao entregou. O que falta esta dentro dela, nao num gap -- o catchup
+    # voltaria "recuperei 0" e isso se le como problema resolvido.
+    if recuperar and not desconectado and not atrasada:
         # Recupera ANTES de notificar: se o buraco fechar sozinho, o aviso ja
         # sai dizendo que fechou, em vez de mandar o Renato agir a toa.
         janela = janela_perdida(veredito)
@@ -29821,6 +29839,23 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
                 f"{veredito['quieto_min']:.0f}min. Nenhuma mensagem esta sendo "
                 f"recebida nem gravada.{acao}.{extra}"
             )
+        elif atrasada:
+            # O aviso que faltava em 14/11/26. O estado aqui NAO e "parou" --
+            # e "chega velho", e a diferenca muda a conclusao de quem le: as
+            # mensagens estao presas na fila da Evolution, nao perdidas, e vao
+            # aparecer horas depois com `enviado_em` antigo. Dizer isso e o
+            # ponto do alerta; sem a frase, a leitura natural e "ninguem me
+            # respondeu" e decide-se sobre um silencio que nao existiu.
+            minutos = veredito["atraso_entrega_min"]
+            quanto = f"{minutos:.0f}min" if minutos < 120 else f"{minutos / 60:.1f}h"
+            titulo = "WhatsApp chegando ATRASADO no INTEL"
+            corpo = (
+                f"As ultimas {veredito['janela']} mensagens recebidas entraram com "
+                f"{quanto} de atraso (normal: segundos). As mensagens estao PRESAS "
+                f"na fila da Evolution, nao perdidas -- vao aparecer depois, com a "
+                f"hora original. Nao concluir que alguem nao respondeu enquanto "
+                f"isto durar.{extra}"
+            )
         else:
             titulo = "Ingestao do WhatsApp parada"
             corpo = (
@@ -29840,7 +29875,17 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
             # muda e volta a avisar — a intermitencia PRECISA aparecer.
             # O estado entra na chave pra que `connecting` que degrada pra
             # `close` (o caso que exige acao fisica) avise de novo.
-            dedup=f"wa_ingest:{veredito.get('ultimo_evento')}:{veredito.get('status')}",
+            #
+            # ⚠️ Em `entrega_atrasada` a chave NAO pode levar `ultimo_evento`:
+            # ele muda a cada lote (~50 min em 14/11), e o mesmo problema viraria
+            # 20 avisos por dia -- alarme que se aprende a silenciar. A chave e a
+            # FAIXA do atraso, para avisar uma vez por patamar e de novo quando
+            # piora: 15min -> 1h -> 4h -> 12h conta a degradacao sem repetir.
+            dedup=(
+                f"wa_ingest:atraso:{_faixa_atraso(veredito['atraso_entrega_min'])}"
+                if atrasada
+                else f"wa_ingest:{veredito.get('ultimo_evento')}:{veredito.get('status')}"
+            ),
         )
         resultado["notificado"] = True
     except Exception as e:

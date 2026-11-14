@@ -89,9 +89,20 @@ FONTES = [
         # abertura de 15/10 com a entrada do Renato morta há 15,8h. Uma instância
         # viva atestando o frescor de uma morta é a mesma classe de erro que medir
         # a tabela em vez do canal — uma camada abaixo.
+        # 🔴 E O FILTRO POR `event_type` É O OUTRO VEREDITO (14/11/26). Sem ele
+        # este medidor NÃO PODE ESTOURAR enquanto existir conexão: `connection.update`
+        # chega 2× por hora, toda hora, como um relógio — medidos 80 eventos em 30h,
+        # 40 ciclos `connecting`→`open` em intervalos de ~50 min. Na manhã de 14/11 a
+        # entrada estava travada havia 5h45 (zero `messages.upsert` desde 06h) e esta
+        # fonte marcou 🟢 "0.0h", porque leu o keep-alive da própria conexão. É a
+        # mesma classe de erro do `outgoing` logo abaixo, um degrau mais fundo: ali o
+        # medidor era satisfeito pelo que o INTEL mandava, aqui pelo fato de o socket
+        # existir. "A conexão está de pé?" não é a pergunta — a pergunta é "o dado
+        # está chegando?" ([[feedback_medidor_de_ingestao_satisfeito_pelo_backlog]]).
         "rotulo": "WA · webhooks (ingestão bruta)",
         "sql": """SELECT max(received_at) FROM webhook_audit
-                   WHERE instance = %(instancia)s""",
+                   WHERE instance = %(instancia)s
+                     AND event_type = 'messages.upsert'""",
         # ⚠️ `params` só existe nesta fonte, e o loop passa params SÓ quando a
         # chave está lá. Não é preciosismo: com params, o psycopg2 trata `%`
         # como marcador, e os `ILIKE '%whats%'` das outras fontes virariam erro
@@ -110,13 +121,22 @@ FONTES = [
         # mensagem para si mesma ([[feedback_maquina_ouve_o_proprio_eco]]). Em
         # 15/10: `incoming` parado desde 14/10 18h50, `outgoing` às 07h00, fonte
         # 🟢. Um medidor que o alvo pode satisfazer sozinho nunca acusa queda.
+        #
+        # 🔴 E A COLUNA É `enviado_em`, NÃO `criado_em` (14/11/26). `criado_em` é a
+        # hora da GRAVAÇÃO, então quem a satisfaz é o DRENO DO BACKLOG, não a
+        # chegada: no dia 14/11 a última mensagem real tinha 16h (`enviado_em`
+        # 13/11 19h00) e esta fonte marcou 🟢 porque um lote entrou às 03h53. Um
+        # medidor cuja condição de verde é "o sistema gravou algo" mede o sistema,
+        # não a fonte — e a coluna certa já existia desde sempre
+        # ([[feedback_ingest_wa_atrasa_criado_em]]). Mesmo erro de categoria da
+        # régua de frescor do RACI, que lia `atualizado_em` em vez do relógio real.
         "rotulo": "WA · DMs recebidas",
-        "sql": """SELECT max(m.criado_em) FROM messages m
+        "sql": """SELECT max(m.enviado_em) FROM messages m
                     JOIN conversations c ON c.id = m.conversation_id
                    WHERE c.canal ILIKE '%whats%' AND m.direcao = 'incoming'""",
         "limiar": 3,
         "uteis": True,
-        "nota": "só `incoming`: `outgoing` é o próprio INTEL notificando, não entrada",
+        "nota": "só `incoming` e por `enviado_em`: `outgoing` é eco e `criado_em` é a gravação",
     },
     {
         "rotulo": "WA · grupos",
@@ -190,6 +210,53 @@ CANARIOS = [
         "aceso": "SEM SALDO ou CHAVE INVÁLIDA — toda função LLM está caída",
         "nota": ("o `anthropic-canary` alerta UMA vez e depois só repete "
                  "`already_alerted` até recuperar; o flag é limpo na recuperação"),
+    },
+]
+
+
+# Medidores de LATÊNCIA — "o dado chega, mas chega a tempo?". Ficam fora de
+# FONTES porque ali a conta é sempre `agora - último`, e aqui a conta é interna ao
+# dado (`criado_em - enviado_em`): nenhuma depende de haver registro NOVO, e é
+# exatamente isso que as torna úteis quando a fonte está muda.
+#
+# POR QUE EXISTE, com a data e o preço (14/11/26). A pane daquele dia era
+# DEGRADANTE, não binária: a entrega não parou, foi ficando lenta — 0,0 min em
+# 03–05/11, 3h33 em 10/11, 10h39 em 11/11, 7h34 na manhã de 14/11. Nenhuma fonte
+# de frescor pega isso, porque a cada lote de madrugada o relógio delas zerava.
+# Pior: 14/11 caiu num SÁBADO, e as três fontes de conversa contam HORAS ÚTEIS —
+# com 16h de atraso real, a maior delas marcava 1h útil. Um alarme que só acorda
+# na segunda não serve para a entrada do WhatsApp.
+#
+# ⚠️ CORRIDAS, NÃO ÚTEIS, pelo mesmo motivo do canário de LLM: horas úteis existem
+# porque conversa HUMANA pausa no fim de semana, e isto não mede conversa — mede
+# o PIPELINE que a transporta, que roda 24/7. Aplicar a régua de gente a um canal
+# de máquina é o erro de categoria que já custou 30h em 04/10.
+#
+# LIMIAR MEDIDO, NÃO ESTIMADO: em 60 dias e 4.216 mensagens do período saudável
+# (excluindo os 9 dias de pane), o p50 é 0,02 min e o p95 é 0,04 min — entrega
+# normal é INSTANTÂNEA, ~2 segundos. 15 min fica 375× acima do p95 saudável e
+# teria disparado em 10/11, quando o atraso médio já era de 3h33.
+#
+# MEDIANA DAS ÚLTIMAS 30, não a última nem a média: a última mensagem sozinha
+# vira alarme com um único deploy lento, e a média é refém de um outlier. Com p50
+# de 30, é preciso que METADE da janela recente esteja atrasada para gritar — e
+# na manhã de 14/11 essa mediana era de 454 min, ou seja, teria gritado.
+ATRASOS = [
+    {
+        "rotulo": "WA · atraso de ENTREGA (entre a mensagem e a gravação)",
+        "sql": """SELECT percentile_cont(0.5) WITHIN GROUP (
+                      ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0)
+                    FROM (SELECT m2.criado_em, m2.enviado_em
+                            FROM messages m2
+                            JOIN conversations c ON c.id = m2.conversation_id
+                           WHERE c.canal ILIKE '%whats%'
+                             AND m2.direcao = 'incoming'
+                             AND m2.enviado_em IS NOT NULL
+                           ORDER BY m2.criado_em DESC
+                           LIMIT 30) m""",
+        "limiar_min": 15,
+        "nota": ("a Evolution só entrega no instante da reconexão (ciclo de ~50 min "
+                 "medido em 14/11) ⇒ o backlog cresce e nenhum medidor de frescor vê"),
     },
 ]
 
@@ -280,6 +347,24 @@ def main() -> int:
         if estourou:
             estouros.append(f["rotulo"])
 
+    # Latência. Mesma regra de honestidade das fontes: não poder medir NÃO sai
+    # verde. Um atraso que não pôde ser calculado é um atraso desconhecido, e foi
+    # um atraso desconhecido que passou por verde durante 9 dias.
+    atrasos, atrasos_nao_medidos = [], []
+    for t in ATRASOS:
+        try:
+            cur.execute(t["sql"])
+            valor = _primeira_coluna(cur.fetchone())
+        except Exception as e:
+            conn.rollback()
+            atrasos_nao_medidos.append((t["rotulo"], str(e).strip().splitlines()[0]))
+            continue
+        if valor is None:
+            atrasos_nao_medidos.append((t["rotulo"], "janela vazia — nenhuma mensagem para comparar"))
+            continue
+        minutos = float(valor)
+        atrasos.append((minutos > t["limiar_min"], t["rotulo"], minutos, t["limiar_min"], t["nota"]))
+
     # Canários de estado. Mesma regra dos outros: não poder medir NÃO sai verde —
     # um canário que abstém certifica saúde que nunca checou.
     acesos, canarios_nao_medidos = [], []
@@ -296,7 +381,11 @@ def main() -> int:
 
     conn.close()
 
-    if a.quiet and not estouros and not nao_medidas and not acesos and not canarios_nao_medidos:
+    atrasos_estourados = [r for e, r, *_ in atrasos if e]
+
+    if (a.quiet and not estouros and not nao_medidas and not acesos
+            and not canarios_nao_medidos and not atrasos_estourados
+            and not atrasos_nao_medidos):
         return 0
 
     print("╔═ FRESCOR DAS FONTES (o dado ainda está chegando?) ═╗")
@@ -311,6 +400,18 @@ def main() -> int:
     for rotulo, erro in nao_medidas:
         print(f"  🔴 {rotulo}: NÃO MEDIDO — {erro}")
         print("      ↳ não medir não é estar fresco; consertar a query antes de confiar na abertura")
+    for estourou, rotulo, minutos, limiar, nota in atrasos:
+        if a.quiet and not estourou:
+            continue
+        icone = "🔴" if estourou else "🟢"
+        medida = f"{minutos:.1f} min" if minutos < 120 else f"{minutos / 60:.1f}h"
+        print(f"  {icone} {rotulo}: mediana das últimas 30 = {medida} "
+              f"(limiar {limiar} min, corridas)")
+        if estourou:
+            print(f"      ↳ {nota}")
+    for rotulo, erro in atrasos_nao_medidos:
+        print(f"  🔴 {rotulo}: NÃO MEDIDO — {erro}")
+        print("      ↳ atraso que não pôde ser calculado é atraso desconhecido, não ausente")
 
     # O FLAG ATRASA A RECUPERAÇÃO — descoberto 05/10, uma hora depois de armar
     # isto. O saldo foi recarregado ~15h UTC e as chamadas voltaram no mesmo
@@ -343,9 +444,20 @@ def main() -> int:
         print(f"  🔴 CANÁRIO NÃO MEDIDO · {rotulo} — {erro}")
         print("      ↳ canário que não pôde ser lido não é canário apagado")
 
-    if not estouros and not nao_medidas and not acesos and not canarios_nao_medidos:
-        print("  🟢 todas as fontes dentro do limiar e nenhum canário aceso.")
+    if (not estouros and not nao_medidas and not acesos and not canarios_nao_medidos
+            and not atrasos_estourados and not atrasos_nao_medidos):
+        print("  🟢 todas as fontes dentro do limiar, entrega em dia e nenhum canário aceso.")
         return 0
+
+    if atrasos_estourados:
+        # O dado CHEGA — só chega velho. Dizer isso alto importa porque a leitura
+        # natural de uma fonte atrasada é "ninguém falou comigo", e foi essa leitura
+        # que em 12/11 fez a sessão CoS afirmar ao Renato que a Sandra não respondera
+        # quando ela havia respondido em 29 horas ([[feedback_filtro_de_data_que_pula_a_resposta]]).
+        print("\n  ⚠️ A ENTREGA ESTÁ ATRASADA, NÃO PARADA — e a diferença muda a conclusão.")
+        print("  As mensagens estão PRESAS na fila, não perdidas: vão aparecer horas depois,")
+        print("  com `enviado_em` antigo. NÃO concluir silêncio de ninguém enquanto isto")
+        print("  estiver vermelho, e reler qualquer juízo de 'não respondeu' feito hoje.")
 
     if estouros or nao_medidas:
         print("\n  ⚠️ FONTE PARADA É CEGUEIRA SEM RASTRO. Em 28/09/26 a entrada do WhatsApp")

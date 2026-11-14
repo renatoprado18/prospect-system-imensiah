@@ -82,20 +82,96 @@ CONNECTING_MIN = int((os.getenv("WA_HEARTBEAT_CONNECTING_MIN") or "60").strip())
 
 
 def _ultimo_evento_no_banco():
-    """Ultimo evento DESTA instancia -- o filtro nao e detalhe, e o veredito.
+    """Ultima MENSAGEM desta instancia -- os dois filtros sao o veredito.
 
     Sem `WHERE instance`, o `MAX` pega o evento mais novo de QUALQUER instancia:
     em 15/10/26 o `intel-bot-v2` encurtou um silencio de 15,8h para 3,8h e, ao
     deixar o `ultimo` mais novo que a fonte, zerou o alarme. Ver o cabecalho.
+
+    🔴 E SEM `event_type` o MESMO DEFEITO VOLTA PELA PORTA DO LADO (14/11/26, 8h).
+    `connection.update` chega 2x por hora, toda hora -- medidos 80 eventos e 40
+    ciclos `connecting`->`open` em 30h, intervalo de ~50 min. Esse keep-alive
+    deixava `ultimo` quase sempre recente e, pior, MAIS NOVO que qualquer
+    mensagem que a Evolution conhecia: `atraso_seg` dava negativo e o veredito
+    "mundo_quieto" era -- de novo -- o unico resultado aritmeticamente possivel.
+    Em 14-15/10 a contaminacao vinha de outra INSTANCIA; aqui, de outro TIPO DE
+    EVENTO da mesma instancia. Um evento que o proprio cano gera nao prova que
+    DADO passou por ele.
+
+    🔴 E O TERCEIRO FILTRO, `from_me`, pego pelo controle positivo meia hora
+    depois do segundo (14/11/26). Com instance + event_type o medidor ainda deu
+    `quieto_min: 0.9` -- porque dois upserts `fromMe=True` (envios do proprio
+    Renato) tinham entrado as 11h30 enquanto a ENTRADA seguia morta havia 16h32.
+    E a volta de [[feedback_maquina_ouve_o_proprio_eco]] por uma terceira porta:
+    a pergunta e "estao me MANDANDO mensagem?", e mensagem que sai nao responde.
+    Os tres filtros sao a mesma licao em camadas: instancia errada, evento errado,
+    direcao errada -- e qualquer um deles sozinho basta pra zerar o alarme.
     """
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT MAX(received_at) AS ultimo FROM webhook_audit WHERE instance = %s",
+            """SELECT MAX(received_at) AS ultimo FROM webhook_audit
+                WHERE instance = %s
+                  AND event_type = 'messages.upsert'
+                  AND from_me IS NOT TRUE""",
             (INSTANCIA,),
         )
         row = cur.fetchone()
         return row["ultimo"] if row else None
+
+
+# Atraso de ENTREGA que autoriza alertar, em minutos. Medido, nao estimado: em 60
+# dias e 4.216 mensagens do periodo saudavel o p50 e 0,02 min e o p95 e 0,04 min
+# -- entrega normal e instantanea, ~2 segundos. 15 min fica 375x acima do p95
+# saudavel e teria gritado em 10/11, quando a mediana ja era de 3h33.
+ATRASO_ENTREGA_MIN = int((os.getenv("WA_HEARTBEAT_ATRASO_MIN") or "15").strip())
+
+# Quantas mensagens entram na mediana. A ultima sozinha vira alarme com um unico
+# deploy lento; a media e refem de um outlier. Com p50 de 30 e preciso que METADE
+# da janela recente esteja atrasada pra gritar.
+ATRASO_JANELA = 30
+
+
+def _atraso_de_entrega_min():
+    """Mediana de `criado_em - enviado_em` nas ultimas mensagens recebidas.
+
+    🔴 O TERCEIRO DETECTOR, e o unico que viu a pane de 14/11/26. Os outros dois
+    perguntam "chegou algo?" (frescor) e "a Evolution tem o que o INTEL nao tem?"
+    (comparativo). Nenhum serve quando a entrega nao PARA, so ATRASA: a cada lote
+    de madrugada o frescor zerava, e o comparativo ficava cego porque os DOIS
+    lados estavam igualmente atrasados -- o store da Evolution tambem so tinha
+    ate 19h00 do dia anterior. A pane era degradante (0,0 min em 03/11 -> 3h33 em
+    10/11 -> 10h39 em 11/11) e degradacao nao aparece em medidor de "quando foi a
+    ultima".
+
+    A conta e INTERNA ao dado, e isso e a propriedade que importa: nao depende de
+    haver mensagem NOVA (logo nao da falso positivo de madrugada), nao depende da
+    Evolution responder, e nao pode ser satisfeita pelo dreno do backlog -- que e
+    exatamente o que satisfazia os medidores de `criado_em`
+    ([[feedback_medidor_de_ingestao_satisfeito_pelo_backlog]]).
+
+    Devolve `None` quando nao ha janela para medir. Nao-saber nao vira alerta,
+    mas tambem nao vira "em dia": quem chama distingue os dois.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT percentile_cont(0.5) WITHIN GROUP (
+                      ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0
+                   ) AS p50
+                 FROM (SELECT m2.criado_em, m2.enviado_em
+                         FROM messages m2
+                         JOIN conversations c ON c.id = m2.conversation_id
+                        WHERE c.canal ILIKE %s
+                          AND m2.direcao = 'incoming'
+                          AND m2.enviado_em IS NOT NULL
+                        ORDER BY m2.criado_em DESC
+                        LIMIT %s) m""",
+            ("%whats%", ATRASO_JANELA),
+        )
+        row = cur.fetchone()
+        valor = row["p50"] if row else None
+        return None if valor is None else float(valor)
 
 
 def _estado_da_conexao() -> str:
@@ -172,33 +248,81 @@ def checar_ingestao() -> Dict:
         ultimo = ultimo.replace(tzinfo=UTC)
 
     quieto_min = (agora - ultimo).total_seconds() / 60.0
+    atraso = _atraso_de_entrega_min()
+
+    def _atrasada() -> Dict:
+        """Veredito de entrega lenta. Separado por ser um estado DIFERENTE de
+        parada: o dado vem, vem velho, e as mensagens estao presas na fila --
+        nao perdidas. Quem le precisa saber disso, porque a leitura natural de
+        uma fonte atrasada e "ninguem falou comigo", e foi essa leitura que em
+        12/11 fez a CoS afirmar que a Sandra nao respondera quando ela havia
+        respondido em 29 horas."""
+        return {
+            "status": "entrega_atrasada",
+            "alerta": True,
+            "atraso_entrega_min": round(atraso, 1),
+            "atraso_entrega_limiar_min": ATRASO_ENTREGA_MIN,
+            "janela": ATRASO_JANELA,
+            "quieto_min": round(quieto_min, 1),
+            "ultimo_evento": ultimo.isoformat(),
+            # Nada a recuperar por catchup: o que falta ainda nao saiu da
+            # Evolution. `janela_perdida` nao deve pedir busca aqui.
+            "nada_a_recuperar": True,
+        }
+
+    # ORDEM DOS VEREDITOS, e cada posicao tem um motivo:
+    #
+    # 1º `desconectado` -- porque e o unico que pede ACAO FISICA (QR no
+    #    aparelho). Se o atraso viesse antes, o aviso mandaria esperar a fila
+    #    drenar quando o certo e ir ao celular, e os dois sintomas aparecem
+    #    juntos: com a sessao caida, as ultimas mensagens gravadas sao
+    #    justamente as do lote atrasado.
+    # 2º `entrega_atrasada` -- antes do atalho de silencio curto, senao um lote
+    #    entrando agora zera `quieto_min`, o `return "ok"` dispara e a entrega
+    #    de 8h sai verde. Foi assim que a pane de 14/11 passou por saudavel
+    #    durante 9 dias: o relogio reiniciava a cada madrugada.
+    # 3º o resto, como antes.
+    #
+    # A checagem de conexao segue atras do limiar de silencio para preservar o
+    # custo do caminho feliz: com mensagem entrando agora, nao se pergunta nada
+    # a ninguem.
+    if quieto_min >= SILENCIO_MIN:
+        # Banco quieto. ANTES de comparar, a pergunta que o comparativo nao sabe
+        # fazer: o cano esta LIGADO? Se a instancia caiu, a Evolution tambem
+        # parou de receber, os dois lados ficam vazios e o comparativo diz
+        # "mundo quieto" justamente no pior caso (14-15/10/26, 15,8h).
+        estado = _estado_da_conexao()
+        if estado and estado != "open":
+            # `close` e terminal: exige re-pareamento por QR, nao volta sozinho.
+            # `connecting` ganha carencia -- religamento normal passa por ele.
+            if estado == "close" or quieto_min >= CONNECTING_MIN:
+                return {
+                    "status": "desconectado",
+                    "alerta": True,
+                    "estado_instancia": estado,
+                    "instancia": INSTANCIA,
+                    "quieto_min": round(quieto_min, 1),
+                    "ultimo_evento": ultimo.isoformat(),
+                    # Sem par na Evolution: ela nao tem mensagem mais nova porque
+                    # tambem nao esta recebendo. Quem formata o aviso NAO pode
+                    # supor `atraso_min` -- ver o ramo em main.py.
+                    "exige_qr": estado == "close",
+                }
+
+    if atraso is not None and atraso > ATRASO_ENTREGA_MIN:
+        return _atrasada()
 
     if quieto_min < SILENCIO_MIN:
-        return {"status": "ok", "alerta": False,
-                "quieto_min": round(quieto_min, 1),
-                "ultimo_evento": ultimo.isoformat()}
-
-    # Banco quieto. ANTES de comparar, a pergunta que o comparativo nao sabe
-    # fazer: o cano esta LIGADO? Se a instancia caiu, a Evolution tambem parou
-    # de receber, os dois lados ficam vazios e o comparativo diz "mundo quieto"
-    # justamente no pior caso (14-15/10/26, 15,8h).
-    estado = _estado_da_conexao()
-    if estado and estado != "open":
-        # `close` e terminal: exige re-pareamento por QR, nao volta sozinho.
-        # `connecting` ganha carencia -- religamento normal passa por ele.
-        if estado == "close" or quieto_min >= CONNECTING_MIN:
-            return {
-                "status": "desconectado",
-                "alerta": True,
-                "estado_instancia": estado,
-                "instancia": INSTANCIA,
-                "quieto_min": round(quieto_min, 1),
-                "ultimo_evento": ultimo.isoformat(),
-                # Sem par na Evolution: ela nao tem mensagem mais nova porque
-                # tambem nao esta recebendo. Quem formata o aviso NAO pode
-                # supor `atraso_min` -- ver o ramo em main.py.
-                "exige_qr": estado == "close",
-            }
+        veredito = {"status": "ok", "alerta": False,
+                    "quieto_min": round(quieto_min, 1),
+                    "ultimo_evento": ultimo.isoformat()}
+        if atraso is None:
+            # Nao medir nao e estar em dia: diz-se alto, sem virar alerta.
+            veredito["atraso_entrega_min"] = None
+            veredito["detalhe"] = "atraso de entrega NAO MEDIDO (janela vazia)"
+        else:
+            veredito["atraso_entrega_min"] = round(atraso, 1)
+        return veredito
 
     # Instancia de pe (ou estado desconhecido): vale o comparativo historico.
     epoch_evolution = _ultima_mensagem_na_evolution()
@@ -224,6 +348,7 @@ def checar_ingestao() -> Dict:
     # Os dois lados quietos: nao ha o que ingerir. Silencio legitimo.
     return {"status": "mundo_quieto", "alerta": False,
             "quieto_min": round(quieto_min, 1),
+            "atraso_entrega_min": None if atraso is None else round(atraso, 1),
             "ultimo_evento": ultimo.isoformat()}
 
 
@@ -235,6 +360,12 @@ def janela_perdida(veredito: Dict) -> Dict:
     buscar. Devolve as horas a pedir ao catchup.
     """
     if not veredito.get("alerta"):
+        return {}
+    # Entrega atrasada nao tem janela a recuperar: o que falta ainda esta DENTRO
+    # da Evolution, nao caiu num gap. Pedir catchup aqui gastaria chamada para
+    # buscar o que ninguem tem ainda, e devolveria "recuperei 0" como se o
+    # problema estivesse resolvido.
+    if veredito.get("nada_a_recuperar"):
         return {}
     horas = max(1, int(veredito.get("quieto_min", 0) // 60) + 1)
     return {"desde": veredito.get("ultimo_evento"), "horas": horas}

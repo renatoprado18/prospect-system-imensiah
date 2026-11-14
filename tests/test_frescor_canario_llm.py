@@ -121,8 +121,9 @@ class _CursorFake:
     (flag + silêncio) de flag obsoleto (flag + chamada recente).
     """
 
-    def __init__(self, agora, flag_aceso, llm_parado):
+    def __init__(self, agora, flag_aceso, llm_parado, atraso_min=0.02):
         self._agora, self._flag, self._llm_parado = agora, flag_aceso, llm_parado
+        self._atraso = atraso_min
         self._ultimo = None
 
     def execute(self, sql, *a):
@@ -132,6 +133,12 @@ class _CursorFake:
             quando = (datetime(2026, 10, 4, 5, 35) if self._llm_parado
                       else self._agora.replace(tzinfo=None))
             self._ultimo = {"max": quando}
+        elif "percentile_cont" in sql:
+            # ATRASOS devolve MINUTOS, não timestamp. O default 0,02 é o p50 real
+            # do período saudável (medido em 60 dias, 14/11/26): entrega normal é
+            # instantânea. Sem este ramo o fake devolvia um datetime e o `float()`
+            # do medidor estourava — foi como os 4 testes do canário quebraram.
+            self._ultimo = {"p50": self._atraso}
         else:
             # as outras fontes voltam frescas: isolam o LLM como única variável
             self._ultimo = {"max": self._agora.replace(tzinfo=None)}
@@ -141,8 +148,8 @@ class _CursorFake:
 
 
 class _ConnFake:
-    def __init__(self, agora, flag_aceso, llm_parado):
-        self._c = _CursorFake(agora, flag_aceso, llm_parado)
+    def __init__(self, agora, flag_aceso, llm_parado, atraso_min=0.02):
+        self._c = _CursorFake(agora, flag_aceso, llm_parado, atraso_min)
 
     def cursor(self):
         return self._c
@@ -154,12 +161,13 @@ class _ConnFake:
         pass
 
 
-def _roda_main(vf, monkeypatch, capsys, *, flag_aceso, llm_parado=False):
+def _roda_main(vf, monkeypatch, capsys, *, flag_aceso, llm_parado=False,
+               atraso_min=0.02):
     """Executa o `main()` DE VERDADE — é o código que a abertura roda."""
     agora = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
     monkeypatch.setenv("DB_TARGET", "prod")
     monkeypatch.setattr(vf, "get_connection",
-                        lambda: _ConnFake(agora, flag_aceso, llm_parado))
+                        lambda: _ConnFake(agora, flag_aceso, llm_parado, atraso_min))
     monkeypatch.setattr(vf, "now_utc", lambda: agora)
     monkeypatch.setattr(sys, "argv", ["verifica_frescor.py", "--quiet"])
     code = vf.main()
@@ -241,8 +249,134 @@ def test_nao_medir_nunca_conta_como_saudavel(vf):
     )
 
 
-def test_quiet_nao_engole_canario_aceso(vf):
-    """`--quiet` é o modo que a abertura roda. Se ele filtrasse o canário junto com
-    as fontes verdes, todo o conserto seria inútil no único lugar onde importa."""
+def test_quiet_nao_engole_nenhum_coletor(vf):
+    """`--quiet` é o modo que a abertura roda. Se ele filtrasse um coletor junto com
+    as fontes verdes, todo o conserto seria inútil no único lugar onde importa.
+
+    Antes este teste casava o texto literal da condição, e quebrou no dia em que a
+    linha foi quebrada em várias — ou seja, acusava formatação, não defeito. Agora
+    confere o que importa: que TODO coletor apareça no early-return. Medidor novo
+    esquecido ali é medidor que mede e some, que é pior que medidor ausente.
+    """
     fonte = _SCRIPT.read_text()
-    assert "if a.quiet and not estouros and not nao_medidas and not acesos" in fonte
+    inicio = fonte.index("if (a.quiet")
+    condicao = fonte[inicio:fonte.index("return 0", inicio)]
+    for coletor in ("estouros", "nao_medidas", "acesos", "canarios_nao_medidos",
+                    "atrasos_estourados", "atrasos_nao_medidos"):
+        assert coletor in condicao, (
+            f"`{coletor}` não entra na condição do --quiet: um achado dele seria "
+            f"engolido exatamente na abertura, que é o único lugar onde se lê"
+        )
+
+
+# ===========================================================================
+# 4. O atraso de ENTREGA — a pane que chega em dia e com horas de atraso
+#
+# POR QUE ESTES TESTES EXISTEM (14/11/26). Naquela manhã as três fontes de
+# WhatsApp estavam VERDES e a entrada estava travada havia ~8h: a Evolution só
+# entregava no instante da reconexão (ciclo de ~50 min), em lotes com 7 a 9h de
+# atraso. Cada lote zerava o relógio das fontes de frescor, e como 14/11 caiu num
+# sábado a régua de horas úteis não acusaria nem a hora real. A pane era
+# DEGRADANTE (0,0 min em 03/11 → 10h39 em 11/11) e nenhum medidor de "quando foi
+# a última?" consegue ver degradação — só um de "quanto ela demorou?".
+# ===========================================================================
+
+
+def test_atraso_alto_reprova_a_abertura_e_diz_que_nao_e_silencio(vf, monkeypatch, capsys):
+    """O caso de 14/11: fontes frescas, canário apagado, entrega 7,6h atrasada.
+
+    O `code == 1` é metade do valor; a outra metade é o TEXTO. A leitura natural
+    de uma fonte atrasada é "ninguém falou comigo", e foi essa leitura que em
+    12/11 fez a sessão CoS afirmar ao Renato que a Sandra não respondera quando
+    ela havia respondido em 29 horas.
+    """
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=False,
+                             atraso_min=454.2)
+    assert code == 1, (
+        f"entrega com 7,6h de atraso tem de reprovar a abertura; veio 0:\n{saida}"
+    )
+    assert "atraso de ENTREGA" in saida
+    assert "ATRASADA, NÃO PARADA" in saida, (
+        "sem esta frase a sessão lê fonte atrasada como silêncio e conclui "
+        "'não respondeu' sobre quem respondeu"
+    )
+    assert "7.6h" in saida, "tem de dizer QUANTO, senão não se sabe se é 15 min ou 8h"
+
+
+def test_atraso_normal_fica_quieto(vf, monkeypatch, capsys):
+    """O lado negativo, sem o qual o alarme viraria ruído diário: a entrega
+    saudável é instantânea (p50 medido de 0,02 min em 60 dias), e nesse estado o
+    --quiet não pode imprimir nada nem reprovar."""
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=False,
+                             atraso_min=0.02)
+    assert code == 0, f"entrega instantânea não pode reprovar; veio:\n{saida}"
+    assert saida.strip() == "", f"--quiet com entrega em dia tem de ser mudo; veio:\n{saida}"
+
+
+def test_atraso_logo_abaixo_do_limiar_nao_grita(vf, monkeypatch, capsys):
+    """A borda, no lado seguro. 14 min contra limiar de 15: é 700× o p95 saudável,
+    mas o limiar é o contrato — se esta subisse, a folga de 375× viraria outra
+    coisa sem ninguém decidir."""
+    code, _ = _roda_main(vf, monkeypatch, capsys, flag_aceso=False, atraso_min=14.0)
+    assert code == 0
+
+
+def test_atraso_acima_do_limiar_grita(vf, monkeypatch, capsys):
+    """A borda, no lado que importa: 16 min já é a pane começando. Em 10/11 o
+    atraso médio era de 3h33 e ninguém viu; com esta régua, teria gritado muito
+    antes disso."""
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=False, atraso_min=16.0)
+    assert code == 1, "16 min passa do limiar de 15 e tem de reprovar"
+    assert "16.0 min" in saida
+
+
+def test_atraso_nao_medido_sai_vermelho_nunca_verde(vf, monkeypatch, capsys):
+    """A regra da casa aplicada ao medidor novo: janela vazia é atraso
+    DESCONHECIDO, não atraso ausente. Um medidor que abstém certifica saúde que
+    nunca checou — é como a coluna errada do `copilot.group_messages` passou por
+    fresca em 30/09 ([[feedback_guarda_abstencao_vira_fabrica]])."""
+    code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=False,
+                             atraso_min=None)
+    assert code == 1, f"atraso não medido não pode sair verde; veio 0:\n{saida}"
+    assert "NÃO MEDIDO" in saida
+    assert "atraso desconhecido, não ausente" in saida
+
+
+def test_atraso_mede_enviado_em_e_nao_so_criado_em(vf):
+    """A propriedade que o medidor inteiro depende: a conta é INTERNA ao dado
+    (`criado_em - enviado_em`). Se alguém a trocasse por `agora - criado_em`,
+    voltaria a ser satisfeita pelo dreno do backlog, que é o defeito original."""
+    assert len(vf.ATRASOS) == 1
+    sql = vf.ATRASOS[0]["sql"]
+    assert "criado_em - m.enviado_em" in sql.replace("m2.", "m."), (
+        "o atraso tem de ser a diferença entre as duas colunas, não a idade de uma"
+    )
+    assert "direcao = 'incoming'" in sql, (
+        "sem o filtro de direção o medidor é satisfeito pelo próprio INTEL, que "
+        "grava `outgoing` sem atraso nenhum"
+    )
+    assert vf.ATRASOS[0]["limiar_min"] == 15
+
+
+def test_webhook_bruto_filtra_tipo_de_evento(vf):
+    """O pior dos três furos de 14/11: `connection.update` chega 2×/hora, toda
+    hora (80 eventos em 30h, medidos), então sem filtro de tipo este medidor NÃO
+    PODE estourar enquanto existir conexão — mede o socket, não o dado."""
+    f = [f for f in vf.FONTES if "webhooks" in f["rotulo"]]
+    assert len(f) == 1
+    assert "event_type = 'messages.upsert'" in f[0]["sql"], (
+        "sem o filtro, o keep-alive da conexão mantém a fonte verde com a "
+        "entrada travada — aconteceu em 14/11 por 5h45"
+    )
+
+
+def test_dms_recebidas_medem_a_hora_da_mensagem_nao_da_gravacao(vf):
+    """`criado_em` é quando o INTEL gravou; quem a satisfaz é o dreno do backlog,
+    não a chegada. Em 14/11 a última mensagem real tinha 16h e a fonte marcou
+    verde porque um lote entrou às 03h53."""
+    f = [f for f in vf.FONTES if "DMs recebidas" in f["rotulo"]]
+    assert len(f) == 1
+    assert "max(m.enviado_em)" in f[0]["sql"], (
+        "a coluna é `enviado_em` (hora real da mensagem), não `criado_em`"
+    )
+    assert "m.direcao = 'incoming'" in f[0]["sql"]
