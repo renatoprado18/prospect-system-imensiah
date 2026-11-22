@@ -3067,64 +3067,96 @@ async def _analyze_pdf_inner(data: dict) -> dict:
             "Maximo 800 palavras. Portugues."
         )
 
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    # 25/09/26 — Sonnet → Haiku 4.5. Era US$13,36/mês, o 2º maior
-                    # ralo da API depois do `cos.frente_review`: 175 PDFs a ~19 mil
-                    # tokens de input cada. Haiku custa 1/3 do Sonnet por token
-                    # (US$1/US$5 por milhão contra US$3/US$15) e tem 200K de
-                    # contexto — folga de 10× sobre o maior PDF que passou por aqui.
-                    # A tarefa é extrair e resumir, não raciocinar: o caso de uso do
-                    # Haiku. Se a qualidade cair em documento denso (contrato, tabela
-                    # com números), voltar para Sonnet SÓ aqui e medir de novo.
-                    "model": "claude-haiku-4-5",
-                    "max_tokens": 2000,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
-                            {"type": "text", "text": instruction},
-                        ],
-                    }],
-                },
-            )
+        # 22/11/26 (#1000688) — antes: 1 tentativa e, falhando, `error='claude_400'`
+        # e mais nada. 429/5xx/529 são "tente de novo" por definição; 400/413 são
+        # recusa do PDF, e aí o texto sai localmente (pypdf) em vez de se perder.
+        from doc_extract import _extrair_texto_pdf, _motivo_erro_api
+        resp = None
+        for tentativa in range(3):
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        # 25/09/26 — Sonnet → Haiku 4.5. Era US$13,36/mês, o 2º maior
+                        # ralo da API depois do `cos.frente_review`: 175 PDFs a ~19 mil
+                        # tokens de input cada. Haiku custa 1/3 do Sonnet por token
+                        # (US$1/US$5 por milhão contra US$3/US$15) e tem 200K de
+                        # contexto — folga de 10× sobre o maior PDF que passou por aqui.
+                        # A tarefa é extrair e resumir, não raciocinar: o caso de uso do
+                        # Haiku. Se a qualidade cair em documento denso (contrato, tabela
+                        # com números), voltar para Sonnet SÓ aqui e medir de novo.
+                        "model": "claude-haiku-4-5",
+                        "max_tokens": 2000,
+                        "messages": [{
+                            "role": "user",
+                            "content": [
+                                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+                                {"type": "text", "text": instruction},
+                            ],
+                        }],
+                    },
+                )
+            if resp.status_code not in (429, 500, 502, 503, 504, 529) or tentativa == 2:
+                break
+            await asyncio.sleep(5 * (3 ** tentativa))  # 5s, 15s
         if resp.status_code != 200:
-            logger.error(f"Claude PDF failed: {resp.status_code} - {resp.text[:200]}")
-            _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
-                                size_bytes=size_bytes, error=f"claude_{resp.status_code}")
-            await _maybe_respond("Erro ao analisar PDF.")
-            return {"error": f"pdf_failed: {resp.status_code}"}
+            motivo = _motivo_erro_api(resp.status_code, resp.text)
+            logger.error(f"Claude PDF failed: {motivo}")
+            texto_local, motor, erro_local = _extrair_texto_pdf(base64.b64decode(pdf_b64))
+            if texto_local:
+                # Fica o motivo do Claude no `error` como diagnóstico; quem lê
+                # conversa olha `extracted_text`, que agora existe.
+                att_id = _save_wa_attachment(
+                    message_id, phone, "pdf",
+                    original_filename=filename, mime_type="application/pdf",
+                    size_bytes=size_bytes, extracted_text=texto_local[:200000],
+                    extraction_model=motor, error=f"{motivo} -> fallback {motor}"[:400],
+                )
+                logger.info(f"PDF fallback {motor}: attachment #{att_id}, {len(texto_local)} chars")
+                if silent:
+                    return {"status": "success", "silent": True, "attachment_id": att_id,
+                            "chars": len(texto_local), "fallback": motor}
+                extracted, cost = texto_local[:8000], 0.0
+            else:
+                _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
+                                    size_bytes=size_bytes,
+                                    error=f"{motivo} | fallback: {erro_local}"[:400])
+                await _maybe_respond("Erro ao analisar PDF.")
+                return {"error": f"pdf_failed: {resp.status_code}"}
 
-        result = resp.json()
-        extracted = result.get("content", [{}])[0].get("text", "")
-        # 10/08/26 — aqui havia uma TERCEIRA cópia da tabela de preços, inline
-        # e incompleta (ignorava cache read/write, que no PDF é justamente onde
-        # o volume está). Agora sai do mesmo `compute_cost` do resto: o valor
-        # gravado em wa_attachments e o de tonia_llm_usage não podem discordar.
-        cost = llm_usage.record_response(
-            "worker.pdf_analyze", "claude-haiku-4-5", result,
-            metadata={"filename": filename, "size_bytes": size_bytes},
-        ) or 0.0
+        if resp.status_code == 200:
+            result = resp.json()
+            extracted = result.get("content", [{}])[0].get("text", "")
+            # 10/08/26 — aqui havia uma TERCEIRA cópia da tabela de preços, inline
+            # e incompleta (ignorava cache read/write, que no PDF é justamente onde
+            # o volume está). Agora sai do mesmo `compute_cost` do resto: o valor
+            # gravado em wa_attachments e o de tonia_llm_usage não podem discordar.
+            cost = llm_usage.record_response(
+                "worker.pdf_analyze", "claude-haiku-4-5", result,
+                metadata={"filename": filename, "size_bytes": size_bytes},
+            ) or 0.0
 
-        if not extracted:
-            await _maybe_respond("Nao consegui extrair conteudo do PDF.")
-            return {"error": "empty_extraction"}
+            if not extracted:
+                # Grava a falha: sem linha, o anexo some como se nunca tivesse existido.
+                _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
+                                    size_bytes=size_bytes, extraction_model="claude-haiku-4-5",
+                                    error="empty_extraction")
+                await _maybe_respond("Nao consegui extrair conteudo do PDF.")
+                return {"error": "empty_extraction"}
 
-        # 3. Persiste
-        att_id = _save_wa_attachment(
-            message_id, phone, "pdf",
-            original_filename=filename, mime_type="application/pdf",
-            size_bytes=size_bytes, extracted_text=extracted,
-            extraction_model="claude-sonnet-4-6", extraction_cost_usd=cost,
-        )
-        logger.info(f"PDF analyzed: attachment #{att_id}, {len(extracted)} chars, ${cost:.4f}")
+            # 3. Persiste
+            att_id = _save_wa_attachment(
+                message_id, phone, "pdf",
+                original_filename=filename, mime_type="application/pdf",
+                size_bytes=size_bytes, extracted_text=extracted,
+                extraction_model="claude-haiku-4-5", extraction_cost_usd=cost,
+            )
+            logger.info(f"PDF analyzed: attachment #{att_id}, {len(extracted)} chars, ${cost:.4f}")
 
         # Silent (main instance/group): so persiste em wa_attachments. NAO encaminha
         # pro bot — instancia principal ja roda analyze_message_in_background propria.
