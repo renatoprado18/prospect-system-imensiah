@@ -330,16 +330,61 @@ def test_atraso_acima_do_limiar_grita(vf, monkeypatch, capsys):
     assert "16.0 min" in saida
 
 
-def test_atraso_nao_medido_sai_vermelho_nunca_verde(vf, monkeypatch, capsys):
-    """A regra da casa aplicada ao medidor novo: janela vazia é atraso
-    DESCONHECIDO, não atraso ausente. Um medidor que abstém certifica saúde que
-    nunca checou — é como a coluna errada do `copilot.group_messages` passou por
-    fresca em 30/09 ([[feedback_guarda_abstencao_vira_fabrica]])."""
+def test_atraso_sem_amostra_nao_reprova_mas_tambem_nao_diz_em_dia(vf, monkeypatch, capsys):
+    """23/11/26 — ESTE TESTE EXIGIA exit 1 com atraso não medido, e a exigência
+    foi revista. Não é regressão: a regra foi PARTIDA em dois casos, porque
+    tratá-los igual fabricava alarme.
+
+    Depois que a janela passou a ser de tempo (3h/5 msgs, para o medidor parar de
+    repetir o veredito de um episódio encerrado), a ausência de amostra deixou de
+    ser sintoma e passou a ser rotina: 30% das horas de um período de 11 dias caem
+    aí, porque ninguém escreve às 4h. Vermelho em 30% das aberturas é a própria
+    "fábrica de falso positivo" que o `wa_ingest_heartbeat` documenta no
+    cabeçalho, e alarme que grita a toa é desligado na primeira semana.
+
+    O que a regra original protegia continua protegido, por dois lados: a query
+    que FALHA segue reprovando (teste abaixo), e o caso grave — não chegar NADA —
+    é de `WA · DMs recebidas`, medido em separado. O que não se admite é afirmar
+    saúde: o rodapé tem de dizer que não mediu
+    ([[feedback_guarda_abstencao_vira_fabrica]])."""
     code, saida = _roda_main(vf, monkeypatch, capsys, flag_aceso=False,
                              atraso_min=None)
-    assert code == 1, f"atraso não medido não pode sair verde; veio 0:\n{saida}"
+    assert code == 0, f"sem amostra é rotina, não pode reprovar; veio 1:\n{saida}"
+    assert "entrega em dia" not in saida, (
+        "não se afirma saúde a partir de um número que não existe"
+    )
+
+
+def test_atraso_com_query_QUEBRADA_segue_reprovando(vf, monkeypatch, capsys):
+    """O outro lado da regra partida acima, e o que ela sempre protegeu.
+
+    Amostra ausente é rotina; query que estoura é o medidor quebrado, e aí vale
+    integralmente o [[feedback_guarda_abstencao_vira_fabrica]]: sem baseline não
+    há verificação, e um verificador calado certifica conformidade que nunca
+    checou. Se a coluna mudar de nome, se o JOIN quebrar, se o tipo mudar — a
+    abertura tem de parar, não seguir verde."""
+    class _CursorQuebrado(_CursorFake):
+        def execute(self, sql, *a):
+            if "percentile_cont" in sql:
+                raise RuntimeError('column "enviado_em" does not exist')
+            super().execute(sql, *a)
+
+    agora = datetime(2026, 10, 5, 14, 0, tzinfo=timezone.utc)
+
+    class _ConnQuebrado(_ConnFake):
+        def cursor(self, *a, **k):
+            return _CursorQuebrado(agora, False, False)
+
+    monkeypatch.setenv("DB_TARGET", "prod")
+    monkeypatch.setattr(vf, "get_connection", lambda: _ConnQuebrado(agora, False, False))
+    monkeypatch.setattr(vf, "now_utc", lambda: agora)
+    monkeypatch.setattr(sys, "argv", ["verifica_frescor.py", "--quiet"])
+    code = vf.main()
+    saida = capsys.readouterr().out
+
+    assert code == 1, f"medidor quebrado tem de reprovar a abertura; veio 0:\n{saida}"
     assert "NÃO MEDIDO" in saida
-    assert "atraso desconhecido, não ausente" in saida
+    assert "medidor quebrado não certifica nada" in saida
 
 
 def test_atraso_mede_enviado_em_e_nao_so_criado_em(vf):

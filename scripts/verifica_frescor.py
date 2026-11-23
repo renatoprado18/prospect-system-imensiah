@@ -244,6 +244,18 @@ CANARIOS = [
 ATRASOS = [
     {
         "rotulo": "WA · atraso de ENTREGA (entre a mensagem e a gravação)",
+        # 🔴 A JANELA E DE TEMPO **E** DE CONTAGEM (23/11/26), e o `HAVING` e o
+        # que faz amostra pequena sair NULL em vez de virar veredito. Só
+        # "ultimas 30 gravadas" nao distingue "o que chega agora chega velho" de
+        # "as ultimas 30 sao de um episodio encerrado": na madrugada do conserto,
+        # com a entrega restaurada e mensagem entrando em 0 min, esta regua
+        # seguia acusando 1350 min porque nenhuma DM nova havia entrado e a
+        # janela continuava cheia do backlog do dia anterior.
+        #
+        # 3h/5 msgs validados por simulacao hora a hora sobre 11 dias: pegam as
+        # panes de 12, 14 e 17-22/11 e ficam verdes nos dias saos (13/11: 9
+        # horas verdes; 16/11: 12). Fonte que nao pode ser medida sai como NAO
+        # MEDIDA, nunca verde -- e esse contrato o script ja respeita.
         "sql": """SELECT percentile_cont(0.5) WITHIN GROUP (
                       ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0)
                     FROM (SELECT m2.criado_em, m2.enviado_em
@@ -252,8 +264,10 @@ ATRASOS = [
                            WHERE c.canal ILIKE '%whats%'
                              AND m2.direcao = 'incoming'
                              AND m2.enviado_em IS NOT NULL
+                             AND m2.criado_em > now() - interval '3 hours'
                            ORDER BY m2.criado_em DESC
-                           LIMIT 30) m""",
+                           LIMIT 30) m
+                   HAVING count(*) >= 5""",
         "limiar_min": 15,
         "nota": ("a Evolution só entrega no instante da reconexão (ciclo de ~50 min "
                  "medido em 14/11) ⇒ o backlog cresce e nenhum medidor de frescor vê"),
@@ -350,7 +364,19 @@ def main() -> int:
     # Latência. Mesma regra de honestidade das fontes: não poder medir NÃO sai
     # verde. Um atraso que não pôde ser calculado é um atraso desconhecido, e foi
     # um atraso desconhecido que passou por verde durante 9 dias.
-    atrasos, atrasos_nao_medidos = [], []
+    # 🔴 SÃO DOIS "NÃO MEDIDO" DIFERENTES, e tratá-los igual fabrica alarme
+    # (23/11/26). Query que FALHA é defeito do medidor e sai vermelho — um
+    # verificador quebrado certifica conformidade que nunca checou. Mas AMOSTRA
+    # INSUFICIENTE tem causa benigna e conhecida: ninguém escreve às 4h da manhã.
+    # Depois que a janela passou a ser de tempo (3h/5 msgs), 30% das horas de um
+    # período de 11 dias caem aí — vermelho em 30% das aberturas é exatamente a
+    # "fábrica de falso positivo" que o `wa_ingest_heartbeat` documenta no próprio
+    # cabeçalho, e alarme que grita a toa é desligado na primeira semana.
+    #
+    # O caso grave — não chegar NADA — não fica descoberto: quem responde por ele
+    # é `WA · DMs recebidas` (frescor), que é medido em separado. Aqui a ausência
+    # de amostra é dita em branco, sem veredito e sem exit 1.
+    atrasos, atrasos_nao_medidos, atrasos_sem_amostra = [], [], []
     for t in ATRASOS:
         try:
             cur.execute(t["sql"])
@@ -360,7 +386,7 @@ def main() -> int:
             atrasos_nao_medidos.append((t["rotulo"], str(e).strip().splitlines()[0]))
             continue
         if valor is None:
-            atrasos_nao_medidos.append((t["rotulo"], "janela vazia — nenhuma mensagem para comparar"))
+            atrasos_sem_amostra.append(t["rotulo"])
             continue
         minutos = float(valor)
         atrasos.append((minutos > t["limiar_min"], t["rotulo"], minutos, t["limiar_min"], t["nota"]))
@@ -411,7 +437,13 @@ def main() -> int:
             print(f"      ↳ {nota}")
     for rotulo, erro in atrasos_nao_medidos:
         print(f"  🔴 {rotulo}: NÃO MEDIDO — {erro}")
-        print("      ↳ atraso que não pôde ser calculado é atraso desconhecido, não ausente")
+        print("      ↳ a query falhou: medidor quebrado não certifica nada")
+    for rotulo in atrasos_sem_amostra:
+        if a.quiet:
+            continue
+        print(f"  ⚪ {rotulo}: sem amostra na janela (menos de 5 mensagens em 3h)")
+        print("      ↳ causa benigna — ninguém escreveu. Se o canal tivesse PARADO, "
+              "quem acusaria é `WA · DMs recebidas`, acima")
 
     # O FLAG ATRASA A RECUPERAÇÃO — descoberto 05/10, uma hora depois de armar
     # isto. O saldo foi recarregado ~15h UTC e as chamadas voltaram no mesmo
@@ -446,7 +478,14 @@ def main() -> int:
 
     if (not estouros and not nao_medidas and not acesos and not canarios_nao_medidos
             and not atrasos_estourados and not atrasos_nao_medidos):
-        print("  🟢 todas as fontes dentro do limiar, entrega em dia e nenhum canário aceso.")
+        # "entrega em dia" só se ela foi MEDIDA. Sem amostra, a frase era a
+        # mesma mentira do defeito que esta rodada consertou, na direção oposta:
+        # afirmar saúde a partir de um número que não existe.
+        if atrasos_sem_amostra:
+            print("  🟢 todas as fontes dentro do limiar e nenhum canário aceso — "
+                  "⚪ a entrega NÃO foi medida (sem amostra).")
+        else:
+            print("  🟢 todas as fontes dentro do limiar, entrega em dia e nenhum canário aceso.")
         return 0
 
     if atrasos_estourados:

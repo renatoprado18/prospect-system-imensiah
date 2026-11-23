@@ -131,6 +131,24 @@ ATRASO_ENTREGA_MIN = int((os.getenv("WA_HEARTBEAT_ATRASO_MIN") or "15").strip())
 # da janela recente esteja atrasada pra gritar.
 ATRASO_JANELA = 30
 
+# 🔴 E A JANELA TAMBEM E DE TEMPO, nao so de contagem (23/11/26). So "ultimas 30
+# gravadas" nao distingue "o que chega AGORA chega velho" de "as ultimas 30 sao
+# de um episodio que JA ACABOU". Medido no proprio conserto da madrugada: com o
+# canal restaurado e mensagem entrando em 0 min, o heartbeat seguia respondendo
+# `atraso_entrega_min: 1350.8` e `dias_seguidos: 6`, porque nenhuma DM nova havia
+# entrado ainda e a janela continuava cheia do backlog do dia anterior. O alarme
+# que tinha acabado de acertar passaria a mentir na direcao oposta, e o aviso
+# chega no WhatsApp do Renato a cada ciclo.
+#
+# 3h e 5 mensagens, escolhidos por simulacao hora a hora sobre 11 dias de
+# `messages` (nao estimados): pega as panes conhecidas de 12, 14 e 17-22/11,
+# fica VERDE nos dois dias saos (13/11 com 9 horas verdes, 16/11 com 12) e
+# devolve "nao medido" nas horas sem amostra, em vez de repetir o veredito
+# velho. Amostra pequena nao vira veredito -- mediana de 1 ou 2 mensagens e
+# ruido com cara de medicao.
+ATRASO_JANELA_H = int((os.getenv("WA_HEARTBEAT_ATRASO_JANELA_H") or "3").strip())
+ATRASO_MIN_AMOSTRA = int((os.getenv("WA_HEARTBEAT_ATRASO_MIN_AMOSTRA") or "5").strip())
+
 
 def _dias_atrasados_seguidos() -> int:
     """Ha quantos dias SEGUIDOS a entrega mediana do dia passa do limiar.
@@ -197,27 +215,39 @@ def _atraso_de_entrega_min():
     exatamente o que satisfazia os medidores de `criado_em`
     ([[feedback_medidor_de_ingestao_satisfeito_pelo_backlog]]).
 
-    Devolve `None` quando nao ha janela para medir. Nao-saber nao vira alerta,
-    mas tambem nao vira "em dia": quem chama distingue os dois.
+    ⚠️ A janela e de TEMPO **e** de contagem (ver `ATRASO_JANELA_H`). So contagem
+    nao distingue "o que chega agora chega velho" de "as ultimas 30 pertencem a um
+    episodio encerrado", e foi assim que o medidor seguiu acusando 1350 min com a
+    entrega ja restaurada em 0 min.
+
+    Devolve `None` quando nao ha amostra suficiente na janela. Nao-saber nao vira
+    alerta, mas tambem nao vira "em dia": quem chama distingue os dois. Quem cobre
+    o caso "nao chega NADA" e o frescor (`quieto_min`) e o comparativo, nao este
+    detector -- a divisao e de proposito: este responde "o que chega, chega
+    velho?", e sem nada chegando a pergunta nao tem resposta.
     """
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT percentile_cont(0.5) WITHIN GROUP (
-                      ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0
-                   ) AS p50
+            """SELECT count(*) AS n,
+                      percentile_cont(0.5) WITHIN GROUP (
+                          ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0
+                      ) AS p50
                  FROM (SELECT m2.criado_em, m2.enviado_em
                          FROM messages m2
                          JOIN conversations c ON c.id = m2.conversation_id
                         WHERE c.canal ILIKE %s
                           AND m2.direcao = 'incoming'
                           AND m2.enviado_em IS NOT NULL
+                          AND m2.criado_em > now() - make_interval(hours => %s)
                         ORDER BY m2.criado_em DESC
                         LIMIT %s) m""",
-            ("%whats%", ATRASO_JANELA),
+            ("%whats%", ATRASO_JANELA_H, ATRASO_JANELA),
         )
         row = cur.fetchone()
-        valor = row["p50"] if row else None
+        if not row or (row["n"] or 0) < ATRASO_MIN_AMOSTRA:
+            return None
+        valor = row["p50"]
         return None if valor is None else float(valor)
 
 
@@ -370,7 +400,10 @@ def checar_ingestao() -> Dict:
         if atraso is None:
             # Nao medir nao e estar em dia: diz-se alto, sem virar alerta.
             veredito["atraso_entrega_min"] = None
-            veredito["detalhe"] = "atraso de entrega NAO MEDIDO (janela vazia)"
+            veredito["detalhe"] = (
+                f"atraso de entrega NAO MEDIDO (menos de {ATRASO_MIN_AMOSTRA} "
+                f"mensagens nas ultimas {ATRASO_JANELA_H}h)"
+            )
         else:
             veredito["atraso_entrega_min"] = round(atraso, 1)
         return veredito
