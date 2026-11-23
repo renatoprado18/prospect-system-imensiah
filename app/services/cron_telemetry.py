@@ -143,6 +143,42 @@ def _has_embedded_errors(result: Any) -> tuple:
                 details.append(f"{name}: {msg}")
             return True, f"{len(bad_steps)}/{len(steps)} step-errors: " + "; ".join(details)
 
+    # 7. contador de erro em SUB-DICT de um nivel (`push.errors`,
+    # `por_status.erro`, `snapshot.failed`...). As reguas 1 a 6 olham o TOPO do
+    # payload ou os dois nomes convencionados (`results`, `steps`): um cron que
+    # agrupa o proprio resultado por etapa esconde o contador uma camada abaixo
+    # e passa verde.
+    #
+    # Medido em 22/11/26 sobre 30 dias de `cron_runs` (29.727 runs): 927
+    # marcados `success` com erro em sub-dict, em 4 jobs, e NENHUM falso
+    # positivo na amostra — push-google-contacts 720 (um contato falhando
+    # 24x/dia, com `"status": "ok"` no mesmo corpo), sync-tasks 73,
+    # sync-conselhoos-raci 30 (FK de contato inexistente que aborta a transacao
+    # e leva Vallen e Alba juntas), platform-costs-daily 30 (custo do Railway
+    # sem coletar por `Not Authorized`). Os quatro eram cronicos.
+    #
+    # Nome EXATO, nao substring: `last_error` guarda o erro mais recente
+    # conhecido (714 ocorrencias), nao uma falha deste run, e `error_samples` e
+    # a amostra do mesmo contador que `errors` ja reporta — casar por substring
+    # acenderia alarme sobre historico e contaria o mesmo erro duas vezes. Valor
+    # so int>0 ou lista nao-vazia, igual a regua do topo: string nao e contagem.
+    CHAVES_DE_ERRO = ("errors", "erro", "erros", "failed", "failures")
+    achados = []
+    for nome, sub in result.items():
+        if nome in ("steps", "results") or not isinstance(sub, dict):
+            continue
+        for chave in CHAVES_DE_ERRO:
+            valor = sub.get(chave)
+            if isinstance(valor, bool):
+                continue
+            if isinstance(valor, int) and valor > 0:
+                achados.append(f"{nome}.{chave}={valor}")
+            elif isinstance(valor, list) and valor:
+                primeiro = str(valor[0])[:120]
+                achados.append(f"{nome}.{chave}[{len(valor)}]: {primeiro}")
+    if achados:
+        return True, "sub-dict errors: " + "; ".join(achados[:3])
+
     return False, ""
 
 

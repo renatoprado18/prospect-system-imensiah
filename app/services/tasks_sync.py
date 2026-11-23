@@ -67,6 +67,45 @@ class TasksSyncService:
 
     # ==================== PUSH: Local -> Google ====================
 
+    # O Google Tasks recusa `notes` acima de 8192 caracteres com um 400
+    # "Request contains an invalid argument." que nao diz qual argumento e nem
+    # cita o tamanho. Limite medido em 22/11/26 contra a API, com sonda
+    # descartavel: 8192 passa, 8193 nao. Antes disso o push mandava a descricao
+    # inteira e 5 tasks (de 9.950 a 18.553 caracteres) falhavam a CADA run, duas
+    # vezes por dia desde que foram criadas — e o cron se declarava `success`.
+    GOOGLE_NOTES_MAX = 8192
+
+    @classmethod
+    def _notes_para_google(cls, descricao: Optional[str], task_id: int) -> Optional[str]:
+        """Corta `notes` no limite do Google, dizendo onde esta a integra.
+
+        Corta no ultimo fim de linha antes do teto pra nao partir palavra no
+        meio, e o rodape entra DENTRO do orcamento (somar depois estouraria o
+        limite outra vez, e o 400 nao diz que foi isso).
+        """
+        if not descricao or len(descricao) <= cls.GOOGLE_NOTES_MAX:
+            return descricao
+
+        rodape = f"\n\n[...] cortado no limite do Google Tasks — integra na task #{task_id} do INTEL"
+        teto = cls.GOOGLE_NOTES_MAX - len(rodape)
+        corte = descricao[:teto]
+        ultima_quebra = corte.rfind("\n")
+        if ultima_quebra > teto // 2:
+            corte = corte[:ultima_quebra]
+        return corte + rodape
+
+    @staticmethod
+    def _e_404(erro: Any) -> bool:
+        """O erro do Google e um 404 (entidade inexistente)?
+
+        A integracao devolve `response.text` cru, nao o status, entao a leitura
+        e feita sobre o corpo. Exige as DUAS marcas (codigo e motivo) pra nao
+        confundir com um 400 que por acaso mencione 'not found' no texto.
+        """
+        if not isinstance(erro, str):
+            return False
+        return '"code": 404' in erro and "not found" in erro.lower()
+
     async def push_task_to_google(self, task_id: int) -> Dict[str, Any]:
         """
         Envia task local para Google Tasks.
@@ -97,6 +136,7 @@ class TasksSyncService:
             google_status = "completed"
 
         tasklist_id = task.get("google_tasklist_id") or "@default"
+        notes = self._notes_para_google(task.get("descricao"), task_id)
 
         if task.get("google_task_id"):
             # Update existing
@@ -104,7 +144,7 @@ class TasksSyncService:
                 access_token=access_token,
                 task_id=task["google_task_id"],
                 title=task["titulo"],
-                notes=task.get("descricao"),
+                notes=notes,
                 due=due_datetime,
                 status=google_status,
                 tasklist_id=tasklist_id
@@ -114,12 +154,36 @@ class TasksSyncService:
             result = await self.tasks_api.create_task(
                 access_token=access_token,
                 title=task["titulo"],
-                notes=task.get("descricao"),
+                notes=notes,
                 due=due_datetime,
                 tasklist_id=tasklist_id
             )
 
         if "error" in result:
+            # 404 no update = o `google_task_id` aponta pra task que ja nao
+            # existe la (apagada no Google). Insistir nela e tentar pra sempre:
+            # as #64 e #84 falharam 2x/dia de abril a 22/11/26. Soltar o id
+            # orfao resolve pelas regras que ja existem — `completed` sem id sai
+            # da fila do `push_all_pending` (o create nao aceita status), e
+            # `pending` cai no create no run seguinte, recriando a task no
+            # Google. NAO recriar aqui: ressuscitaria o que foi apagado de
+            # proposito, e quem apaga no Google e o Renato.
+            if task.get("google_task_id") and self._e_404(result["error"]):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE tasks
+                        SET google_task_id = NULL,
+                            etag = NULL,
+                            last_synced_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (task_id,))
+                    conn.commit()
+                logger.warning(
+                    f"task_id={task_id}: google_task_id orfao (404 no update) — "
+                    f"id soltado; {'sai da fila (completed)' if google_status == 'completed' else 'sera recriada no proximo run'}"
+                )
+                return {"error": "google_task_id_orfao", "orfao_resolvido": True}
             return result
 
         # Atualizar task local com ID do Google
@@ -161,11 +225,17 @@ class TasksSyncService:
             """)
             pending = cursor.fetchall()
 
-        results = {"pushed": 0, "errors": 0, "error_samples": []}
+        # `tentadas` existe porque `pushed + errors` nao fecha a conta desde que
+        # o orfao passou a ser resolvido em vez de contado como falha: sem o
+        # total, 0 erros e 0 pushes e indistinguivel de fila vazia.
+        results = {"pushed": 0, "errors": 0, "orfaos_resolvidos": 0,
+                   "tentadas": len(pending), "error_samples": []}
 
         for row in pending:
             result = await self.push_task_to_google(row["id"])
-            if "error" in result:
+            if result.get("orfao_resolvido"):
+                results["orfaos_resolvidos"] += 1
+            elif "error" in result:
                 results["errors"] += 1
                 err_str = str(result.get("error"))[:200]
                 logger.warning(f"push fail task_id={row['id']}: {err_str}")
