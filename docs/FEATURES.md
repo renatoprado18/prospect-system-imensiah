@@ -1034,3 +1034,58 @@ abertura parar todo dia por uma condição que só ele resolve).
     DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py
     DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py --quiet
     DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py --balde sem_sinal --limite 40
+
+### `scripts/repactua_prazos.py` — o gesto: remarcar, nunca arquivar (23/11/2026)
+
+Passo 2 da frente de prazos. **Mexe só na data.** Nada é fechado, cancelado ou
+apagado — a assimetria é de risco, não de gosto: remarcar é reversível e não perde
+informação, arquivar perde. Age **apenas no balde `viva`** (lista explícita
+`BALDES_ELEGIVEIS`, para que balde novo não vire alvo por omissão); o 🟡 e o 🔵
+ficam de fora por serem, respectivamente, teto de medição e imensurável.
+
+**Resultado da 1ª execução (23/11):** 145 repactuadas ⇒ atrasadas **381 → 236**,
+de **66% → 41%** das abertas, medido pela mesma régua do passo 1.
+
+**As três armadilhas do banco, cada uma tratada:**
+1. `atualizado_em = NOW()` não é cosmético — `tasks_sync._update_from_google` tem
+   `if local_atualizado > local_synced: return "skipped"`. Sem o carimbo, o pull
+   do Google **sobrescreve a data de volta** (mesma classe do defeito de 22/11, em
+   que o pull regravou o texto que o push cortara).
+2. `sync_status='pending_push'` — é o que `push_all_pending` seleciona.
+3. **Não recriar pico.** Já havia precedente (33 tarefas vencendo em 28/08, 30 em
+   25/08). Datas escalonadas por FRENTE em round-robin.
+
+🔑 **TRÊS versões, e cada uma errou de um jeito que a seguinte conserta** — o
+histórico está no docstring porque é o conteúdo da peça:
+- **v1**, só escalonando por frente, mandou a **#999653 (Pitangueiras)** para
+  07/12 — gate no dia seguinte, 🔴🔴 no board.
+- **v2**, "quente = qualquer movimento ≤3d", tornou **155 das 204** quentes (com o
+  WhatsApp ativo todo contato falou) e devolveu o pico.
+- **v3** separou `ult_mov_direto` (tarefa/frente) de `ult_movimento` (inclui
+  contato): para o BALDE o contato é sinal legítimo de vida; para a DATA mede
+  vitalidade do relacionamento, não urgência da tarefa. `prioridade` não serviria
+  — vale 5 na Pitangueiras e em "acompanhar lead alemã", e 98 das 381 têm o mesmo 5.
+- **E aí a Pitangueiras voltou a 07/12**, pois seu movimento direto é de 25/09.
+  **Conclusão que virou desenho: a urgência real vive FORA do INTEL** (no board
+  executivo), e gesto automático não pode inventá-la. Nasceu o 3º grupo —
+  **59 tarefas "só o contato se moveu" NÃO são repactuadas** e saem numa lista
+  para decisão humana. Abstenção **listada**, nunca calada.
+
+**Reversibilidade provada antes do lote**, não prometida: aplicou em 1 tarefa
+(26/08 → 30/11), rodou `run_smart_undo` (o mesmo que o `desfaz N` do WhatsApp
+chama — ele já aceitava `task_rescheduled`, nada precisou mudar), data exata
+restaurada e ação marcada `undone`. E `--desfazer --aplicar` reverte o lote
+inteiro pelo caminho oficial: exigir 145 comandos para desfazer o que levou um
+seria teatro de reversibilidade. Trava otimista `AND data_vencimento = <lida>` em
+cada UPDATE — se outra sessão ou o pull mexeram, conta como conflito em vez de
+sobrescrever.
+
+⚠️ **Débito declarado:** carimbar `atualizado_em` faz a tarefa marcar
+`mov_proprio=True` na triagem até o push mover `last_synced_at` — **o medidor vê o
+próprio gesto**. Não corrompe decisão (o balde já era `viva`), mas quem for medir
+adoção precisa excluir `agent_actions.source='repactua_prazos'`.
+
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/repactua_prazos.py            # dry-run
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/repactua_prazos.py --aplicar
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/repactua_prazos.py --task 999981 --aplicar
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/repactua_prazos.py --desfazer --aplicar

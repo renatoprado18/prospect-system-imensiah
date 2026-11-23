@@ -70,7 +70,7 @@ STATUS_FRENTE_MORTA = ("concluido", "arquivado")
 SQL = """
 WITH base AS (
     SELECT t.id, t.titulo, t.origem, t.project_id, t.contact_id, t.status,
-           t.data_vencimento, t.data_criacao,
+           t.data_vencimento, t.data_criacao, t.atualizado_em, t.last_synced_at,
            (t.google_task_id IS NOT NULL) AS tem_google,
            EXTRACT(EPOCH FROM (now() - t.data_vencimento)) / 86400 AS dias_vencida,
            -- MOVIMENTO PRÓPRIO: `atualizado_em` sozinho não serve — o sync do
@@ -109,11 +109,38 @@ sinais AS (
            )) AS mov_contato,
            -- MENSURABILIDADE: sem frente e sem contato não há o que medir. Este
            -- flag é o que impede o balde de descarte de engolir o imensurável.
-           (b.project_id IS NOT NULL OR b.contact_id IS NOT NULL) AS mensuravel
+           (b.project_id IS NOT NULL OR b.contact_id IS NOT NULL) AS mensuravel,
+           -- QUÃO RECENTE é o movimento, não só se existe. Sem isto o passo 2
+           -- empurrava para 07/12 a #999653 (Pitangueiras), que tinha mensagem do
+           -- contato NAQUELE dia e gate no dia seguinte. `prioridade` não resolve:
+           -- ela vale 5 tanto nessa quanto em "acompanhar lead alemã", e 98 das
+           -- 381 compartilham o mesmo 5. GREATEST ignora NULL no Postgres.
+           GREATEST(
+             CASE WHEN b.mov_proprio THEN b.atualizado_em END,
+             (SELECT max(n.criado_em) FROM project_notes n WHERE n.project_id = b.project_id),
+             (SELECT max(t3.data_conclusao) FROM tasks t3 WHERE t3.project_id = b.project_id),
+             (SELECT max(coalesce(m.enviado_em, m.criado_em)) FROM messages m
+               WHERE m.contact_id = b.contact_id)
+           ) AS ult_movimento,
+           -- 🔑 MOVIMENTO DIRETO — sem o contato, e a distinção é o conserto de
+           -- 23/11/26. Para decidir o BALDE, "o contato falou" é sinal legítimo de
+           -- vida. Para decidir a DATA, não serve: mede vitalidade do
+           -- relacionamento, não urgência da tarefa. Usando o contato, 155 das 204
+           -- viravam "quentes" (com o WhatsApp ativo, todo contato falou nos
+           -- últimos 3 dias) e o escalonamento devolvia o pico que existe para
+           -- evitar. Aqui ficam só os sinais que falam DA TAREFA ou DA FRENTE.
+           GREATEST(
+             CASE WHEN b.mov_proprio THEN b.atualizado_em END,
+             (SELECT max(n.criado_em) FROM project_notes n WHERE n.project_id = b.project_id),
+             (SELECT max(t4.data_conclusao) FROM tasks t4 WHERE t4.project_id = b.project_id)
+           ) AS ult_mov_direto
       FROM base b
 )
 SELECT id, titulo, origem, project_id, contact_id, dias_vencida, tem_google,
        mov_proprio, mov_frente, mov_contato, mensuravel, frente_status, frente_nome,
+       data_vencimento, ult_movimento, ult_mov_direto,
+       EXTRACT(EPOCH FROM (now() - ult_movimento)) / 86400 AS dias_movimento,
+       EXTRACT(EPOCH FROM (now() - ult_mov_direto)) / 86400 AS dias_mov_direto,
        CASE
          WHEN frente_status = ANY(%(frente_morta)s)            THEN 'fantasma'
          WHEN mov_proprio OR mov_frente OR mov_contato         THEN 'viva'
