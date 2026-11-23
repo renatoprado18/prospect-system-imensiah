@@ -352,9 +352,16 @@ def test_dedup_do_atraso_e_por_faixa_nao_por_lote():
     assert _faixa_atraso(240) == "4h"
     assert _faixa_atraso(454.2) == "4h", "o atraso real de 14/11 (7,6h)"
     assert _faixa_atraso(720) == "12h"
-    assert _faixa_atraso(5000) == "12h"
+    # 22/11/26 — ESTA LINHA DIZIA `_faixa_atraso(5000) == "12h"`, travando a
+    # saturacao como desejada. Foi decisao revista, nao regressao: de 18 a 22/11
+    # a mediana diaria ficou entre 20h e 24h, ou seja o fenomeno real passou do
+    # teto da escala. Com o teto em 12h, uma piora de 20h para 48h nao mudava a
+    # chave e nao gerava aviso — a escala parava de medir exatamente onde o
+    # problema ficava grave. Os patamares 24h e 48h+ existem por isso.
+    assert _faixa_atraso(5000) == "48h+"
     # patamares distintos => chaves distintas => a degradacao aparece
     assert len({_faixa_atraso(m) for m in (16, 90, 300, 900)}) == 4
+    assert len({_faixa_atraso(m) for m in (900, 2000, 5000)}) == 3
 
 
 # --------------------------------------------------------------- integracao --

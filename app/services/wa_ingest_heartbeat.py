@@ -132,6 +132,53 @@ ATRASO_ENTREGA_MIN = int((os.getenv("WA_HEARTBEAT_ATRASO_MIN") or "15").strip())
 ATRASO_JANELA = 30
 
 
+def _dias_atrasados_seguidos() -> int:
+    """Ha quantos dias SEGUIDOS a entrega mediana do dia passa do limiar.
+
+    🔴 POR QUE PRECISA EXISTIR (22/11/26). O aviso de atraso saiu 42 vezes em 9
+    dias, com o mesmo texto -- "as mensagens estao presas, vao aparecer depois,
+    nao concluir que alguem nao respondeu enquanto isto durar". No primeiro dia
+    aquilo descrevia um incidente. No quinto, descrevia o regime normal, e
+    seguia escrito como se fosse transitorio. Medido por dia de gravacao: 16/11
+    0,0 min (o conserto do dia anterior funcionou por UM dia), 18/11 20h, 19/11
+    24h, 20/11 24h, 21/11 20h, 22/11 21h.
+
+    O que muda a acao do Renato nao e o atraso de agora -- e saber que ele ja
+    dura cinco dias, porque "espera a fila drenar" deixou de ser resposta. Aviso
+    que repete identico ensina a ser ignorado
+    ([[feedback_superficie_nova_mata_o_aviso]]).
+
+    A conta e por DIA, nao pela ultima mensagem pontual: entre lotes atrasados
+    entram algumas mensagens em tempo real (as de 22/11 14h01 vieram em 0,3 min)
+    e um "desde a ultima pontual" leria 10h onde ha 5 dias. Devolve 0 quando o
+    dia corrente esta em dia -- entao `>= 2` e o que caracteriza cronico.
+    """
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT date_trunc('day', m.criado_em) AS dia,
+                      percentile_cont(0.5) WITHIN GROUP (
+                          ORDER BY EXTRACT(EPOCH FROM (m.criado_em - m.enviado_em)) / 60.0
+                      ) AS p50
+                 FROM messages m
+                 JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.canal ILIKE %s
+                  AND m.direcao = 'incoming'
+                  AND m.enviado_em IS NOT NULL
+                  AND m.criado_em > now() - interval '30 days'
+                GROUP BY 1
+                ORDER BY 1 DESC""",
+            ("%whats%",),
+        )
+        dias = 0
+        for row in cur.fetchall():
+            p50 = row["p50"]
+            if p50 is None or float(p50) <= ATRASO_ENTREGA_MIN:
+                break
+            dias += 1
+        return dias
+
+
 def _atraso_de_entrega_min():
     """Mediana de `criado_em - enviado_em` nas ultimas mensagens recebidas.
 
@@ -263,6 +310,10 @@ def checar_ingestao() -> Dict:
             "atraso_entrega_min": round(atraso, 1),
             "atraso_entrega_limiar_min": ATRASO_ENTREGA_MIN,
             "janela": ATRASO_JANELA,
+            # Quantos dias seguidos o problema dura. Sem isto o aviso do 5o dia
+            # e indistinguivel do 1o, e foi assim que 42 avisos em 9 dias nao
+            # produziram uma acao.
+            "dias_seguidos": _dias_atrasados_seguidos(),
             "quieto_min": round(quieto_min, 1),
             "ultimo_evento": ultimo.isoformat(),
             # Nada a recuperar por catchup: o que falta ainda nao saiu da

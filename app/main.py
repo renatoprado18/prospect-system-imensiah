@@ -12052,11 +12052,19 @@ async def cron_sync_tasks(request: Request):
         if "error" in result:
             return {"job": "sync-tasks", "status": "error", "error": result["error"]}
 
+        # `status` sai de `push.errors`, nao de "a funcao retornou".
+        # Ate 22/11/26 era a string "success" fixa: os dois ultimos runs diziam
+        # `success` com `errors: 7` no mesmo corpo, e as 7 falhavam a cada run
+        # desde abril sem ninguem ver. Um medidor que se declara verde com o
+        # proprio defeito dentro da resposta nao mede nada.
+        push = result.get("push", {})
+        erros = push.get("errors", 0)
+
         return {
             "job": "sync-tasks",
             "timestamp": datetime.now().isoformat(),
-            "status": "success",
-            "push": result.get("push", {}),
+            "status": "partial" if erros else "success",
+            "push": push,
             "pull": result.get("pull", {})
         }
 
@@ -29755,11 +29763,24 @@ def _faixa_atraso(minutos: float) -> str:
     Existe para que um atraso que PIORA volte a avisar e um atraso estavel nao
     repita. Sem faixas, a chave teria de usar a hora do ultimo lote (~50 min em
     14/11) e o mesmo problema renderia ~20 avisos num dia.
+
+    🔴 A ESCALA SATURAVA EM 12h, e o atraso real passou dela (22/11/26). De 18 a
+    22/11 a mediana diaria ficou entre 20h e 24h: tudo isso cabia na ultima
+    faixa, entao a degradacao de 4h para 24h contou UMA vez e uma piora para 48h
+    nao contaria nenhuma. Faixa que satura abaixo do fenomeno observado para de
+    medir justamente quando o problema fica grave — a escala tem que ir aonde o
+    dado foi.
+
+    ⚠️ Alcance real do conserto: o nome da faixa e o PISO dela, entao os 20h-24h
+    medidos em novembro seguem caindo em "12h". Alargar a escala nao muda o aviso
+    de hoje — cobre a piora daqui pra cima. Quem corrige a cadencia atual e a
+    duracao na chave de dedup, no call-site.
     """
-    for limite, nome in ((60, "15min"), (240, "1h"), (720, "4h")):
+    for limite, nome in ((60, "15min"), (240, "1h"), (720, "4h"),
+                         (1440, "12h"), (2880, "24h")):
         if minutos < limite:
             return nome
-    return "12h"
+    return "48h+"
 
 
 @app.get("/api/cron/wa-ingest-heartbeat")
@@ -29848,14 +29869,32 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
             # respondeu" e decide-se sobre um silencio que nao existiu.
             minutos = veredito["atraso_entrega_min"]
             quanto = f"{minutos:.0f}min" if minutos < 120 else f"{minutos / 60:.1f}h"
-            titulo = "WhatsApp chegando ATRASADO no INTEL"
-            corpo = (
-                f"As ultimas {veredito['janela']} mensagens recebidas entraram com "
-                f"{quanto} de atraso (normal: segundos). As mensagens estao PRESAS "
-                f"na fila da Evolution, nao perdidas -- vao aparecer depois, com a "
-                f"hora original. Nao concluir que alguem nao respondeu enquanto "
-                f"isto durar.{extra}"
-            )
+            # Um atraso de 5 dias nao e o mesmo aviso de um atraso de 2h, e ate
+            # 22/11/26 o texto era identico nos dois casos: 42 avisos em 9 dias
+            # dizendo "vao aparecer depois" e "enquanto isto durar", como se
+            # fosse transitorio, no quinto dia de regime permanente. O que muda
+            # a acao e a DURACAO, nao o numero de agora.
+            dias = veredito.get("dias_seguidos") or 0
+            if dias >= 2:
+                titulo = f"WhatsApp atrasado ha {dias} dias — nao e mais transitorio"
+                corpo = (
+                    f"A entrega do WhatsApp esta atrasada pelo {dias}o dia seguido: as "
+                    f"ultimas {veredito['janela']} mensagens entraram com {quanto} "
+                    f"(normal: segundos). Isto ja nao drena sozinho -- esperar a fila "
+                    f"baixar deixou de ser resposta. ⚠️ Enquanto durar, TODO juizo de "
+                    f"'nao respondeu' sobre os ultimos {dias} dias esta defasado em "
+                    f"cerca de um dia: a mensagem existe, chega depois, com a hora "
+                    f"original.{extra}"
+                )
+            else:
+                titulo = "WhatsApp chegando ATRASADO no INTEL"
+                corpo = (
+                    f"As ultimas {veredito['janela']} mensagens recebidas entraram com "
+                    f"{quanto} de atraso (normal: segundos). As mensagens estao PRESAS "
+                    f"na fila da Evolution, nao perdidas -- vao aparecer depois, com a "
+                    f"hora original. Nao concluir que alguem nao respondeu enquanto "
+                    f"isto durar.{extra}"
+                )
         else:
             titulo = "Ingestao do WhatsApp parada"
             corpo = (
@@ -29864,7 +29903,7 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
                 f"que o ultimo evento gravado){extra}."
             )
 
-        await notify(
+        enviado = await notify(
             "wa_ingest_parada",
             titulo,
             corpo,
@@ -29881,13 +29920,25 @@ async def cron_wa_ingest_heartbeat(request: Request, recuperar: bool = True):
             # 20 avisos por dia -- alarme que se aprende a silenciar. A chave e a
             # FAIXA do atraso, para avisar uma vez por patamar e de novo quando
             # piora: 15min -> 1h -> 4h -> 12h conta a degradacao sem repetir.
+            # A faixa sozinha nao bastou: de 18 a 22/11/26 ela ficou parada em
+            # "12h" (teto antigo) e sairam 4 a 6 avisos por dia, identicos. A
+            # DURACAO entra na chave para que a cadencia seja de um aviso por
+            # dia de problema -- o unico eixo em que a noticia muda de verdade
+            # quando o atraso se estabiliza no alto.
             dedup=(
                 f"wa_ingest:atraso:{_faixa_atraso(veredito['atraso_entrega_min'])}"
+                f":d{veredito.get('dias_seguidos') or 0}"
                 if atrasada
                 else f"wa_ingest:{veredito.get('ultimo_evento')}:{veredito.get('status')}"
             ),
         )
-        resultado["notificado"] = True
+        # O retorno do `notify` e o que diz se a mensagem SAIU (`action == 'sent'`)
+        # ou morreu no dedup. Fixar True aqui fazia o payload mentir em escala:
+        # 871 runs com `notificado: true` em 7 dias contra 42 mensagens de fato
+        # enviadas. Quem lesse a telemetria concluiria que o Renato foi avisado
+        # 871 vezes — e o numero de avisos e justamente o que decide se o alarme
+        # virou ruido.
+        resultado["notificado"] = bool(enviado)
     except Exception as e:
         logging.warning(f"wa-ingest-heartbeat: notify falhou: {e}")
 
