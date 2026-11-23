@@ -95,6 +95,40 @@ class TasksSyncService:
         return corte + rodape
 
     @staticmethod
+    def _descricao_a_gravar(local_task: Optional[Dict], notes_do_google):
+        """Qual descricao o pull grava: a do Google, ou a local se for maior.
+
+        🔴 O DANO QUE ISTO IMPEDE (22/11/26), causado pelo conserto do push no
+        mesmo dia. O push passou a cortar `notes` em 8192 (limite da API), e o
+        `full_sync` roda push e PULL na mesma execucao: o pull trouxe o texto ja
+        cortado de volta e gravou sobre o original. Quatro tasks perderam de
+        1.900 a 3.700 caracteres -- #999932 (9.950→8.001), #1000432
+        (10.140→8.014), #1000600 (10.526→8.099), #1000606 (11.762→8.036) -- e o
+        rodape que prometia "integra na task #N do INTEL" passou a apontar pro
+        proprio resumo. Recuperadas de um branch PITR do Neon.
+
+        O INTEL e a fonte da descricao; o Google e superficie de leitura com
+        teto menor. Encolhimento vindo de fora e perda, nao edicao
+        ([[feedback_estado_local_morre_no_sync_externo]]).
+
+        O critario e o TAMANHO, nao a marca do rodape: qualquer caminho que
+        devolva texto truncado cai aqui, nao so o nosso. Edicao real no celular
+        que encurte de verdade tambem e barrada -- e a troca certa, porque
+        barrar uma edicao manual custa um reenvio e aceitar o truncamento apaga
+        o original.
+
+        A decisao fica em Python e nao num CASE no SQL por um motivo pratico: o
+        UPDATE e lido por posicao de parametro nos testes do `on_hold`, e
+        acrescentar placeholders ali desloca silenciosamente o indice do status.
+        """
+        local = (local_task or {}).get("descricao")
+        if notes_do_google is None or notes_do_google == "":
+            return local
+        if local and len(local) > len(notes_do_google):
+            return local
+        return notes_do_google
+
+    @staticmethod
     def _e_404(erro: Any) -> bool:
         """O erro do Google e um 404 (entidade inexistente)?
 
@@ -350,7 +384,7 @@ class TasksSyncService:
                     WHERE google_task_id = %s
                 """, (
                     google_task.get("title"),
-                    google_task.get("notes"),
+                    self._descricao_a_gravar(local_task, google_task.get("notes")),
                     due_date,
                     local_status,
                     local_status,
