@@ -989,3 +989,48 @@ verdade ninguém RECEBEU.
 
     DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/verifica_frescor.py
     DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/verifica_frescor.py --quiet
+
+### `scripts/triagem_prazos.py` — o prazo morreu ou a TAREFA morreu? (23/11/2026)
+
+**Leitura pura: nenhum UPDATE, nenhum fechamento, nenhum LLM.** Nasceu de *"tem um
+monte de tarefas desatualizadas, de sistema... nem um pouco funcional"* (Renato,
+23/11) — e a medição **contrariou a premissa**, que é o motivo de ele classificar
+em vez de limpar. Medido: **381 atrasadas de 573 abertas (66%)**, 285 vencidas há
+30–90 dias, **86% sem movimento próprio** (só o sync do Google as toca). Mas as 12
+mais velhas das origens "de automação" eram `[Penhora #39]` (o 🔴🔴 do dia
+seguinte no board executivo), `[ConselhoOS #65] Preço`, `[EUDR #63]`,
+`[Reorg 7] DCTF`: **trabalho vivo cujo PRAZO morreu**, não entulho —
+`origem=mcp_copilot` é tarefa que o próprio Renato criou conversando.
+
+**A lacuna que ele cobre, entre dois mecanismos que já existiam:** o
+`task_reconciler` (ON desde 23/08) fecha com EVIDÊNCIA de resolução — 18
+fechamentos em 30d, conservador e certo nisso — mas as sem-sinal não têm evidência
+chegando: não estão resolvidas, estão sem rastro. A skill `/papel-cos` tria em 3
+baldes, porém manual, com `LIMIT 10` e declaradamente *"sem auto-dismiss stale"*:
+mostra 10 e omite 371.
+
+**5 baldes determinísticos** (cada sinal é `data > data`, nunca juízo): 🟢 `viva`
+(movimento próprio/da frente/do contato ≤14d ⇒ repactuar data) · 🟡 `sem_sinal`
+(>30d, nada detectável) · ⚪ `fantasma` (frente concluída/arquivada) · ⚪ `recente`
+(≤30d) · 🔵 `nao_classificavel` (sem frente E sem contato).
+
+🔑 **Dois guard-rails que o controle impôs, e são o valor da peça:**
+1. **`nao_classificavel` é balde próprio.** Sem `project_id` nem `contact_id` não
+   há movimento a medir; empurrar para o balde de descarte faria o lote levar o
+   que só não foi medido. Fonte imensurável sai como tal, nunca como veredito.
+2. **O rótulo é `SEM SINAL`, não `PARADA`.** Chamei de "parada" e o controle
+   derrubou o nome de primeira: a `#999653` (Penhora/Pitangueiras) escapou dele
+   por **UM** sinal — uma mensagem do contato naquele dia. **Autoexame no próprio
+   relatório:** 124 das 204 vivas dependem de um único sinal, e só **8 de 55**
+   frentes ativas têm nota ≤14d (o trabalho é registrado nos boards de memória e
+   no WhatsApp, não em `project_notes`) ⇒ o medidor **subestima** movimento e o
+   🟡 é um **TETO**, não um número. Tratá-lo como veredito arquiva coisa viva.
+
+⚠️ **`100%` das 381 têm `google_task_id`** — qualquer ação em lote propaga para o
+Google Tasks no celular do Renato. Por isso a régua vem antes do gesto, e o gesto
+é dele. Exit **0 sempre**: é retrato para decisão, não alarme (sair ≠0 faria a
+abertura parar todo dia por uma condição que só ele resolve).
+
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py --quiet
+    DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 ./scripts/triagem_prazos.py --balde sem_sinal --limite 40
