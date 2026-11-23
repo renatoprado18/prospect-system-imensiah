@@ -514,13 +514,39 @@ class ConselhoOSRaciSyncService:
 
     # ==================== Full Sync ====================
 
+    @staticmethod
+    def _self_contact_ids() -> frozenset:
+        """As fichas do proprio Renato, incluindo a canonica de `users.id=1`.
+
+        Reusa `voice_policy.SELF_CONTACT_IDS` em vez de repetir a lista: ela e
+        conferida em prod desde 26/07 e tem as 4 fichas (as 3 fundidas em 06/08
+        mais a viva). A de `users` entra por cima porque e a que os consumidores
+        de `project_members` excluem, e e a unica que o codigo le do banco --
+        lista fixa envelhece, `users.id=1` acompanha.
+        """
+        from services.voice_policy import SELF_CONTACT_IDS
+
+        ids = set(SELF_CONTACT_IDS)
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT contact_id FROM users WHERE id = 1")
+                row = cur.fetchone()
+                if row and row["contact_id"]:
+                    ids.add(row["contact_id"])
+        except Exception as e:
+            # Nao-saber nao pode virar "nao ha self": a lista fixa ja cobre as 4
+            # conhecidas, e perder a de `users` so deixa passar uma ficha nova.
+            logger.warning(f"_self_contact_ids: users.id=1 nao lido ({e})")
+        return frozenset(ids)
+
     def sync_pessoas_to_project_members(self) -> Dict[str, Any]:
         """
         Sync ConselhoOS pessoas → INTEL project_members.
         For each empresa with pessoas, find/create the INTEL project
         and add pessoas as project_members (linked by intel_contact_id).
         """
-        result = {"added": 0, "skipped": 0, "errors": []}
+        result = {"added": 0, "skipped": 0, "errors": [], "orfaos": []}
 
         try:
             conselhoos_conn = self._get_conselhoos_conn()
@@ -554,13 +580,70 @@ class ConselhoOSRaciSyncService:
                         }
                     empresas_map[emp_nome]['pessoas'].append(p)
 
+                # 🔴 UMA EMPRESA COM PROBLEMA CEGAVA TODAS AS SEGUINTES (22/11/26).
+                # Todas as empresas compartilham esta conexao, e o `except` abaixo
+                # engolia a excecao SEM rollback: a transacao do Postgres ficava
+                # abortada e cada query seguinte morria com "current transaction is
+                # aborted, commands ignored until end of transaction block". Em
+                # prod, 30 dias assim: a FK do Vallen (contato inexistente)
+                # derrubava a transacao e a Alba aparecia como erro tambem, sem ter
+                # defeito nenhum. Pior que o alcance: como nada e commitado numa
+                # transacao abortada, o sync de pessoas estava **inteiramente**
+                # inoperante -- nem o que deu certo antes da falha entrava.
+                #
+                # SAVEPOINT por empresa resolve as duas coisas: o rollback desfaz
+                # so a empresa que falhou e o trabalho das outras sobrevive.
                 for emp_nome, emp_data in empresas_map.items():
+                    intel_cur.execute("SAVEPOINT empresa")
                     try:
                         project_id = self._find_or_create_project(emp_nome, str(emp_data['empresa_id']))
 
                         for pessoa in emp_data['pessoas']:
                             contact_id = pessoa['intel_contact_id']
                             papel = pessoa['papel'] or pessoa['cargo'] or ''
+
+                            # 🔴 O contato existe? O `intel_contact_id` vive no
+                            # ConselhoOS (outro banco, sem FK possivel) e aponta pra
+                            # ficha que o INTEL pode ter APAGADO num merge -- em
+                            # 06/08 as 4 fichas do Renato viraram a #23419, e o
+                            # ConselhoOS seguiu apontando pra uma das mortas. Sem
+                            # esta checagem o INSERT estoura a FK e, por tudo o que
+                            # esta escrito acima, levava o resto junto.
+                            #
+                            # Vai pra `orfaos` com NOME e EMPRESA, nao so o id: o
+                            # conserto e no ConselhoOS, feito por gente, e "violates
+                            # foreign key constraint (contact_id)=(14911)" nao diz a
+                            # quem pertence a ficha nem onde arrumar.
+                            # O PROPRIO Renato sai antes da checagem de orfao, e
+                            # nao como orfao (22/11/26). A pessoa "Renato de Faria
+                            # e Almeida" no ConselhoOS aponta pra #14911, uma das 4
+                            # fichas dele (`SELF_CONTACT_IDS`), fundidas na #23419
+                            # em 06/08 -- entao a ficha de fato nao existe e a
+                            # checagem seguinte a pegaria. Mas o veredito estaria
+                            # certo pelo motivo errado, e o relatorio pediria um
+                            # conserto que NAO deve ser feito: a #23419 ja e
+                            # `project_member` dos projetos 24 e 26 (e de outros
+                            # 28), e e justamente a ficha que `users.id=1` aponta e
+                            # que todo consumidor de `project_members` exclui pra
+                            # nao ouvir o proprio eco. Remapear acrescentaria zero
+                            # e alarme que pede a acao errada e pior que silencio.
+                            if contact_id in self._self_contact_ids():
+                                result["skipped"] += 1
+                                continue
+
+                            intel_cur.execute("SELECT 1 FROM contacts WHERE id = %s", (contact_id,))
+                            if not intel_cur.fetchone():
+                                result["skipped"] += 1
+                                result["orfaos"].append({
+                                    "contact_id": contact_id,
+                                    "pessoa": pessoa.get("nome"),
+                                    "empresa": emp_nome,
+                                })
+                                logger.warning(
+                                    f"pessoa '{pessoa.get('nome')}' ({emp_nome}) aponta pro "
+                                    f"contact_id={contact_id}, que nao existe no INTEL — pulada"
+                                )
+                                continue
 
                             # Check if already a member
                             intel_cur.execute("""
@@ -580,7 +663,13 @@ class ConselhoOSRaciSyncService:
                             result["added"] += 1
                             logger.info(f"Added {pessoa['nome']} to project {emp_nome}")
 
+                        intel_cur.execute("RELEASE SAVEPOINT empresa")
+
                     except Exception as e:
+                        # O rollback e o que impede a contaminacao. Sem ele, este
+                        # `except` apenas ESCONDIA a primeira falha e entregava as
+                        # seguintes como se cada empresa tivesse um defeito proprio.
+                        intel_cur.execute("ROLLBACK TO SAVEPOINT empresa")
                         error_msg = f"Error syncing pessoas for {emp_nome}: {e}"
                         logger.error(error_msg)
                         result["errors"].append(error_msg)
@@ -591,6 +680,22 @@ class ConselhoOSRaciSyncService:
             error_msg = f"Error in sync_pessoas_to_project_members: {e}"
             logger.error(error_msg)
             result["errors"].append(error_msg)
+
+        # Orfao entra em `errors` TAMBEM, resumido numa linha, para acender no
+        # `cron-health` pela regua que ja existe (contador de erro em sub-dict,
+        # 22/11/26) em vez de exigir vocabulario novo no `cron_telemetry`.
+        # Pular em silencio seria trocar um erro de FK por uma falha calada: a
+        # pessoa simplesmente nao vira membro do projeto e ninguem fica sabendo
+        # -- e o conserto e fora do INTEL, no ConselhoOS, feito por gente.
+        if result["orfaos"]:
+            quem = "; ".join(
+                f"{o['pessoa']} ({o['empresa']}) → contact_id {o['contact_id']}"
+                for o in result["orfaos"][:5]
+            )
+            result["errors"].append(
+                f"{len(result['orfaos'])} pessoa(s) do ConselhoOS apontam pra ficha "
+                f"inexistente no INTEL — corrigir o `intel_contact_id` na origem: {quem}"
+            )
 
         return result
 
